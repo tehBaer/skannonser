@@ -1,8 +1,10 @@
-﻿import pandas as pd
+﻿import re
+
+import pandas as pd
 from pandas import DataFrame
 
 
-def cleanData(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
+def post_process_property(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
     if df.empty:
         df.to_csv(f'{projectName}/{outputFileName}', index=False)
         return df
@@ -45,10 +47,33 @@ def cleanData(df: DataFrame, projectName: str, outputFileName: str, originalDF: 
 
     return df
 
+def post_process_jobs(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
+    """Post-process job data by normalizing dates and formatting text fields."""
+    if df.empty:
+        df.to_csv(f'{projectName}/{outputFileName}', index=False)
+        return df
+
+    def parse_date(deadline):
+        if pd.isna(deadline):
+            return None
+        deadline_str = str(deadline)
+        # Replace dashes with periods
+        deadline_str = deadline_str.replace('-', '.')
+        # Check if it matches the date pattern DD.MM.YYYY
+        if re.match(r'\d{2}\.\d{2}\.\d{4}', deadline_str):
+            return deadline_str
+        return None
+
+    df['FRIST'] = df['Søknadsfrist'].apply(parse_date)
+
+    df.to_csv(f'{projectName}/{outputFileName}', index=False)
+
+    return df
+
 # if main
 if __name__ == "__main__":
     # file_path = 'leie/live_data.csv'
     # df = pd.read_csv(file_path)
     # cleanData(df, 'leie', 'live_data_parsed.csv')
 
-    cleanData(pd.read_csv('leie/saved_all_updated.csv'), 'leie', 'saved_all_updated_parsed.csv')
+    post_process_property(pd.read_csv('leie/saved_all_updated.csv'), 'leie', 'saved_all_updated_parsed.csv')
