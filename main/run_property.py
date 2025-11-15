@@ -1,6 +1,6 @@
 ﻿import subprocess
 import pandas as pd
-from main.clean import cleanData
+from main.post_process import post_process_property
 from main.crawl import extract_URLs
 from main.export import merge_above
 from main.extraction_property import extractPropertyDataFromAds
@@ -18,7 +18,7 @@ extractPropertyDataFromAds(projectName, urls, "live_data.csv")
 # ALso extract data from the downloaded sheets
 
 data = pd.read_csv(f'{projectName}/live_data.csv')
-cleanData(data, projectName, "live_data_parsed.csv")
+post_process_property(data, projectName, "live_data_parsed.csv")
 
 # 4
 emptyColCount = 3

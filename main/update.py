@@ -1,6 +1,6 @@
 ﻿import pandas as pd
 
-from main.clean import cleanData
+from main.post_process import post_process_property
 from main.googleUtils import download_sheet_as_csv, get_credentials, SPREADSHEET_ID
 from main.extraction_property import extract_property_data
 from googleapiclient.discovery import build
@@ -91,7 +91,7 @@ def get_everything_updated(df_saved: pd.DataFrame):
     data = pd.DataFrame(updated_rows)
     data.to_csv("leie/xx.csv", index=False)
 
-    cleaned_df = cleanData(data, 'leie', '_temp.csv')
+    cleaned_df = post_process_property(data, 'leie', '_temp.csv')
 
     # If a row has "Slettet", fill inn the values from df_saved instead
     for index, row in cleaned_df.iterrows():

@@ -4,6 +4,7 @@ import pandas as pd
 from main.crawl import extract_URLs
 from main.export import try_merge_below
 from main.extraction_jobs import extractJobDataFromAds
+from main.post_process import post_process_jobs
 
 subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
 
@@ -15,6 +16,10 @@ regex = r'https://www\.finn\.no/job/ad/\d+'
 # urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")
 urls = pd.read_csv(f'{projectName}/0_URLs.csv')  # for debugging quickly
 extractJobDataFromAds(projectName, urls, "A_live.csv")
+
+# 4
+data = pd.read_csv(f'{projectName}/A_live.csv')
+post_process_jobs(data, projectName, "AB_processed.csv")
 
 headers = ['Finnkode', 'URL', 'Selskap', 'Stillingstittel', 'Industri', 'Tittel', 'Søknadsfrist', 'Posisjoner']
 
