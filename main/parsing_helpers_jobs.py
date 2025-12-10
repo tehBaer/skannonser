@@ -102,7 +102,8 @@ class JobParser:
         ]
         
         for selector in selectors:
-            container = self.soup.find('div', selector)
+            # Search across all element types, not just divs
+            container = self.soup.find(attrs=selector)
             if container:
                 # Get all text from the container, stripping extra whitespace
                 text = container.get_text(separator=' ', strip=True)
