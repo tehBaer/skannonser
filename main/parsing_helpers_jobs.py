@@ -91,6 +91,13 @@ class JobParser:
                     return deadline_text
         return None
 
+    def _clean_text(self, element):
+        """Clean and format text from an HTML element."""
+        text = element.get_text(separator='\n', strip=True)
+        # Clean up multiple newlines
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        return text.strip()
+
     def get_text_body(self):
         """Extract the main text body/description of the job ad."""
         # Look for common containers that hold job description text
@@ -99,17 +106,11 @@ class JobParser:
         # Try to find the main article or content section
         main_content = self.soup.find('article')
         if main_content:
-            # Get all text, removing extra whitespace
-            text = main_content.get_text(separator='\n', strip=True)
-            # Clean up multiple newlines
-            text = re.sub(r'\n\s*\n', '\n\n', text)
-            return text.strip()
+            return self._clean_text(main_content)
         
         # Fallback: try to find div with data-testid or common class patterns
         content_div = self.soup.find('div', {'data-testid': 'description'})
         if content_div:
-            text = content_div.get_text(separator='\n', strip=True)
-            text = re.sub(r'\n\s*\n', '\n\n', text)
-            return text.strip()
+            return self._clean_text(content_div)
         
         return None
