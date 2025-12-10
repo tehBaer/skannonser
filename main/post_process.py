@@ -59,8 +59,8 @@ def post_process_jobs(df: DataFrame, projectName: str, outputFileName: str, orig
         deadline_str = str(deadline)
         # Replace dashes with periods
         deadline_str = deadline_str.replace('-', '.')
-        # Check if it matches the date pattern DD.MM.YYYY
-        if re.match(r'\d{2}\.\d{2}\.\d{4}', deadline_str):
+        # Check if it matches the date pattern D.M.YYYY, DD.M.YYYY, D.MM.YYYY, or DD.MM.YYYY
+        if re.match(r'\d{1,2}\.\d{1,2}\.\d{4}', deadline_str):
             return deadline_str
         return None
 

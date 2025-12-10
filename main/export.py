@@ -185,68 +185,90 @@ def check_missing_headers(df: pd.DataFrame, headers_to_use: List[str]) -> List[s
     missing_headers = [h for h in headers_to_use if h not in df.columns]
     return missing_headers
 
-def try_merge_below(sheet_name, pA_live, p_sheet, pC_filtered, pB_aligned, headers_to_use: List[str]):
+def try_verify_align_filter_merge_below(sheet_name, pAB_processed, p_sheet, pC_filtered, pB_aligned, headers_to_use: List[str]):
+    verified = verify_headers(headers_to_use, pAB_processed, p_sheet, sheet_name)
+
+    if not verified:
+        print("Headers does not match. Aborting process.")
+        return
+
+    # Align sheet layout
+    align_to_sheet_layout(pAB_processed, p_sheet, pB_aligned)
+
+    # Filter missing ads
+    filtered_successfully = try_filter_new_ads(pB_aligned, p_sheet, pC_filtered, headers_to_use)
+
+    # Merge missing ads
+    if (filtered_successfully):
+        creds = get_credentials()
+        service = build("sheets", "v4", credentials=creds)
+        append_missing_ads(service, sheet_name, pC_filtered, headers_to_use)
+
+def verify_headers(headers_to_use, p_csv_to_check, p_sheet, sheet_name) -> bool:
     """Checks for missing headers in both CSVs before merging below."""
-    # Check headers in live data
-    live_df = pd.read_csv(pA_live)
+    # Check headers
+    live_df = pd.read_csv(p_csv_to_check)
     headers_missing_in_live = [h for h in headers_to_use if h not in live_df.columns]
     if headers_missing_in_live:
-        raise Exception(f"Missing required headers in live data: {headers_missing_in_live}")
-
+        print(f"Missing required headers in live data: {headers_missing_in_live}")
+        return False
     try:
         creds = get_credentials()
         service = build("sheets", "v4", credentials=creds)
         download_sheet_as_csv(service, sheet_name, p_sheet)
     except HttpError as err:
         print(err)
-
+        return False
     # Check headers in downloaded sheet
     sheet_df = pd.read_csv(p_sheet)
     headers_missing_in_sheet = [h for h in headers_to_use if h not in sheet_df.columns]
     if headers_missing_in_sheet:
-        raise Exception(f"Missing required headers in sheet: {headers_missing_in_sheet}")
-
-    # Align sheet layout
-    align_to_sheet_layout(pA_live, p_sheet, pB_aligned)
-
-    # Create pC_filtered with missing ads
-    filtered_successfully = try_filter_new_ads(pB_aligned, p_sheet, pC_filtered, headers_to_use)
-
-    if (filtered_successfully):
-        append_missing_ads(service, sheet_name, pC_filtered)
+        print(f"Missing required headers in sheet: {headers_missing_in_sheet}")
+        return False
+    return True
 
 
-def append_missing_ads(service, sheet_name, pC_filtered):
+def append_missing_ads(service, sheet_name, pC_filtered, headers_to_use: List[str]):
     try:
-        # Read missing rows from the CSV file
-        with open(pC_filtered, "r", encoding="utf-8") as file:
-            csv_reader = csv.reader(file)
-            missing_rows = list(csv_reader)
+        # Read only the specified columns from the CSV
+        df = pd.read_csv(pC_filtered, usecols=headers_to_use)
+
+        df = sanitize(df)
+
+        # Convert to list of lists (header + data rows)
+        missing_rows = [df.columns.tolist()] + df.values.tolist()
 
         # Separate header and data
         header = missing_rows[0]
         missing_rows = missing_rows[1:]
 
         # Retrieve existing data from the sheet to find the next available row
-        range_name = f"{sheet_name}!A1:Z1000"  # Adjust the range as needed
+        range_name = f"{sheet_name}!A1:Z1000"
         result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_name).execute()
         existing_data = result.get("values", [])
-        next_row_index = len(existing_data) + 1  # +1 for 1-based index in Sheets
+        next_row_index = len(existing_data) + 1
 
         # Write the missing rows to the sheet starting from the next available row
         body = {"values": missing_rows}
         service.spreadsheets().values().update(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{sheet_name}!A{next_row_index}",
-            valueInputOption="USER_ENTERED",  # Use USER_ENTERED to preserve formatting
+            valueInputOption="USER_ENTERED",
             body=body,
         ).execute()
 
-        # Print the count of appended rows
         print(f"Appended {len(missing_rows)} missing rows to the sheet: {sheet_name}")
 
     except Exception as e:
         print(f"An error occurred: {e}")
+
+
+def sanitize(df):
+    # Clean the data: replace newlines and other problematic characters
+    df = df.fillna('')  # Replace NaN with empty string
+    df = df.applymap(lambda x: str(x).replace('\n', ' ').replace('\r', ' ').strip() if isinstance(x, str) else x)
+    return df
+
 
 if __name__ == "__main__":
     merge_above(
