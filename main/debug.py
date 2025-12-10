@@ -1,22 +1,29 @@
-﻿# from bs4 import BeautifulSoup
-# from parsing_helpers_jobs import JobParser
-#
-# with open('jobbe/html_extracted/436826659.html', 'r', encoding='utf-8') as f:
-#     html_content = f.read()
-#
-# soup = BeautifulSoup(html_content, 'html.parser')
-#
-# parser = JobParser(soup)
-# company = parser.get_company()
-# job_title = parser.get_job_title()
-# deadline = parser.get_deadline()
-#
-# print(f"Company: {company}")
-# print(f"Job Title: {job_title}")
-# print(f"Deadline: {deadline}")
+﻿import subprocess
+from pathlib import Path
+from bs4 import BeautifulSoup
+from main.parsing_helpers_jobs import JobParser
 
+subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
+projectName = 'jobbe'
 
-import pandas as pd
-from main.post_process import post_process_jobs
-data = pd.read_csv('jobbe/A_live.csv')
-post_process_jobs(data, "jobbe", "AB_processed.csv")
+# Get all HTML files in the directory
+html_dir = Path(f'{projectName}/html_extracted')
+html_files = list(html_dir.glob('*.html'))[:5]  # Get first 5 HTML files
+
+if not html_files:
+    print(f"No HTML files found in {html_dir}")
+else:
+    for i, html_file in enumerate(html_files, 1):
+        with open(html_file, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+
+        soup = BeautifulSoup(html_content, 'html.parser')
+        parser = JobParser(soup)
+
+        part1, part2 = parser.get_textcontent()
+
+        print(f"\n=== {html_file.name} ===")
+        if part2:
+            print(part2)
+        else:
+            print("(No content after split)")
