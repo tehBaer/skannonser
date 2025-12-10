@@ -90,3 +90,29 @@ class JobParser:
                 if deadline_text:
                     return deadline_text
         return None
+
+    def _clean_text(self, element):
+        """Clean and format text from an HTML element."""
+        text = element.get_text(separator='\n')
+        # Remove leading/trailing whitespace from each line
+        lines = [line.strip() for line in text.split('\n')]
+        # Filter out empty lines and join
+        text = '\n'.join(line for line in lines if line)
+        # Clean up multiple newlines
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        return text.strip()
+
+    def get_text_body(self):
+        """Extract the main text body/description of the job ad."""
+        # Try to find the main article or content section
+        # FINN.no typically uses <article> tags for the main job description
+        main_content = self.soup.find('article')
+        if main_content:
+            return self._clean_text(main_content)
+        
+        # Fallback: try to find div with data-testid attribute
+        content_div = self.soup.find('div', {'data-testid': 'description'})
+        if content_div:
+            return self._clean_text(content_div)
+        
+        return None
