@@ -90,3 +90,24 @@ class JobParser:
                 if deadline_text:
                     return deadline_text
         return None
+
+    def get_ad_text(self):
+        """Extract main job ad text content."""
+        # Look for the main job description container
+        # Common containers for FINN.no job ads
+        selectors = [
+            {'data-automation-id': 'import-decoration'},
+            {'class': 'import-decoration'},
+            {'class': 'job-description'}
+        ]
+        
+        for selector in selectors:
+            container = self.soup.find('div', selector)
+            if container:
+                # Get all text from the container, stripping extra whitespace
+                text = container.get_text(separator=' ', strip=True)
+                # Clean up multiple spaces
+                text = ' '.join(text.split())
+                return text
+        
+        return None
