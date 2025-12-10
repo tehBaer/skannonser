@@ -93,15 +93,11 @@ class JobParser:
 
     def get_textcontent(self):
         """Extract the main text content of the job ad."""
-        # Find the main content area - look for common patterns in FINN.no job ads
-        # Try to find article or main content section
         main_content = self.soup.find('article') or self.soup.find('main') or self.soup.find('div',
                                                                                              {'id': 'main-content'})
 
         if main_content:
-            # Get all text and clean it up
             text = main_content.get_text(separator=' ', strip=True)
-            # Remove excessive whitespace
             text = re.sub(r'\s+', ' ', text)
             text = text.strip()
 
@@ -109,15 +105,14 @@ class JobParser:
             match = re.search(r'Ansettelsesform\s+\S+', text)
             if match:
                 split_pos = match.end()
-                part1 = text[:split_pos].strip()
                 part2 = text[split_pos:].strip()
 
                 # Split part2 before "Vis hele beskrivelsen"
                 if 'Vis hele beskrivelsen' in part2:
                     part2 = part2.split('Vis hele beskrivelsen')[0].strip()
 
-                return part1, part2
+                return part2  # Returns single string, not tuple
 
-            return text, None
+            return text
 
-        return None, None
+        return None

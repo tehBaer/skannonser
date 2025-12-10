@@ -21,7 +21,7 @@ regex = r'https://www\.finn\.no/job/ad/\d+'
 live_data = pd.read_csv(f'{projectName}/A_live.csv')
 post_process_jobs(live_data, projectName, "AB_processed.csv")
 
-headers = ['Finnkode', 'URL', 'Selskap', 'Stillingstittel', 'Industri', 'Tittel', 'Søknadsfrist', 'Posisjoner', 'FRIST']
+headers = ['Finnkode', 'URL', 'Selskap', 'Stillingstittel', 'Industri', 'Tittel', 'Søknadsfrist', 'Posisjoner', 'FRIST', 'Innhold']
 
 try_verify_align_filter_merge_below("Jobb",
                 f"{projectName}/AB_processed.csv",

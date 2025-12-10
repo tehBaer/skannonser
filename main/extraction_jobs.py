@@ -37,8 +37,10 @@ def extract_job_data(url, index, projectName, auto_save_new=True, force_save=Fal
         'Tittel' : parser.get_ad_title(),
         'Søknadsfrist' : parser.get_deadline(),
         'Posisjoner' : parser.get_job_positions(),
+        'Innhold' : parser.get_textcontent(),
     }
     print(f'Index {index}: {data}')
+
 
     return data
 
