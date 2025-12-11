@@ -1,7 +1,7 @@
 ﻿import subprocess
 from pathlib import Path
 from bs4 import BeautifulSoup
-from main.parsing_helpers_jobs import JobParser
+from main.parsing_helpers_jobs_FINN import FinnParser
 
 subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
 projectName = 'jobbe'
@@ -18,7 +18,7 @@ else:
             html_content = f.read()
 
         soup = BeautifulSoup(html_content, 'html.parser')
-        parser = JobParser(soup)
+        parser = FinnParser(soup)
 
         part1, part2 = parser.get_textcontent()
 

@@ -3,7 +3,7 @@ import pandas as pd
 
 from main.crawl import extract_URLs
 from main.export import try_verify_align_filter_merge_below
-from main.extraction_jobs import extractJobDataFromAds
+from main.extraction_jobs_FINN import extractJobDataFromAds_FINN
 from main.post_process import post_process_jobs
 
 subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)

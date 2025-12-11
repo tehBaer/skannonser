@@ -2,7 +2,7 @@ import re
 import json
 
 
-class JobParser:
+class FinnParser:
     """Parser for extracting job ad data from FINN.no HTML."""
 
     def __init__(self, soup):
