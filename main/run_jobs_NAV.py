@@ -17,13 +17,13 @@ urlBase = 'https://arbeidsplassen.nav.no/stillinger?county=OSLO&v=5&occupationLe
 regex = r'/stillinger/stilling/[a-f0-9-]+'
 isNAV=True
 
-# urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv", isNAV)
+urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv", isNAV)
 # urls = pd.read_csv(f'{projectName}/0_URLs.csv')  # for debugging quickly
-# extractJobDataFromAds_NAV(projectName, urls, "A_live.csv")
+extractJobDataFromAds_NAV(projectName, urls, "A_live.csv")
 
 # # 4
-# live_data = pd.read_csv(f'{projectName}/A_live.csv')
-# post_process_jobs(live_data, projectName, "AB_processed.csv")
+live_data = pd.read_csv(f'{projectName}/A_live.csv')
+post_process_jobs(live_data, projectName, "AB_processed.csv")
 
 headers = ['Finnkode', 'URL', 'Selskap', 'Stillingstittel', 'Tittel', 'Søknadsfrist', 'Posisjoner', 'FRIST', 'Innhold']
 

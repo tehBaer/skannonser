@@ -13,9 +13,9 @@ projectName = 'jobbe'
 urlBase = 'https://www.finn.no/job/search?location=1.20001.20061&occupation=0.23'
 regex = r'https://www\.finn\.no/job/ad/\d+'
 
-# urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")
+urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")
 # urls = pd.read_csv(f'{projectName}/0_URLs.csv')  # for debugging quickly
-# extractJobDataFromAds(projectName, urls, "A_live.csv")
+extractJobDataFromAds_FINN(projectName, urls, "A_live.csv")
 
 # 4
 live_data = pd.read_csv(f'{projectName}/A_live.csv')
