@@ -204,6 +204,7 @@ def try_verify_align_filter_merge_below(sheet_name, pAB_processed, p_sheet, pC_f
         service = build("sheets", "v4", credentials=creds)
         append_missing_ads(service, sheet_name, pC_filtered, headers_to_use)
 
+
 def verify_headers(headers_to_use, p_csv_to_check, p_sheet, sheet_name) -> bool:
     """Checks for missing headers in both CSVs before merging below."""
     # Check headers
@@ -220,7 +221,12 @@ def verify_headers(headers_to_use, p_csv_to_check, p_sheet, sheet_name) -> bool:
         print(err)
         return False
     # Check headers in downloaded sheet
-    sheet_df = pd.read_csv(p_sheet)
+    try:
+        sheet_df = pd.read_csv(p_sheet, on_bad_lines='skip')
+    except pd.errors.ParserError as e:
+        print(f"Parser error reading sheet: {e}")
+        sheet_df = pd.read_csv(p_sheet, on_bad_lines='skip', engine='python', encoding='utf-8')
+
     headers_missing_in_sheet = [h for h in headers_to_use if h not in sheet_df.columns]
     if headers_missing_in_sheet:
         print(f"Missing required headers in sheet: {headers_missing_in_sheet}")
