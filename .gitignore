@@ -3,3 +3,5 @@
 *.pyc
 credentials.json
 token.json
+.venv
+.idea
