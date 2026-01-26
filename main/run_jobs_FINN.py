@@ -1,16 +1,18 @@
-﻿import subprocess
-import pandas as pd
-
+﻿import pandas as pd
+import sys
+import os
+from pathlib import Path
 from main.crawl import extract_URLs
 from main.export import try_verify_align_filter_merge_below
 from main.extraction_jobs_FINN import extractJobDataFromAds_FINN
 from main.post_process import post_process_jobs
+from main.run_helper import ensure_venv
 
-subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
+ensure_venv()
 
 projectName = 'jobbe'
 # 1
-urlBase = 'https://www.finn.no/job/search?location=1.20001.20061&occupation=0.23'
+urlBase = 'https://www.finn.no/job/search?location=1.20001.20061&working_language=2'
 regex = r'https://www\.finn\.no/job/ad/\d+'
 
 urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")

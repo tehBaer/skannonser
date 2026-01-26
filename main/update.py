@@ -1,8 +1,8 @@
 ﻿import pandas as pd
 
-from main.post_process import post_process_property
+from main.post_process import post_process_rental
 from main.googleUtils import download_sheet_as_csv, get_credentials, SPREADSHEET_ID
-from main.extraction_property import extract_property_data
+from main.extraction_rental import extract_rental_data
 from googleapiclient.discovery import build
 
 
@@ -29,7 +29,7 @@ def FindNewUnavailable(sheet_name: str, columns: str):
             continue
         try:
             # Extract data for the URL
-            updated_data = extract_property_data(row["URL"], index, "leie", True, True)
+            updated_data = extract_rental_data(row["URL"], index, "leie", True, True)
             updated_rows.append(updated_data)
         except Exception as e:
             print(f"Error processing URL at index {index}: {row['Finnkode']} - {e}")
@@ -78,7 +78,7 @@ def get_everything_updated(df_saved: pd.DataFrame):
         #     continue
         try:
             # Extract data for the URL
-            updated_data = extract_property_data(row["URL"], index, "leie")
+            updated_data = extract_rental_data(row["URL"], index, "leie")
             updated_rows.append(updated_data)
         except Exception as e:
             # print(f"Error processing URL at index {index}: {row['Finnkode']} - {e}")
@@ -91,7 +91,7 @@ def get_everything_updated(df_saved: pd.DataFrame):
     data = pd.DataFrame(updated_rows)
     data.to_csv("leie/xx.csv", index=False)
 
-    cleaned_df = post_process_property(data, 'leie', '_temp.csv')
+    cleaned_df = post_process_rental(data, 'leie', '_temp.csv')
 
     # If a row has "Slettet", fill inn the values from df_saved instead
     for index, row in cleaned_df.iterrows():

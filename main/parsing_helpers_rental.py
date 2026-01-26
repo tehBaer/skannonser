@@ -1,4 +1,4 @@
-﻿import re
+import re
 
 
 def getBuyPrice(soup):

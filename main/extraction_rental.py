@@ -3,13 +3,13 @@ import subprocess
 import pandas as pd
 from pandas import DataFrame
 from main.extraction import load_or_fetch_ad_html
-from parsing_helpers_property import *
+from main.parsing_helpers_rental import *
 
 # Ensure the path to the virtual environment activation script is correct
-subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
+# subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
 
 
-def extract_property_data(url, index, projectName, auto_save_new=True, force_save=False):
+def extract_rental_data(url, index, projectName, auto_save_new=True, force_save=False):
     try:
         soup = load_or_fetch_ad_html(url, projectName, auto_save_new, force_save)
     except Exception as e:
@@ -54,30 +54,30 @@ def extract_property_data(url, index, projectName, auto_save_new=True, force_sav
     return data
 
 
-def extractPropertyDataFromAds(projectName: str, urls: DataFrame, outputFileName: str):
+def extractRentalDataFromAds(projectName: str, urls: DataFrame, outputFileName: str):
     # Create the directory if it doesn't exist
     os.makedirs(projectName, exist_ok=True)
 
     collectedData = []
 
-    # Loop through each URL and extract property data
+    # Loop through each URL and extract rental data
     try:
         # Create a folder inside the previous folder for the htmls
         os.makedirs(f'{projectName}/html_extracted', exist_ok=True)
         for index, url in enumerate(urls['URL']):
             try:
-                data = extract_property_data(url, index, projectName)
+                data = extract_rental_data(url, index, projectName)
                 collectedData.append(data)
             except Exception as e:
                 print(f'Error processing URL at index {index}: {url} - {e}')
     finally:
         pass
         # Save the combined data to a new CSV file in the output directory
-        # df = pd.DataFrame(collectedData)
-        # df.to_csv(f'{projectName}/{outputFileName}', index=False)
-        # print(f"Data extraction completed. {len(collectedData)} records saved to {projectName}/{outputFileName}")
-        # return df
+        df = pd.DataFrame(collectedData)
+        df.to_csv(f'{projectName}/{outputFileName}', index=False)
+        print(f"Data extraction completed. {len(collectedData)} records saved to {projectName}/{outputFileName}")
+        return df
 
 
 if __name__ == "__main__":
-    extractPropertyDataFromAds('leie', pd.read_csv('leie/live_URLs.csv'), 'live_data.csv')
+    extractRentalDataFromAds('leie', pd.read_csv('leie/live_URLs.csv'), 'live_data.csv')

@@ -4,7 +4,7 @@ import pandas as pd
 from pandas import DataFrame
 from main.extraction import load_or_fetch_ad_html
 from main.parsing_helpers_jobs_FINN import FinnParser
-from parsing_helpers_property import *
+from main.parsing_helpers_rental import *
 
 
 def extract_job_data_FINN(url, index, projectName, auto_save_new=True, force_save=False):
@@ -39,7 +39,7 @@ def extractJobDataFromAds_FINN(projectName: str, urls: DataFrame, outputFileName
 
     collectedData = []
 
-    # Loop through each URL and extract property data
+    # Loop through each URL and extract job data
     try:
         # Create a folder inside the previous folder for the htmls
         os.makedirs(f'{projectName}/html_extracted', exist_ok=True)

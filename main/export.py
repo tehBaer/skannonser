@@ -79,7 +79,7 @@ def try_filter_new_ads(path_csv_to_filter, path_sheets_downloaded, path_output, 
         return False
 
 
-def filter_new_property_ads(analyzed_path, saved_all_path, output_path, empty_columns_count):
+def filter_new_rental_ads(analyzed_path, saved_all_path, output_path, empty_columns_count):
     """Find rows in analyzed.csv not present in sheets.csv and save them to a new CSV."""
     try:
         # Load the CSV files
@@ -174,7 +174,7 @@ def merge_above(emptyColCount, sheet_name, path_live_parsed, path_downloaded_spr
 
         download_sheet_as_csv(service, sheet_name, path_downloaded_spreadsheet, range)
 
-        filter_new_property_ads(path_live_parsed, path_downloaded_spreadsheet, path_live_missing, emptyColCount)
+        filter_new_rental_ads(path_live_parsed, path_downloaded_spreadsheet, path_live_missing, emptyColCount)
 
         prepend_missing_ads(service, sheet_name, path_live_missing, range, emptyColCount)
         print(f"Data successfully updated.")

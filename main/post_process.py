@@ -4,7 +4,7 @@ import pandas as pd
 from pandas import DataFrame
 
 
-def post_process_property(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
+def post_process_rental(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
     if df.empty:
         df.to_csv(f'{projectName}/{outputFileName}', index=False)
         return df
@@ -76,4 +76,4 @@ if __name__ == "__main__":
     # df = pd.read_csv(file_path)
     # cleanData(df, 'leie', 'live_data_parsed.csv')
 
-    post_process_property(pd.read_csv('leie/saved_all_updated.csv'), 'leie', 'saved_all_updated_parsed.csv')
+    post_process_rental(pd.read_csv('leie/saved_all_updated.csv'), 'leie', 'saved_all_updated_parsed.csv')
