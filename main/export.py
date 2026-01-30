@@ -1,6 +1,9 @@
 ﻿from typing import List
 
-from main.googleUtils import SPREADSHEET_ID, get_credentials, download_sheet_as_csv
+try:
+    from main.googleUtils import SPREADSHEET_ID, get_credentials, download_sheet_as_csv
+except ImportError:
+    from googleUtils import SPREADSHEET_ID, get_credentials, download_sheet_as_csv
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import pandas as pd

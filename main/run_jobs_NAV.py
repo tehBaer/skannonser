@@ -2,12 +2,18 @@
 import pandas as pd
 import re
 
-
-from main.crawl import extract_URLs
-from main.export import try_verify_align_filter_merge_below
-from main.extraction_jobs_FINN import extractJobDataFromAds_FINN
-from main.extraction_jobs_NAV import extractJobDataFromAds_NAV
-from main.post_process import post_process_jobs
+try:
+    from .crawl import extract_URLs
+    from .export import try_verify_align_filter_merge_below
+    from .extraction_jobs_FINN import extractJobDataFromAds_FINN
+    from .extraction_jobs_NAV import extractJobDataFromAds_NAV
+    from .post_process import post_process_jobs
+except ImportError:
+    from crawl import extract_URLs
+    from export import try_verify_align_filter_merge_below
+    from extraction_jobs_FINN import extractJobDataFromAds_FINN
+    from extraction_jobs_NAV import extractJobDataFromAds_NAV
+    from post_process import post_process_jobs
 
 subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
 

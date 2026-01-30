@@ -2,11 +2,19 @@
 import sys
 import os
 from pathlib import Path
-from main.crawl import extract_URLs
-from main.export import try_verify_align_filter_merge_below
-from main.extraction_jobs_FINN import extractJobDataFromAds_FINN
-from main.post_process import post_process_jobs
-from main.run_helper import ensure_venv
+
+try:
+    from .crawl import extract_URLs
+    from .export import try_verify_align_filter_merge_below
+    from .extraction_jobs_FINN import extractJobDataFromAds_FINN
+    from .post_process import post_process_jobs
+    from .run_helper import ensure_venv
+except ImportError:
+    from crawl import extract_URLs
+    from export import try_verify_align_filter_merge_below
+    from extraction_jobs_FINN import extractJobDataFromAds_FINN
+    from post_process import post_process_jobs
+    from run_helper import ensure_venv
 
 ensure_venv()
 

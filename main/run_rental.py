@@ -1,9 +1,17 @@
 ﻿import pandas as pd
-from main.crawl import extract_URLs
-from main.export import try_verify_align_filter_merge_below
-from main.extraction_rental import extractRentalDataFromAds
-from main.post_process import post_process_rental
-from main.run_helper import ensure_venv
+
+try:
+    from .crawl import extract_URLs
+    from .export import try_verify_align_filter_merge_below
+    from .extraction_rental import extractRentalDataFromAds
+    from .post_process import post_process_rental
+    from .run_helper import ensure_venv
+except ImportError:
+    from crawl import extract_URLs
+    from export import try_verify_align_filter_merge_below
+    from extraction_rental import extractRentalDataFromAds
+    from post_process import post_process_rental
+    from run_helper import ensure_venv
 
 ensure_venv()
 

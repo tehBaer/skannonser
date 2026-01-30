@@ -2,8 +2,13 @@
 import subprocess
 import pandas as pd
 from pandas import DataFrame
-from main.extraction import load_or_fetch_ad_html
-from main.parsing_helpers_rental import *
+
+try:
+    from main.extraction import load_or_fetch_ad_html
+    from main.parsing_helpers_rental import *
+except ImportError:
+    from extraction import load_or_fetch_ad_html
+    from parsing_helpers_rental import *
 
 # Ensure the path to the virtual environment activation script is correct
 # subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
