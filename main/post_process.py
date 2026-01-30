@@ -70,6 +70,25 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
     # Format capitalization
     df['Adresse'] = df['Adresse'].str.title()
 
+    # Add commuting time to Pendlevei
+    from location_features import CommutingTimeToWorkAddress
+    print("Calculating commuting time to Pendlevei...")
+    commute_calculator = CommutingTimeToWorkAddress("Rådmann Halmrasts Vei 5")
+    
+    commuting_times = []
+    for idx, row in df.iterrows():
+        address = row['Adresse']
+        try:
+            commute_time = commute_calculator.calculate(address)
+            commuting_times.append(commute_time)
+            if idx % 10 == 0:
+                print(f"  {idx}: {address} -> {commute_time}")
+        except Exception as e:
+            print(f"Error calculating commute for {address}: {e}")
+            commuting_times.append(None)
+    
+    df['PENDLEVEI'] = commuting_times
+
     # Drop unnecessary columns
     df = df.drop(columns=['Primærrom',
                           'Internt bruksareal (BRA-i)',

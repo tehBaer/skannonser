@@ -127,41 +127,65 @@ class WalkingDistanceToGrocery(LocationFeature):
 
 
 class CommutingTimeToWorkAddress(LocationFeature):
-    """Calculate commuting time to a specific work address."""
+    """Calculate commuting time to a specific work address using Google Maps API."""
 
     def __init__(self, work_address: str, config: Optional[Dict[str, Any]] = None):
         super().__init__("commuting_time_to_work", config)
         self.work_address = work_address
-        self.work_coords = self.get_coordinates(work_address)
+        
+        # Try to get API key from config, environment, or config file
+        self.api_key = None
+        if config and "api_key" in config:
+            self.api_key = config["api_key"]
+        elif os.getenv("GOOGLE_MAPS_API_KEY"):
+            self.api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+        else:
+            # Try to import from config file
+            try:
+                from config import GOOGLE_MAPS_API_KEY
+                self.api_key = GOOGLE_MAPS_API_KEY
+            except ImportError:
+                pass
+        
+        if not self.api_key or self.api_key == "your-google-maps-api-key-here":
+            print("Warning: GOOGLE_MAPS_API_KEY not configured. Please set it in config.py or as an environment variable.")
 
     def calculate(self, address: str) -> Optional[str]:
         """
-        Calculate commuting time to work address.
+        Calculate commuting time to work address using Google Maps Directions API.
         
         Returns:
             String with commuting time (e.g., "45 min") or None if calculation fails
         """
-        if not self.work_coords:
-            print(f"Could not geocode work address: {self.work_address}")
-            return None
-
-        coords = self.get_coordinates(address)
-        if not coords:
+        if not self.api_key:
+            print(f"Error: Google Maps API key not configured")
             return None
 
         try:
-            # Using OSRM (Open Source Routing Machine) for routing
-            osrm_url = "https://router.project-osrm.org/route/v1/driving"
-            route_url = f"{osrm_url}/{coords[1]},{coords[0]};{self.work_coords[1]},{self.work_coords[0]}"
+            # Using Google Maps Directions API
+            base_url = "https://maps.googleapis.com/maps/api/directions/json"
+            params = {
+                "origin": address,
+                "destination": self.work_address,
+                "mode": "driving",
+                "key": self.api_key
+            }
             
-            response = requests.get(route_url, params={"overview": "false"}, timeout=10)
+            response = requests.get(base_url, params=params, timeout=10)
             response.raise_for_status()
             
             data = response.json()
-            if data["code"] == "Ok" and data["routes"]:
-                duration_seconds = data["routes"][0]["duration"]
+            if data["status"] == "OK" and data["routes"]:
+                # Get duration from first route
+                duration_seconds = data["routes"][0]["legs"][0]["duration"]["value"]
                 minutes = int(duration_seconds / 60)
                 return f"{minutes} min"
+            elif data["status"] == "ZERO_RESULTS":
+                print(f"Warning: No route found from '{address}' to '{self.work_address}'")
+                return None
+            else:
+                print(f"Google Maps API error: {data['status']}")
+                return None
                 
         except Exception as e:
             print(f"Error calculating commuting time for '{address}': {e}")
