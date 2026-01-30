@@ -7,7 +7,7 @@ from main.run_helper import ensure_venv
 
 ensure_venv()
 
-projectName = 'flippe'
+projectName = 'leie2'
 # 1
 urlBase = 'https://www.finn.no/realestate/lettings/search.html?radius=700&lat=59.939015007471454&lon=10.75032940563446&price_from=13000&price_to=18500'
 regex = r'/realestate/.*?/ad\.html\?finnkode=\d+'
@@ -25,7 +25,7 @@ headers = ['Finnkode', 'Tilgjengelighet', 'Adresse', 'Postnummer', 'Leiepris', '
 
 
 # Verify, align, filter and merge
-try_verify_align_filter_merge_below("Flippe",
+try_verify_align_filter_merge_below("Leie2",
                 f"{projectName}/AB_processed.csv",
                 f"{projectName}/sheet_downloaded.csv",
                 f"{projectName}/C_filtered.csv",

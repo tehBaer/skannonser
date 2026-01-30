@@ -47,6 +47,42 @@ def post_process_rental(df: DataFrame, projectName: str, outputFileName: str, or
 
     return df
 
+def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
+    if df.empty:
+        df.to_csv(f'{projectName}/{outputFileName}', index=False)
+        return df
+
+    # Convert area columns to numeric, coerce errors to NaN
+    for col in ['Primærrom', 'Internt bruksareal (BRA-i)', 'Bruksareal']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Fill AREAL column
+    df['AREAL'] = df['Primærrom'].fillna(df['Internt bruksareal (BRA-i)']).fillna(df['Bruksareal'])
+
+    # Calculate PRIS KVM only where both Pris and AREAL are present
+    mask = df['Pris'].notna() & df['AREAL'].notna() & (df['AREAL'] > 0)
+    df['PRIS KVM'] = (df['Pris'].astype(float) / df['AREAL'].astype(float)).where(mask)
+    # Replace infinity with NaN before converting to Int64
+    df['PRIS KVM'] = df['PRIS KVM'].replace([float('inf'), float('-inf')], pd.NA)
+    df['PRIS KVM'] = df['PRIS KVM'].round().astype('Int64')
+
+    # Format capitalization
+    df['Adresse'] = df['Adresse'].str.title()
+
+    # Drop unnecessary columns
+    df = df.drop(columns=['Primærrom',
+                          'Internt bruksareal (BRA-i)',
+                          'Bruksareal',
+                          'Eksternt bruksareal (BRA-e)',
+                          'Balkong/Terrasse (TBA)',
+                          'Bruttoareal'
+                          ])
+
+    df.to_csv(f'{projectName}/{outputFileName}', index=False)
+
+    return df
+
 def post_process_jobs(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
     """Post-process job data by normalizing dates and formatting text fields."""
     if df.empty:
