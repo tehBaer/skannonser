@@ -12,10 +12,33 @@ Example features:
 
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
+from datetime import datetime, timedelta
 import requests
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
+
+
+def _next_monday_iso(hour: int, minute: int = 0) -> str:
+    """Return ISO timestamp (UTC-formatted) for next Monday at given hour/minute."""
+    now = datetime.now()
+    days_ahead = 0 - now.weekday()  # Monday is 0
+    if days_ahead <= 0:  # Target day already happened this week
+        days_ahead += 7
+    next_monday = now + timedelta(days=days_ahead)
+    departure_time = next_monday.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return departure_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _resolve_departure_time(departure_time: Optional[Union[int, str, datetime]], default_hour: int) -> str:
+    """Resolve departure time to an ISO timestamp string (UTC-formatted)."""
+    if departure_time is None:
+        return _next_monday_iso(default_hour)
+    if isinstance(departure_time, int):
+        return _next_monday_iso(departure_time)
+    if isinstance(departure_time, datetime):
+        return departure_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return str(departure_time)
 
 
 class LocationFeature(ABC):
@@ -72,12 +95,12 @@ class WalkingDistanceToGrocery(LocationFeature):
         super().__init__("walking_distance_to_grocery", config)
         self.api_key = config.get("api_key") if config else os.getenv("OSMNX_API_KEY")
 
-    def calculate(self, address: str) -> Optional[str]:
+    def calculate(self, address: str) -> Optional[int]:
         """
         Calculate walking distance to nearest grocery store.
         
         Returns:
-            String with distance in km or None if calculation fails
+            Integer distance in meters or None if calculation fails
         """
         coords = self.get_coordinates(address)
         if not coords:
@@ -116,9 +139,9 @@ class WalkingDistanceToGrocery(LocationFeature):
                     min_distance = min(min_distance, distance)
             
             if min_distance != float('inf'):
-                # Approximate walking distance as 1.3x straight-line distance
-                walking_distance = min_distance * 1.3
-                return f"{walking_distance:.2f} km"
+                # Approximate walking distance as 1.3x straight-line distance and convert to meters
+                walking_distance_m = int(min_distance * 1.3 * 1000)
+                return walking_distance_m
                 
         except Exception as e:
             print(f"Error calculating grocery distance for '{address}': {e}")
@@ -154,52 +177,17 @@ class CommutingTimeToWorkAddress(LocationFeature):
         if not self.api_key or self.api_key == "your-google-maps-api-key-here":
             print("Warning: GOOGLE_MAPS_API_KEY not configured. Please set it in config.py or as an environment variable.")
 
-    def calculate(self, address: str) -> Optional[str]:
+    def calculate(
+        self,
+        address: str,
+        postnummer: str = None,
+        departure_time: Optional[Union[int, str, datetime]] = None,
+        origin_override: Optional[str] = None,
+        destination_override: Optional[str] = None,
+    ) -> Optional[int]:
         """
-        Calculate commuting time to work address using Google Maps Directions API.
-        
-        Returns:
-            String with commuting time (e.g., "45 min") or None if calculation fails
-        """
-        if not self.api_key:
-            print(f"Error: Google Maps API key not configured")
-            return None
-
-        try:
-            # Using Google Maps Directions API
-            base_url = "https://maps.googleapis.com/maps/api/directions/json"
-            params = {
-                "origin": address,
-                "destination": self.work_address,
-                "mode": "driving",
-                "key": self.api_key
-            }
-            
-            response = requests.get(base_url, params=params, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
-            if data["status"] == "OK" and data["routes"]:
-                # Get duration from first route
-                duration_seconds = data["routes"][0]["legs"][0]["duration"]["value"]
-                minutes = int(duration_seconds / 60)
-                return f"{minutes} min"
-            elif data["status"] == "ZERO_RESULTS":
-                print(f"Warning: No route found from '{address}' to '{self.work_address}'")
-                return None
-            else:
-                print(f"Google Maps API error: {data['status']}")
-                return None
-                
-        except Exception as e:
-            print(f"Error calculating commuting time for '{address}': {e}")
-        
-        return None
-    
-    def calculate_minutes(self, address: str, postnummer: str = None) -> Optional[int]:
-        """
-        Calculate commuting time using Google Maps Directions API.
-        Returns integer minutes only (for database storage).
+        Calculate commuting time using Google Maps Routes API.
+        Returns integer minutes only.
         
         Args:
             address: Origin address
@@ -209,34 +197,171 @@ class CommutingTimeToWorkAddress(LocationFeature):
             Integer minutes or None if calculation fails
         """
         if not self.api_key:
+            print("\n      ⚠️  No Google Maps API key configured")
             return None
 
         try:
             # Combine address with postal code if provided
-            origin = f"{address}, {postnummer}" if postnummer else address
+            if origin_override:
+                origin = origin_override
+            else:
+                origin = f"{address}, {postnummer}" if postnummer else address
+
+            destination = destination_override or self.work_address
             
-            # Using Google Maps Directions API
-            base_url = "https://maps.googleapis.com/maps/api/directions/json"
-            params = {
-                "origin": origin,
-                "destination": self.work_address,
-                "mode": "driving",
-                "key": self.api_key
+            # Using Google Maps Routes API
+            base_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+            
+            headers = {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": self.api_key,
+                "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
             }
             
-            response = requests.get(base_url, params=params, timeout=10)
-            response.raise_for_status()
+            # Default: next Monday at 8:00 AM
+            departure_time_str = _resolve_departure_time(departure_time, default_hour=8)
+            
+            body = {
+                "origin": {"address": origin},
+                "destination": {"address": destination},
+                "travelMode": "DRIVE",
+                "routingPreference": "TRAFFIC_AWARE",
+                "departureTime": departure_time_str
+            }
+            
+            response = requests.post(base_url, json=body, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                print(f"\n      ⚠️  API error {response.status_code}: {response.text[:200]}")
+                return None
             
             data = response.json()
-            if data["status"] == "OK" and data["routes"]:
-                # Get duration from first route and return as integer minutes
-                duration_seconds = data["routes"][0]["legs"][0]["duration"]["value"]
-                minutes = int(duration_seconds / 60)
-                return minutes
+            if "routes" in data and data["routes"]:
+                route = data["routes"][0]
+                if "duration" in route:
+                    duration_str = route["duration"]
+                    # Parse duration like "2700s" to seconds
+                    duration_seconds = int(duration_str.rstrip('s'))
+                    minutes = int(duration_seconds / 60)
+                    return minutes
+                return None
             else:
+                print(f"\n      ⚠️  No routes found in response")
                 return None
                 
         except Exception as e:
+            print(f"\n      ⚠️  Exception: {str(e)}")
+            return None
+
+
+class PublicTransitCommuteTime(LocationFeature):
+    """Calculate total commuting time to work using public transport."""
+
+    def __init__(self, work_address: str, config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize public transit commute time calculator.
+        
+        Args:
+            work_address: The work address to calculate commute time to
+            config: Optional configuration
+        """
+        super().__init__("public_transit_commute_time", config)
+        self.work_address = work_address
+        
+        # Try to get API key from config, environment, or config file
+        self.api_key = None
+        if config and "api_key" in config:
+            self.api_key = config["api_key"]
+        elif os.getenv("GOOGLE_MAPS_API_KEY"):
+            self.api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+        else:
+            # Try to import from config file
+            try:
+                from main.config.config import GOOGLE_MAPS_API_KEY
+                self.api_key = GOOGLE_MAPS_API_KEY
+            except ImportError:
+                try:
+                    from config.config import GOOGLE_MAPS_API_KEY
+                    self.api_key = GOOGLE_MAPS_API_KEY
+                except ImportError:
+                    pass
+        
+        if not self.api_key or self.api_key == "your-google-maps-api-key-here":
+            print("Warning: GOOGLE_MAPS_API_KEY not configured. Please set it in config.py or as an environment variable.")
+
+    def calculate(
+        self,
+        address: str,
+        postnummer: str = None,
+        departure_time: Optional[Union[int, str, datetime]] = None,
+        origin_override: Optional[str] = None,
+        destination_override: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Calculate total commuting time using public transit via Google Maps Routes API.
+        Returns integer minutes only.
+        
+        Args:
+            address: Origin address
+            postnummer: Optional postal code (improves accuracy)
+        
+        Returns:
+            Integer minutes or None if calculation fails
+        """
+        if not self.api_key:
+            print("\n      ⚠️  No Google Maps API key configured")
+            return None
+
+        try:
+            # Combine address with postal code if provided
+            if origin_override:
+                origin = origin_override
+            else:
+                origin = f"{address}, {postnummer}" if postnummer else address
+
+            destination = destination_override or self.work_address
+            
+            # Using Google Maps Routes API with TRANSIT travel mode
+            base_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+            
+            headers = {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": self.api_key,
+                "X-Goog-FieldMask": "routes.duration,routes.distanceMeters"
+            }
+            
+            # Default: next Monday at 8:00 AM
+            departure_time_str = _resolve_departure_time(departure_time, default_hour=8)
+            
+            body = {
+                "origin": {"address": origin},
+                "destination": {"address": destination},
+                "travelMode": "TRANSIT",
+                "departureTime": departure_time_str
+            }
+            
+            response = requests.post(base_url, json=body, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                print(f"\n      ⚠️  API error {response.status_code}: {response.text[:200]}")
+                return None
+            
+            data = response.json()
+            if "routes" in data and data["routes"]:
+                route = data["routes"][0]
+                if "duration" in route:
+                    duration_str = route["duration"]
+                    # Parse duration like "2700s" to seconds
+                    duration_seconds = int(duration_str.rstrip('s'))
+                    minutes = int(duration_seconds / 60)
+                    return minutes
+                return None
+            else:
+                print(f"\n      ⚠️  No routes found in response")
+                return None
+                
+        except Exception as e:
+            print(f"\n      ⚠️  Exception: {str(e)}")
             return None
 
 
@@ -254,12 +379,12 @@ class WalkingTimeToPublicTransit(LocationFeature):
         super().__init__(f"walking_time_to_{transit_type}", config)
         self.transit_type = transit_type
 
-    def calculate(self, address: str) -> Optional[str]:
+    def calculate(self, address: str) -> Optional[int]:
         """
         Calculate walking time to nearest public transit stop.
         
         Returns:
-            String with walking time (e.g., "8 min") or None if calculation fails
+            Integer minutes or None if calculation fails
         """
         coords = self.get_coordinates(address)
         if not coords:
@@ -328,7 +453,7 @@ class WalkingTimeToPublicTransit(LocationFeature):
             if min_distance != float('inf'):
                 # Assume 1.4 km/hour walking speed = 84 m/min
                 walking_minutes = int((min_distance * 1000) / 84)
-                return f"{walking_minutes} min"
+                return walking_minutes
                 
         except Exception as e:
             print(f"Error calculating transit time for '{address}': {e}")

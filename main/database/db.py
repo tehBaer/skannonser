@@ -53,11 +53,26 @@ class PropertyDatabase:
                 finnkode TEXT UNIQUE NOT NULL,
                 adresse_cleaned TEXT,
                 pendlevei INTEGER,
+                kjøretid INTEGER,
+                pendlevei_retur_16 INTEGER,
+                kjøretid_retur_16 INTEGER,
                 google_maps_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (finnkode) REFERENCES eiendom(finnkode)
             )
         ''')
+
+        # Ensure new columns exist for existing databases
+        cursor.execute("PRAGMA table_info(eiendom_processed)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        columns_to_add = {
+            "kjøretid": "INTEGER",
+            "pendlevei_retur_16": "INTEGER",
+            "kjøretid_retur_16": "INTEGER",
+        }
+        for column_name, column_type in columns_to_add.items():
+            if column_name not in existing_columns:
+                cursor.execute(f"ALTER TABLE eiendom_processed ADD COLUMN {column_name} {column_type}")
         
         # Create indexes for better query performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_finnkode ON eiendom(finnkode)')
@@ -116,6 +131,13 @@ class PropertyDatabase:
             # Get pendlevei if present (for location table)
             pendlevei = row.get('PENDLEVEI', None) if pd.notna(row.get('PENDLEVEI')) else None
             
+            # Get kjøretid if present (for location table)
+            kjøretid = row.get('KJØRETID', None) if pd.notna(row.get('KJØRETID')) else None
+
+            # Get return times if present (for location table)
+            pendlevei_retur_16 = row.get('PENDLEVEI_RETUR_16', None) if pd.notna(row.get('PENDLEVEI_RETUR_16')) else None
+            kjøretid_retur_16 = row.get('KJØRETID_RETUR_16', None) if pd.notna(row.get('KJØRETID_RETUR_16')) else None
+            
             if existing:
                 # Update existing record
                 cursor.execute('''
@@ -138,13 +160,16 @@ class PropertyDatabase:
                       data['pris'], data['url'], data['areal'], data['pris_kvm']))
                 inserted += 1
             
-            # Also insert/update processed data with pendlevei and Google Maps URL
+            # Also insert/update processed data with pendlevei, kjøretid and Google Maps URL
             conn.commit()  # Commit property update first
             self.insert_or_update_eiendom_processed(
-                finnkode, 
-                data['adresse'], 
-                data['postnummer'], 
-                pendlevei
+                finnkode,
+                data['adresse'],
+                data['postnummer'],
+                pendlevei,
+                kjøretid,
+                pendlevei_retur_16,
+                kjøretid_retur_16
             )
         
         conn.commit()
@@ -231,6 +256,15 @@ class PropertyDatabase:
     def get_eiendom_for_sheets(self) -> pd.DataFrame:
         """Get property listings formatted for Google Sheets export."""
         conn = self.get_connection()
+
+        # Optional price filter
+        try:
+            from main.config.filters import MAX_PRICE
+        except ImportError:
+            try:
+                from config.filters import MAX_PRICE
+            except ImportError:
+                MAX_PRICE = None
         
         # Get active listings with the exact column names for Sheets
         # Uses cleaned addresses from eiendom_processed table when available
@@ -244,19 +278,30 @@ class PropertyDatabase:
                 e.url as "URL",
                 e.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
-                ep.pendlevei as "PENDLEVEI"
+                ep.pendlevei as "PENDLEVEI",
+                ep.kjøretid as "KJØRETID",
+                ep.pendlevei_retur_16 as "PENDLEVEI_RETUR_16",
+                ep.kjøretid_retur_16 as "KJØRETID_RETUR_16",
+                ep.google_maps_url as "GOOGLE_MAPS_URL"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             WHERE e.is_active = 1
-            ORDER BY e.scraped_at DESC
         '''
-        
-        df = pd.read_sql_query(query, conn)
+
+        params = []
+        if MAX_PRICE is not None:
+            query += " AND e.pris <= ?"
+            params.append(MAX_PRICE)
+
+        query += " ORDER BY e.scraped_at DESC"
+
+        df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         
-        # Convert integer columns back to int (pandas reads them as float64)
-        int_columns = ['Pris', 'AREAL', 'PRIS KVM', 'PENDLEVEI']
-        for col in int_columns:
+        # Convert numeric columns back to int (pandas reads them as float64)
+        # Keep commute-time columns empty when missing (no fillna(0)).
+        numeric_columns = ['Pris', 'AREAL', 'PRIS KVM']
+        for col in numeric_columns:
             if col in df.columns:
                 df[col] = df[col].fillna(0).astype(int)
         
@@ -274,8 +319,9 @@ class PropertyDatabase:
         search_query = f"{adresse_str}+{postnummer_str}".replace(" ", "+")
         return f"https://www.google.com/maps/place/{search_query}"
     
-    def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str, 
-                                         postnummer: str, pendlevei: str = None):
+    def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str,
+                                         postnummer: str, pendlevei: str = None, kjøretid: str = None,
+                                         pendlevei_retur_16: str = None, kjøretid_retur_16: str = None):
         """Insert or update processed location data for a property."""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -290,16 +336,18 @@ class PropertyDatabase:
         if existing:
             cursor.execute('''
                 UPDATE eiendom_processed
-                SET adresse_cleaned = ?, pendlevei = ?, google_maps_url = ?,
-                    updated_at = CURRENT_TIMESTAMP
+                SET adresse_cleaned = ?, pendlevei = ?, kjøretid = ?,
+                    pendlevei_retur_16 = ?, kjøretid_retur_16 = ?,
+                    google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, pendlevei, google_maps_url, finnkode))
+            ''', (adresse_cleaned, pendlevei, kjøretid, pendlevei_retur_16, kjøretid_retur_16,
+                  google_maps_url, finnkode))
         else:
             cursor.execute('''
                 INSERT INTO eiendom_processed
-                (finnkode, adresse_cleaned, pendlevei, google_maps_url)
-                VALUES (?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, pendlevei, google_maps_url))
+                (finnkode, adresse_cleaned, pendlevei, kjøretid, pendlevei_retur_16, kjøretid_retur_16, google_maps_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (finnkode, adresse_cleaned, pendlevei, kjøretid, pendlevei_retur_16, kjøretid_retur_16, google_maps_url))
         
         conn.commit()
         conn.close()
@@ -367,7 +415,8 @@ class PropertyDatabase:
             postnummer = row['postnummer']
             pendlevei = row['pendlevei']
             
-            self.insert_or_update_eiendom_processed(finnkode, adresse, postnummer, pendlevei)
+            # No kjøretid in old eiendom table, so pass None
+            self.insert_or_update_eiendom_processed(finnkode, adresse, postnummer, pendlevei, None)
             migrated += 1
         
         print(f"Migrated {migrated} properties to processed table")

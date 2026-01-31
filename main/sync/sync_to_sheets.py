@@ -34,6 +34,39 @@ def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -> List[str]:
+    """Ensure sheet header includes all desired columns, appending missing ones."""
+    range_name = f"{sheet_name}!A1:Z1"
+    result = service.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range=range_name
+    ).execute()
+
+    header_row = result.get("values", [[]])
+    header = header_row[0] if header_row else []
+    header_normalized = [col.strip() for col in header]
+
+    missing = [col for col in desired_columns if col not in header_normalized]
+
+    if not header:
+        updated_header = desired_columns
+    elif missing:
+        updated_header = header + missing
+    else:
+        updated_header = header
+
+    if updated_header != header:
+        service.spreadsheets().values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!A1",
+            valueInputOption="RAW",
+            body={"values": [updated_header]}
+        ).execute()
+        print(f"✓ Updated sheet headers with {len(updated_header)} columns")
+
+    return [col.strip() for col in updated_header]
+
+
 def get_existing_finnkodes_from_sheet(service, sheet_name: str) -> List[str]:
     """Get all existing Finnkodes from the Google Sheet."""
     try:
@@ -115,9 +148,13 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     
     # Sanitize data
     new_listings = sanitize_for_sheets(new_listings)
-    
-    # Convert to list format for Sheets API
-    new_rows = new_listings.values.tolist()
+
+    # Ensure headers contain new columns and align row order
+    desired_columns = list(new_listings.columns)
+    header_row = ensure_sheet_headers(service, sheet_name, desired_columns)
+    new_rows = []
+    for _, row in new_listings.iterrows():
+        new_rows.append([row.get(col, '') for col in header_row])
     
     # Find the next available row in the sheet
     try:

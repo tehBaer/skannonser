@@ -13,11 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from main.database.db import PropertyDatabase
     from main.googleUtils import get_credentials, SPREADSHEET_ID
-    from main.sync.sync_to_sheets import sanitize_for_sheets
+    from main.sync.sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
 except ImportError:
     from database.db import PropertyDatabase
     from googleUtils import get_credentials, SPREADSHEET_ID
-    from sync.sync_to_sheets import sanitize_for_sheets
+    from sync.sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -73,6 +73,9 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     df = sanitize_for_sheets(df)
     df['Finnkode'] = df['Finnkode'].astype(str).str.strip()
     
+    # Ensure headers contain any new columns
+    ensure_sheet_headers(service, sheet_name, list(df.columns))
+
     # Get sheet data with row numbers
     sheet_data = get_sheet_data_with_row_numbers(service, sheet_name)
     
@@ -85,7 +88,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     if not header_row:
         print("Could not find header row")
         return False
-    
+
     # Normalize header (strip whitespace from column names)
     header_row_normalized = [col.strip() for col in header_row]
     print(f"Sheet columns: {header_row_normalized}")

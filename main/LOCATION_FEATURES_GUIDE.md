@@ -13,20 +13,31 @@ The location features system provides a flexible, extensible framework for addin
    - Returns walking distance in kilometers
    - Uses OpenStreetMap data
 
-2. **Commuting Time to Work Address** (`commuting_time_to_work`)
+2. **Commuting Time to Work Address (Driving)** (`commuting_time_to_work`)
    - Calculates driving time from property to your work address
    - Returns time in minutes
-   - Uses OSRM (Open Source Routing Machine) for routing
+   - Uses Google Maps Routes API
 
-3. **Walking Time to Tram Stop** (`walking_time_to_tram`)
+3. **Public Transit Commute Time** (`public_transit_commute_time`) - Maps to **PENDLEVEI** column
+   - Calculates TOTAL commuting time using public transit from property to work address
+   - Returns time in minutes
+   - Includes walking to transit stop + transit travel time
+   - Uses Google Maps Routes API with TRANSIT mode
+
+4. **Walking Time to Nearest Public Transit Stop** (`walking_time_to_all`)
+   - Finds nearest tram, bus, or train stop
+   - Returns walking time in minutes
+   - Maps to **GÅ_TID_TIL_STOPP** column (future)
+
+5. **Walking Time to Tram Stop** (`walking_time_to_tram`)
    - Finds nearest tram/streetcar stop
    - Returns walking time in minutes
 
-4. **Walking Time to Bus Stop** (`walking_time_to_bus`)
+6. **Walking Time to Bus Stop** (`walking_time_to_bus`)
    - Finds nearest bus stop
    - Returns walking time in minutes
 
-5. **Walking Time to Train Station** (`walking_time_to_train`)
+7. **Walking Time to Train Station** (`walking_time_to_train`)
    - Finds nearest train/railway station
    - Returns walking time in minutes
 
@@ -51,11 +62,13 @@ results = calculator.calculate_all(address)
 print(results)
 # Output:
 # {
-#     'walking_distance_to_grocery': '0.45 km',
-#     'commuting_time_to_work': '25 min',
-#     'walking_time_to_tram': '5 min',
-#     'walking_time_to_bus': '3 min',
-#     'walking_time_to_train': '12 min'
+#     'walking_distance_to_grocery': 850,  # meters
+#     'commuting_time_to_work': 25,  # driving time in minutes
+#     'public_transit_commute_time': 35,  # PENDLEVEI - total public transit time in minutes
+#     'walking_time_to_all': 8,  # walking to nearest stop in minutes
+#     'walking_time_to_tram': 5,
+#     'walking_time_to_bus': 3,
+#     'walking_time_to_train': 12
 # }
 ```
 
