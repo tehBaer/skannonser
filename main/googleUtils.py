@@ -15,8 +15,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 def get_credentials():
     """Retrieve or refresh Google API credentials."""
     creds = None
-    token_path = os.path.join(SCRIPT_DIR, "token.json")
-    credentials_path = os.path.join(SCRIPT_DIR, "credentials.json")
+    token_path = os.path.join(SCRIPT_DIR, "config", "token.json")
+    credentials_path = os.path.join(SCRIPT_DIR, "config", "credentials.json")
     
     if os.path.exists(token_path):
         creds = Credentials.from_authorized_user_file(token_path, SCOPES)

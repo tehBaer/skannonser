@@ -6,7 +6,11 @@ def getBuyPrice(soup):
     total_price_match = re.search(r'([\d\xa0\s]+) kr', pricing_section.get_text())
     total_price = None
     if total_price_match:
-        total_price = total_price_match.group(1).replace('\xa0', '').replace(' ', '')
+        price_str = total_price_match.group(1).replace('\xa0', '').replace(' ', '')
+        try:
+            total_price = int(price_str)
+        except ValueError:
+            total_price = None
     return total_price
 
 

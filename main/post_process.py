@@ -70,24 +70,39 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
     # Format capitalization
     df['Adresse'] = df['Adresse'].str.title()
 
-    # Add commuting time to Pendlevei
-    from location_features import CommutingTimeToWorkAddress
-    print("Calculating commuting time to Pendlevei...")
-    commute_calculator = CommutingTimeToWorkAddress("Rådmann Halmrasts Vei 5")
+    # Add commuting time to Pendlevei only if not already present
+    # TEMPORARILY COMMENTED OUT - avoid unnecessary API calls
+    # if 'PENDLEVEI' not in df.columns or df['PENDLEVEI'].isna().any():
+    #     try:
+    #         from main.location_features import CommutingTimeToWorkAddress
+    #     except ImportError:
+    #         from location_features import CommutingTimeToWorkAddress
+    #     print("Calculating commuting time to Pendlevei...")
+    # 
+    #     commute_calculator = CommutingTimeToWorkAddress("Rådmann Halmrasts Vei 5")
+    #     
+    #     # Initialize PENDLEVEI column if it doesn't exist
+    #     if 'PENDLEVEI' not in df.columns:
+    #         df['PENDLEVEI'] = None
+    #     
+    #     for idx, row in df.iterrows():
+    #         # Skip if this entry already has a commute time
+    #         if pd.notna(row.get('PENDLEVEI')):
+    #             continue
+    #             
+    #         address = row['Adresse']
+    #         try:
+    #             commute_time = commute_calculator.calculate(address)
+    #             df.at[idx, 'PENDLEVEI'] = commute_time
+    #             if idx % 10 == 0:
+    #                 print(f"  {idx}: {address} -> {commute_time}")
+    #         except Exception as e:
+    #             print(f"Error calculating commute for {address}: {e}")
+    #             df.at[idx, 'PENDLEVEI'] = None
     
-    commuting_times = []
-    for idx, row in df.iterrows():
-        address = row['Adresse']
-        try:
-            commute_time = commute_calculator.calculate(address)
-            commuting_times.append(commute_time)
-            if idx % 10 == 0:
-                print(f"  {idx}: {address} -> {commute_time}")
-        except Exception as e:
-            print(f"Error calculating commute for {address}: {e}")
-            commuting_times.append(None)
-    
-    df['PENDLEVEI'] = commuting_times
+    # Ensure PENDLEVEI column exists for downstream processing
+    if 'PENDLEVEI' not in df.columns:
+        df['PENDLEVEI'] = None
 
     # Drop unnecessary columns
     df = df.drop(columns=['Primærrom',
@@ -131,4 +146,6 @@ if __name__ == "__main__":
     # df = pd.read_csv(file_path)
     # cleanData(df, 'leie', 'live_data_parsed.csv')
 
-    post_process_rental(pd.read_csv('leie/saved_all_updated.csv'), 'leie', 'saved_all_updated_parsed.csv')
+    # post_process_rental(pd.read_csv('leie/saved_all_updated.csv'), 'leie', 'saved_all_updated_parsed.csv')
+    pass
+

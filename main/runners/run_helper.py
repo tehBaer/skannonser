@@ -6,12 +6,12 @@ from pathlib import Path
 try:
     from main.crawl import extract_URLs
     from main.export import try_verify_align_filter_merge_below
-    from main.extraction_jobs_FINN import extractJobDataFromAds_FINN
+    from main.extractors.extraction_jobs_FINN import extractJobDataFromAds_FINN
     from main.post_process import post_process_jobs
 except ImportError:
     from crawl import extract_URLs
     from export import try_verify_align_filter_merge_below
-    from extraction_jobs_FINN import extractJobDataFromAds_FINN
+    from extractors.extraction_jobs_FINN import extractJobDataFromAds_FINN
     from post_process import post_process_jobs
 
 def ensure_venv():
@@ -20,8 +20,8 @@ def ensure_venv():
     If not, it re-executes the script with the virtual environment's Python interpreter.
     """
     # Locate venv relative to this file
-    # Assumes the script is in 'main' and .venv is in the parent directory
-    venv_path = Path(__file__).resolve().parent.parent / '.venv'
+    # Script is in main/runners, .venv is two levels up
+    venv_path = Path(__file__).resolve().parent.parent.parent / '.venv'
 
     if sys.platform == 'win32':
         venv_python = venv_path / 'Scripts' / 'python.exe'

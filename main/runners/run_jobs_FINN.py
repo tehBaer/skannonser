@@ -18,7 +18,7 @@ except ImportError:
 
 ensure_venv()
 
-projectName = 'jobbe'
+projectName = 'data/jobbe'
 # 1
 urlBase = 'https://www.finn.no/job/search?location=1.20001.20061&working_language=2'
 regex = r'https://www\.finn\.no/job/ad/\d+'

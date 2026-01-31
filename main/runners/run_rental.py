@@ -15,7 +15,7 @@ except ImportError:
 
 ensure_venv()
 
-projectName = 'leie2'
+projectName = 'data/flippe'
 # 1
 urlBase = 'https://www.finn.no/realestate/lettings/search.html?radius=700&lat=59.939015007471454&lon=10.75032940563446&price_from=13000&price_to=18500'
 regex = r'/realestate/.*?/ad\.html\?finnkode=\d+'

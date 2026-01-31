@@ -142,10 +142,14 @@ class CommutingTimeToWorkAddress(LocationFeature):
         else:
             # Try to import from config file
             try:
-                from config import GOOGLE_MAPS_API_KEY
+                from main.config.config import GOOGLE_MAPS_API_KEY
                 self.api_key = GOOGLE_MAPS_API_KEY
             except ImportError:
-                pass
+                try:
+                    from config.config import GOOGLE_MAPS_API_KEY
+                    self.api_key = GOOGLE_MAPS_API_KEY
+                except ImportError:
+                    pass
         
         if not self.api_key or self.api_key == "your-google-maps-api-key-here":
             print("Warning: GOOGLE_MAPS_API_KEY not configured. Please set it in config.py or as an environment variable.")

@@ -1,25 +1,30 @@
-import os
+﻿import os
+import subprocess
 import pandas as pd
 from pandas import DataFrame
 
 try:
-    from main.extraction import load_or_fetch_ad_html
-    from main.parsing_helpers_rental import *
+    from main.extractors.extraction import load_or_fetch_ad_html
+    from main.extractors.parsing_helpers_rental import *
 except ImportError:
     from extraction import load_or_fetch_ad_html
     from parsing_helpers_rental import *
 
+# Ensure the path to the virtual environment activation script is correct
+# subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
 
-def extract_eiendom_data(url, index, projectName, auto_save_new=True, force_save=False):
+
+def extract_rental_data(url, index, projectName, auto_save_new=True, force_save=False):
     try:
         soup = load_or_fetch_ad_html(url, projectName, auto_save_new, force_save)
     except Exception as e:
         print(f"Error fetching content for URL {url}: {e}")
+        #     throw exception
         raise
-
     address, area = getAddress(soup)
     sizes = getAllSizes(soup)
-    buy_price = getBuyPrice(soup)
+    prices = getRentPrice(soup)
+    date = getDate(soup)
 
     statuses = ["warning", "negative"]
     tilgjengelig = None
@@ -32,11 +37,13 @@ def extract_eiendom_data(url, index, projectName, auto_save_new=True, force_save
             break
 
     data = {
+        # 'Index': index,
         'Finnkode': url.split('finnkode=')[1],
         'Tilgjengelighet': tilgjengelig,
         'Adresse': address,
         'Postnummer': area,
-        'Pris': buy_price,
+        'Leiepris': prices.get('monthly'),
+        'Depositum': prices.get('deposit'),
         'URL': url,
         'Primærrom': sizes.get('info-primary-area'),
         'Internt bruksareal (BRA-i)': sizes.get('info-usable-i-area'),
@@ -44,25 +51,27 @@ def extract_eiendom_data(url, index, projectName, auto_save_new=True, force_save
         'Eksternt bruksareal (BRA-e)': sizes.get('info-usable-e-area'),
         'Balkong/Terrasse (TBA)': sizes.get('info-open-area'),
         'Bruttoareal': sizes.get('info-gross-area'),
+        # 'Innflytting': date.get('start'),
+        # 'Utflytting': date.get('end'),
     }
     print(f'Index {index}: {data}')
 
     return data
 
 
-def extractEiendomDataFromAds(projectName: str, urls: DataFrame, outputFileName: str):
+def extractRentalDataFromAds(projectName: str, urls: DataFrame, outputFileName: str):
     # Create the directory if it doesn't exist
     os.makedirs(projectName, exist_ok=True)
 
     collectedData = []
 
-    # Loop through each URL and extract eiendom data
+    # Loop through each URL and extract rental data
     try:
         # Create a folder inside the previous folder for the htmls
         os.makedirs(f'{projectName}/html_extracted', exist_ok=True)
         for index, url in enumerate(urls['URL']):
             try:
-                data = extract_eiendom_data(url, index, projectName)
+                data = extract_rental_data(url, index, projectName)
                 collectedData.append(data)
             except Exception as e:
                 print(f'Error processing URL at index {index}: {url} - {e}')
@@ -76,4 +85,4 @@ def extractEiendomDataFromAds(projectName: str, urls: DataFrame, outputFileName:
 
 
 if __name__ == "__main__":
-    extractEiendomDataFromAds('eiendom', pd.read_csv('eiendom/0_URLs.csv'), 'A_live.csv')
+    extractRentalDataFromAds('leie', pd.read_csv('leie/live_URLs.csv'), 'live_data.csv')

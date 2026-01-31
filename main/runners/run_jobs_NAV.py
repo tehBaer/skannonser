@@ -17,7 +17,7 @@ except ImportError:
 
 subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)
 
-projectName = 'jobbe_NAV'
+projectName = 'data/jobbe'
 # 1
 # urlBase = 'https://arbeidsplassen.nav.no/stillinger?county=OSLO&v=5&occupationLevel1=IT&occupationLevel2=IT.Utvikling&occupationLevel2=IT.Interaksjonsdesign&occupationLevel2=IT.Drift%2C+vedlikehold&pageCount=100'
 # regex = r'/stillinger/stilling/[a-f0-9-]+'
