@@ -176,6 +176,11 @@ def full_sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     print(f"Sheet: {sheet_name}")
     print(f"{'='*60}\n")
     
+    response = input("Proceed with Google Sheets API calls? (yes/no): ").strip().lower()
+    if response not in ['yes', 'y']:
+        print("✗ Full sync cancelled. No changes made.")
+        return False
+
     response = input("This will OVERWRITE all data in the sheet. Continue? (yes/no): ")
     if response.lower() != 'yes':
         print("Sync cancelled")

@@ -86,7 +86,9 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         print("Could not find header row")
         return False
     
-    print(f"Sheet columns: {header_row}")
+    # Normalize header (strip whitespace from column names)
+    header_row_normalized = [col.strip() for col in header_row]
+    print(f"Sheet columns: {header_row_normalized}")
     
     # Build finnkode to row mapping
     finnkode_to_row = {}
@@ -114,7 +116,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         
         # Build new row data
         new_row_data = []
-        for col in header_row:
+        for col in header_row_normalized:
             val = db_row.get(col, '')
             new_row_data.append('' if pd.isna(val) else val)
         
@@ -128,7 +130,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
             
             # Output what's changing
             print(f"✓ {finnkode} needs update")
-            for i, (header, old_val, new_val) in enumerate(zip(header_row, sheet_row_data, new_row_data)):
+            for i, (header, old_val, new_val) in enumerate(zip(header_row_normalized, sheet_row_data, new_row_data)):
                 if old_val != new_val:
                     print(f"    {header}: '{old_val}' → '{new_val}'")
     

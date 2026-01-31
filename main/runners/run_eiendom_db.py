@@ -38,7 +38,7 @@ def run_eiendom_scrape(db_path: str = None):
     print(f"Using database: {db.db_path}")
     
     projectName = 'data/eiendom'
-    
+
     # Step 1: Extract URLs from the search results
     print("\n" + "="*60)
     print("Step 1: Extracting URLs from search results")

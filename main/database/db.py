@@ -39,49 +39,23 @@ class PropertyDatabase:
                 url TEXT,
                 areal INTEGER,
                 pris_kvm INTEGER,
+                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                exported_to_sheets BOOLEAN DEFAULT 0
+            )
+        ''')
+        
+        # Create eiendom_processed table for location-related features
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS eiendom_processed (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finnkode TEXT UNIQUE NOT NULL,
+                adresse_cleaned TEXT,
                 pendlevei TEXT,
-                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                google_maps_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
-                exported_to_sheets BOOLEAN DEFAULT 0
-            )
-        ''')
-        
-        # Create rental (leie) table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS leie (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                finnkode TEXT UNIQUE NOT NULL,
-                tilgjengelighet TEXT,
-                adresse TEXT,
-                postnummer TEXT,
-                leiepris REAL,
-                depositum REAL,
-                url TEXT,
-                areal REAL,
-                pris_kvm REAL,
-                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
-                exported_to_sheets BOOLEAN DEFAULT 0
-            )
-        ''')
-        
-        # Create jobs (jobbe) table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS jobbe (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                finnkode TEXT UNIQUE NOT NULL,
-                title TEXT,
-                company TEXT,
-                location TEXT,
-                url TEXT,
-                job_type TEXT,
-                deadline TEXT,
-                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
-                exported_to_sheets BOOLEAN DEFAULT 0
+                FOREIGN KEY (finnkode) REFERENCES eiendom(finnkode)
             )
         ''')
         
@@ -90,11 +64,7 @@ class PropertyDatabase:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_active ON eiendom(is_active)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_exported ON eiendom(exported_to_sheets)')
         
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_leie_finnkode ON leie(finnkode)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_leie_active ON leie(is_active)')
-        
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_jobbe_finnkode ON jobbe(finnkode)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_jobbe_active ON jobbe(is_active)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_processed_finnkode ON eiendom_processed(finnkode)')
         
         conn.commit()
         conn.close()
@@ -141,30 +111,41 @@ class PropertyDatabase:
                 'url': row.get('URL', ''),
                 'areal': self._to_int(row.get('AREAL')),
                 'pris_kvm': self._to_int(row.get('PRIS KVM')),
-                'pendlevei': row.get('PENDLEVEI', None) if pd.notna(row.get('PENDLEVEI')) else None
             }
+            
+            # Get pendlevei if present (for location table)
+            pendlevei = row.get('PENDLEVEI', None) if pd.notna(row.get('PENDLEVEI')) else None
             
             if existing:
                 # Update existing record
                 cursor.execute('''
                     UPDATE eiendom 
                     SET tilgjengelighet = ?, adresse = ?, postnummer = ?, 
-                        pris = ?, url = ?, areal = ?, pris_kvm = ?, pendlevei = ?,
+                        pris = ?, url = ?, areal = ?, pris_kvm = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE finnkode = ?
                 ''', (data['tilgjengelighet'], data['adresse'], data['postnummer'],
                       data['pris'], data['url'], data['areal'], data['pris_kvm'],
-                      data['pendlevei'], finnkode))
+                      finnkode))
                 updated += 1
             else:
                 # Insert new record
                 cursor.execute('''
                     INSERT INTO eiendom 
-                    (finnkode, tilgjengelighet, adresse, postnummer, pris, url, areal, pris_kvm, pendlevei)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (finnkode, tilgjengelighet, adresse, postnummer, pris, url, areal, pris_kvm)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (finnkode, data['tilgjengelighet'], data['adresse'], data['postnummer'],
-                      data['pris'], data['url'], data['areal'], data['pris_kvm'], data['pendlevei']))
+                      data['pris'], data['url'], data['areal'], data['pris_kvm']))
                 inserted += 1
+            
+            # Also insert/update processed data with pendlevei and Google Maps URL
+            conn.commit()  # Commit property update first
+            self.insert_or_update_eiendom_processed(
+                finnkode, 
+                data['adresse'], 
+                data['postnummer'], 
+                pendlevei
+            )
         
         conn.commit()
         conn.close()
@@ -252,20 +233,22 @@ class PropertyDatabase:
         conn = self.get_connection()
         
         # Get active listings with the exact column names for Sheets
+        # Uses cleaned addresses from eiendom_processed table when available
         query = '''
             SELECT 
-                finnkode as "Finnkode",
-                tilgjengelighet as "Tilgjengelighet",
-                adresse as "Adresse",
-                postnummer as "Postnummer",
-                pris as "Pris",
-                url as "URL",
-                areal as "AREAL",
-                pris_kvm as "PRIS KVM",
-                pendlevei as "PENDLEVEI"
-            FROM eiendom
-            WHERE is_active = 1
-            ORDER BY scraped_at DESC
+                e.finnkode as "Finnkode",
+                e.tilgjengelighet as "Tilgjengelighet",
+                COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
+                e.postnummer as "Postnummer",
+                e.pris as "Pris",
+                e.url as "URL",
+                e.areal as "AREAL",
+                e.pris_kvm as "PRIS KVM",
+                ep.pendlevei as "PENDLEVEI"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            WHERE e.is_active = 1
+            ORDER BY e.scraped_at DESC
         '''
         
         df = pd.read_sql_query(query, conn)
@@ -278,6 +261,117 @@ class PropertyDatabase:
                 df[col] = df[col].fillna(0).astype(int)
         
         return df
+    
+    def _generate_google_maps_url(self, adresse: str, postnummer: str) -> str:
+        """Generate a Google Maps search URL from address and postal code."""
+        if pd.isna(adresse) or pd.isna(postnummer):
+            return ""
+        
+        # Format: replace spaces with + for URL encoding
+        adresse_str = str(adresse).strip()
+        postnummer_str = str(postnummer).strip()
+        
+        search_query = f"{adresse_str}+{postnummer_str}".replace(" ", "+")
+        return f"https://www.google.com/maps/place/{search_query}"
+    
+    def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str, 
+                                         postnummer: str, pendlevei: str = None):
+        """Insert or update processed location data for a property."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        adresse_cleaned = self._clean_address(adresse)
+        google_maps_url = self._generate_google_maps_url(adresse, postnummer)
+        
+        # Check if record exists
+        cursor.execute('SELECT id FROM eiendom_processed WHERE finnkode = ?', (finnkode,))
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.execute('''
+                UPDATE eiendom_processed
+                SET adresse_cleaned = ?, pendlevei = ?, google_maps_url = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE finnkode = ?
+            ''', (adresse_cleaned, pendlevei, google_maps_url, finnkode))
+        else:
+            cursor.execute('''
+                INSERT INTO eiendom_processed
+                (finnkode, adresse_cleaned, pendlevei, google_maps_url)
+                VALUES (?, ?, ?, ?)
+            ''', (finnkode, adresse_cleaned, pendlevei, google_maps_url))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_processed_data(self, finnkode: str = None) -> pd.DataFrame:
+        """Get processed data for properties."""
+        conn = self.get_connection()
+        
+        if finnkode:
+            query = '''
+                SELECT * FROM eiendom_processed WHERE finnkode = ?
+            '''
+            df = pd.read_sql_query(query, conn, params=(finnkode,))
+        else:
+            query = 'SELECT * FROM eiendom_processed ORDER BY updated_at DESC'
+            df = pd.read_sql_query(query, conn)
+        
+        conn.close()
+        return df
+    
+    def drop_and_recreate_processed_table(self):
+        """Drop the old eiendom_processed table and recreate it with new schema."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Drop the old processed table if it exists
+        cursor.execute('DROP TABLE IF EXISTS eiendom_processed')
+        
+        # Recreate with new schema
+        cursor.execute('''
+            CREATE TABLE eiendom_processed (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finnkode TEXT UNIQUE NOT NULL,
+                pendlevei TEXT,
+                google_maps_url TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (finnkode) REFERENCES eiendom(finnkode)
+            )
+        ''')
+        
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_processed_finnkode ON eiendom_processed(finnkode)')
+        
+        conn.commit()
+        conn.close()
+        
+        print("✓ eiendom_processed table recreated with new schema")
+    
+    def migrate_pendlevei_to_processed_table(self):
+        """Migrate pendlevei data from eiendom to eiendom_processed table."""
+        conn = self.get_connection()
+        
+        # Get all active properties with pendlevei data
+        query = '''
+            SELECT finnkode, adresse, postnummer, pendlevei 
+            FROM eiendom 
+            WHERE is_active = 1
+        '''
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        migrated = 0
+        for _, row in df.iterrows():
+            finnkode = row['finnkode']
+            adresse = row['adresse']
+            postnummer = row['postnummer']
+            pendlevei = row['pendlevei']
+            
+            self.insert_or_update_eiendom_processed(finnkode, adresse, postnummer, pendlevei)
+            migrated += 1
+        
+        print(f"Migrated {migrated} properties to processed table")
+        return migrated
     
     def _to_float(self, value) -> Optional[float]:
         """Safely convert value to float."""
@@ -296,6 +390,35 @@ class PropertyDatabase:
             return int(round(float(value)))
         except (ValueError, TypeError):
             return None
+    
+    def _clean_address(self, address: str) -> str:
+        """Clean address by removing text after house number.
+        
+        Examples:
+            'Brynsveien 146 - Prosjekt' -> 'Brynsveien 146'
+            'Jarenlia 107 (Bolignr. J-02)' -> 'Jarenlia 107'
+        
+        Args:
+            address: Raw address string
+            
+        Returns:
+            Cleaned address with suffix removed
+        """
+        if not address or pd.isna(address):
+            return address
+        
+        address = str(address).strip()
+        
+        # Split by common delimiters that indicate suffix text
+        # Common patterns: " - ", " (", " [", " /"
+        delimiters = [' - ', ' (', ' [', ' /']
+        
+        for delimiter in delimiters:
+            if delimiter in address:
+                # Keep everything before the first occurrence of the delimiter
+                address = address.split(delimiter)[0].strip()
+        
+        return address
     
     def get_stats(self, table: str) -> Dict[str, Any]:
         """Get statistics about listings in a table."""
