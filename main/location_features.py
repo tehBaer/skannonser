@@ -195,6 +195,49 @@ class CommutingTimeToWorkAddress(LocationFeature):
             print(f"Error calculating commuting time for '{address}': {e}")
         
         return None
+    
+    def calculate_minutes(self, address: str, postnummer: str = None) -> Optional[int]:
+        """
+        Calculate commuting time using Google Maps Directions API.
+        Returns integer minutes only (for database storage).
+        
+        Args:
+            address: Origin address
+            postnummer: Optional postal code (improves accuracy)
+        
+        Returns:
+            Integer minutes or None if calculation fails
+        """
+        if not self.api_key:
+            return None
+
+        try:
+            # Combine address with postal code if provided
+            origin = f"{address}, {postnummer}" if postnummer else address
+            
+            # Using Google Maps Directions API
+            base_url = "https://maps.googleapis.com/maps/api/directions/json"
+            params = {
+                "origin": origin,
+                "destination": self.work_address,
+                "mode": "driving",
+                "key": self.api_key
+            }
+            
+            response = requests.get(base_url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            if data["status"] == "OK" and data["routes"]:
+                # Get duration from first route and return as integer minutes
+                duration_seconds = data["routes"][0]["legs"][0]["duration"]["value"]
+                minutes = int(duration_seconds / 60)
+                return minutes
+            else:
+                return None
+                
+        except Exception as e:
+            return None
 
 
 class WalkingTimeToPublicTransit(LocationFeature):

@@ -52,7 +52,7 @@ class PropertyDatabase:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finnkode TEXT UNIQUE NOT NULL,
                 adresse_cleaned TEXT,
-                pendlevei TEXT,
+                pendlevei INTEGER,
                 google_maps_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (finnkode) REFERENCES eiendom(finnkode)
@@ -255,7 +255,7 @@ class PropertyDatabase:
         conn.close()
         
         # Convert integer columns back to int (pandas reads them as float64)
-        int_columns = ['Pris', 'AREAL', 'PRIS KVM']
+        int_columns = ['Pris', 'AREAL', 'PRIS KVM', 'PENDLEVEI']
         for col in int_columns:
             if col in df.columns:
                 df[col] = df[col].fillna(0).astype(int)

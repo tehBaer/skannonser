@@ -70,39 +70,53 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
     # Format capitalization
     df['Adresse'] = df['Adresse'].str.title()
 
-    # Add commuting time to Pendlevei only if not already present
-    # TEMPORARILY COMMENTED OUT - avoid unnecessary API calls
-    # if 'PENDLEVEI' not in df.columns or df['PENDLEVEI'].isna().any():
-    #     try:
-    #         from main.location_features import CommutingTimeToWorkAddress
-    #     except ImportError:
-    #         from location_features import CommutingTimeToWorkAddress
-    #     print("Calculating commuting time to Pendlevei...")
-    # 
-    #     commute_calculator = CommutingTimeToWorkAddress("Rådmann Halmrasts Vei 5")
-    #     
-    #     # Initialize PENDLEVEI column if it doesn't exist
-    #     if 'PENDLEVEI' not in df.columns:
-    #         df['PENDLEVEI'] = None
-    #     
-    #     for idx, row in df.iterrows():
-    #         # Skip if this entry already has a commute time
-    #         if pd.notna(row.get('PENDLEVEI')):
-    #             continue
-    #             
-    #         address = row['Adresse']
-    #         try:
-    #             commute_time = commute_calculator.calculate(address)
-    #             df.at[idx, 'PENDLEVEI'] = commute_time
-    #             if idx % 10 == 0:
-    #                 print(f"  {idx}: {address} -> {commute_time}")
-    #         except Exception as e:
-    #             print(f"Error calculating commute for {address}: {e}")
-    #             df.at[idx, 'PENDLEVEI'] = None
-    
-    # Ensure PENDLEVEI column exists for downstream processing
+    # Calculate commuting time (Pendlevei) with verification check
     if 'PENDLEVEI' not in df.columns:
         df['PENDLEVEI'] = None
+    
+    missing_count = df['PENDLEVEI'].isna().sum()
+    
+    if missing_count > 0:
+        print(f"\n⚠️  {missing_count} properties are missing Pendlevei data")
+        response = input(f"Calculate commute time for these properties using Google Directions API? (yes/no): ").strip().lower()
+        
+        if response in ['yes', 'y']:
+            try:
+                from main.location_features import CommutingTimeToWorkAddress
+            except ImportError:
+                from location_features import CommutingTimeToWorkAddress
+            
+            print("Calculating commuting time to Pendlevei...")
+            work_address = "Rådmann Halmrasts Vei 5"
+            commute_calculator = CommutingTimeToWorkAddress(work_address)
+            
+            calculated = 0
+            for idx, row in df.iterrows():
+                # Skip if this entry already has a commute time
+                if pd.notna(row.get('PENDLEVEI')):
+                    continue
+                
+                address = row['Adresse']
+                postnummer = row.get('Postnummer')
+                
+                try:
+                    minutes = commute_calculator.calculate_minutes(address, postnummer)
+                    if minutes is not None:
+                        df.at[idx, 'PENDLEVEI'] = int(minutes)  # Ensure integer
+                        calculated += 1
+                        if calculated % 10 == 0:
+                            print(f"  Calculated {calculated}/{missing_count}: {address} → {minutes} min")
+                    else:
+                        df.at[idx, 'PENDLEVEI'] = None
+                except Exception as e:
+                    print(f"  Error calculating commute for {address}: {e}")
+                    df.at[idx, 'PENDLEVEI'] = None
+            
+            print(f"\n✓ Successfully calculated {calculated}/{missing_count} commute times")
+        else:
+            print("Skipped Pendlevei calculation")
+    else:
+        print(f"✓ All properties already have Pendlevei data")
 
     # Drop unnecessary columns
     df = df.drop(columns=['Primærrom',
@@ -142,10 +156,6 @@ def post_process_jobs(df: DataFrame, projectName: str, outputFileName: str, orig
 
 # if main
 if __name__ == "__main__":
-    # file_path = 'leie/live_data.csv'
-    # df = pd.read_csv(file_path)
-    # cleanData(df, 'leie', 'live_data_parsed.csv')
-
-    # post_process_rental(pd.read_csv('leie/saved_all_updated.csv'), 'leie', 'saved_all_updated_parsed.csv')
+ 
     pass
 

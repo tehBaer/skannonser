@@ -47,8 +47,8 @@ def run_eiendom_scrape(db_path: str = None):
     urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.515814226086547+59.830255688429475%2C10.718914241615323+59.89350518832623%2C10.860312986603077+59.90510937383482%2C10.816607919971034+59.96564316999155%2C10.233016736110244+60.03634039140428%2C10.376986367371302+59.84059035321431%2C10.515814226086547+59.830255688429475&property_type=4&property_type=1'
     regex = r'/realestate/.*?/ad\.html\?finnkode=\d+'
     
-    urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")
-    # urls = pd.read_csv(f'{projectName}/0_URLs.csv')  # for debugging quickly
+    # urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")
+    urls = pd.read_csv(f'{projectName}/0_URLs.csv')  # for debugging quickly
     
     print(f"Found {len(urls)} URLs")
     
@@ -57,7 +57,7 @@ def run_eiendom_scrape(db_path: str = None):
     print("Step 2: Extracting data from ads")
     print("="*60)
     
-    extractEiendomDataFromAds(projectName, urls, "A_live.csv")
+    # extractEiendomDataFromAds(projectName, urls, "A_live.csv")
     
     # Step 3: Post-process the data
     print("\n" + "="*60)
