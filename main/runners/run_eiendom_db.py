@@ -57,7 +57,7 @@ def run_eiendom_scrape(db_path: str = None):
     print("Step 2: Extracting data from ads")
     print("="*60)
     
-    # extractEiendomDataFromAds(projectName, urls, "A_live.csv")
+    extractEiendomDataFromAds(projectName, urls, "A_live.csv")
     
     # Step 3: Post-process the data
     print("\n" + "="*60)

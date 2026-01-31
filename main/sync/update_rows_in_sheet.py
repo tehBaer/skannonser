@@ -23,6 +23,34 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 
+def normalize_value(val):
+    """Normalize values for comparison - strip formatting, convert to comparable form."""
+    if pd.isna(val) or val == '':
+        return ''
+    
+    val_str = str(val).strip()
+    
+    # Remove all whitespace characters (including non-breaking spaces)
+    import re
+    val_str = re.sub(r'\s+', '', val_str)
+    
+    # Remove currency formatting
+    # Example: "7144740kr" → "7144740"
+    val_str = val_str.lower().replace('kr', '').strip()
+    
+    # For numeric values, try to normalize
+    try:
+        # Try to parse as number
+        num = float(val_str.replace(',', ''))
+        # If it's a whole number, return as int string
+        if num == int(num):
+            return str(int(num))
+        return str(num)
+    except (ValueError, TypeError):
+        # Not a number, just return the cleaned string
+        return val_str
+
+
 def get_sheet_data_with_row_numbers(service, sheet_name: str) -> Dict:
     """Get all sheet data with row numbers (1-indexed)."""
     try:
@@ -123,19 +151,25 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
             val = db_row.get(col, '')
             new_row_data.append('' if pd.isna(val) else val)
         
-        # Check if any data is different
-        if sheet_row_data != new_row_data:
+        # Normalize both for comparison
+        sheet_row_normalized = [normalize_value(v) for v in sheet_row_data]
+        new_row_normalized = [normalize_value(v) for v in new_row_data]
+        
+        # Check if any data is different (after normalization)
+        if sheet_row_normalized != new_row_normalized:
             updates_list.append({
                 "range": f"{sheet_name}!A{sheet_row_num}",
                 "values": [new_row_data]
             })
             updated_count += 1
             
-            # Output what's changing
+            # Output what's changing (show actual differences after normalization)
             print(f"✓ {finnkode} needs update")
-            for i, (header, old_val, new_val) in enumerate(zip(header_row_normalized, sheet_row_data, new_row_data)):
-                if old_val != new_val:
-                    print(f"    {header}: '{old_val}' → '{new_val}'")
+            for i, (header, old_val, new_val, old_norm, new_norm) in enumerate(zip(
+                header_row_normalized, sheet_row_data, new_row_data, sheet_row_normalized, new_row_normalized
+            )):
+                if old_norm != new_norm:
+                    print(f"    {header}: '{old_val}' → '{new_val}' (normalized: '{old_norm}' → '{new_norm}')")
     
     if not updates_list:
         print("\nNo updates needed - all data is current")

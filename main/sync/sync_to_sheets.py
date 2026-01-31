@@ -23,8 +23,20 @@ from googleapiclient.errors import HttpError
 
 def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     """Clean data for Google Sheets export."""
+    # Convert commute columns to integers without decimals before fillna
+    commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']
+    for col in commute_cols:
+        if col in df.columns:
+            # Convert to numeric, round, and convert to int (NaN becomes empty string in next step)
+            df[col] = pd.to_numeric(df[col], errors='coerce').round()
+    
     # Replace NaN with empty string
     df = df.fillna('')
+    
+    # Convert numeric columns that should be integers (after fillna converted NaN to '')
+    for col in commute_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: int(x) if x != '' and pd.notna(x) else x)
     
     # Clean strings: replace newlines and strip whitespace
     for col in df.columns:

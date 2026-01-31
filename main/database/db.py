@@ -52,10 +52,10 @@ class PropertyDatabase:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finnkode TEXT UNIQUE NOT NULL,
                 adresse_cleaned TEXT,
-                pendlevei INTEGER,
-                kjøretid INTEGER,
-                pendlevei_retur_16 INTEGER,
-                kjøretid_retur_16 INTEGER,
+                pendl_morn_brj INTEGER,
+                bil_morn_brj INTEGER,
+                pendl_dag_brj INTEGER,
+                bil_dag_brj INTEGER,
                 google_maps_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (finnkode) REFERENCES eiendom(finnkode)
@@ -66,9 +66,9 @@ class PropertyDatabase:
         cursor.execute("PRAGMA table_info(eiendom_processed)")
         existing_columns = {row[1] for row in cursor.fetchall()}
         columns_to_add = {
-            "kjøretid": "INTEGER",
-            "pendlevei_retur_16": "INTEGER",
-            "kjøretid_retur_16": "INTEGER",
+            "bil_morn_brj": "INTEGER",
+            "pendl_dag_brj": "INTEGER",
+            "bil_dag_brj": "INTEGER",
         }
         for column_name, column_type in columns_to_add.items():
             if column_name not in existing_columns:
@@ -128,15 +128,15 @@ class PropertyDatabase:
                 'pris_kvm': self._to_int(row.get('PRIS KVM')),
             }
             
-            # Get pendlevei if present (for location table)
-            pendlevei = row.get('PENDLEVEI', None) if pd.notna(row.get('PENDLEVEI')) else None
+            # Get pendl_morn_brj if present (for location table)
+            pendl_morn_brj = row.get('PENDL MORN BRJ', None) if pd.notna(row.get('PENDL MORN BRJ')) else None
             
-            # Get kjøretid if present (for location table)
-            kjøretid = row.get('KJØRETID', None) if pd.notna(row.get('KJØRETID')) else None
+            # Get bil_morn_brj if present (for location table)
+            bil_morn_brj = row.get('BIL MORN BRJ', None) if pd.notna(row.get('BIL MORN BRJ')) else None
 
             # Get return times if present (for location table)
-            pendlevei_retur_16 = row.get('PENDLEVEI_RETUR_16', None) if pd.notna(row.get('PENDLEVEI_RETUR_16')) else None
-            kjøretid_retur_16 = row.get('KJØRETID_RETUR_16', None) if pd.notna(row.get('KJØRETID_RETUR_16')) else None
+            pendl_dag_brj = row.get('PENDL DAG BRJ', None) if pd.notna(row.get('PENDL DAG BRJ')) else None
+            bil_dag_brj = row.get('BIL DAG BRJ', None) if pd.notna(row.get('BIL DAG BRJ')) else None
             
             if existing:
                 # Update existing record
@@ -160,16 +160,16 @@ class PropertyDatabase:
                       data['pris'], data['url'], data['areal'], data['pris_kvm']))
                 inserted += 1
             
-            # Also insert/update processed data with pendlevei, kjøretid and Google Maps URL
+            # Also insert/update processed data with pendl_morn_brj, bil_morn_brj and Google Maps URL
             conn.commit()  # Commit property update first
             self.insert_or_update_eiendom_processed(
                 finnkode,
                 data['adresse'],
                 data['postnummer'],
-                pendlevei,
-                kjøretid,
-                pendlevei_retur_16,
-                kjøretid_retur_16
+                pendl_morn_brj,
+                bil_morn_brj,
+                pendl_dag_brj,
+                bil_dag_brj
             )
         
         conn.commit()
@@ -278,10 +278,10 @@ class PropertyDatabase:
                 e.url as "URL",
                 e.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
-                ep.pendlevei as "PENDLEVEI",
-                ep.kjøretid as "KJØRETID",
-                ep.pendlevei_retur_16 as "PENDLEVEI_RETUR_16",
-                ep.kjøretid_retur_16 as "KJØRETID_RETUR_16",
+                ep.pendl_morn_brj as "PENDL MORN BRJ",
+                ep.bil_morn_brj as "BIL MORN BRJ",
+                ep.pendl_dag_brj as "PENDL DAG BRJ",
+                ep.bil_dag_brj as "BIL DAG BRJ",
                 ep.google_maps_url as "GOOGLE_MAPS_URL"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
@@ -320,8 +320,8 @@ class PropertyDatabase:
         return f"https://www.google.com/maps/place/{search_query}"
     
     def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str,
-                                         postnummer: str, pendlevei: str = None, kjøretid: str = None,
-                                         pendlevei_retur_16: str = None, kjøretid_retur_16: str = None):
+                                         postnummer: str, pendl_morn_brj: str = None, bil_morn_brj: str = None,
+                                         pendl_dag_brj: str = None, bil_dag_brj: str = None):
         """Insert or update processed location data for a property."""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -336,18 +336,18 @@ class PropertyDatabase:
         if existing:
             cursor.execute('''
                 UPDATE eiendom_processed
-                SET adresse_cleaned = ?, pendlevei = ?, kjøretid = ?,
-                    pendlevei_retur_16 = ?, kjøretid_retur_16 = ?,
+                SET adresse_cleaned = ?, pendl_morn_brj = ?, bil_morn_brj = ?,
+                    pendl_dag_brj = ?, bil_dag_brj = ?,
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, pendlevei, kjøretid, pendlevei_retur_16, kjøretid_retur_16,
+            ''', (adresse_cleaned, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                   google_maps_url, finnkode))
         else:
             cursor.execute('''
                 INSERT INTO eiendom_processed
-                (finnkode, adresse_cleaned, pendlevei, kjøretid, pendlevei_retur_16, kjøretid_retur_16, google_maps_url)
+                (finnkode, adresse_cleaned, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj, google_maps_url)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, pendlevei, kjøretid, pendlevei_retur_16, kjøretid_retur_16, google_maps_url))
+            ''', (finnkode, adresse_cleaned, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj, google_maps_url))
         
         conn.commit()
         conn.close()

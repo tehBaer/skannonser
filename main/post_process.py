@@ -61,6 +61,46 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
         except ImportError:
             MAX_PRICE = None
 
+    # Load existing processed data to preserve commute times
+    import os
+    processed_file_path = f'{projectName}/{outputFileName}'
+    if os.path.exists(processed_file_path):
+        try:
+            existing_df = pd.read_csv(processed_file_path)
+            
+            # Migrate old column names in existing data
+            column_renames = {
+                'PENDLEVEI': 'PENDL MORN BRJ',
+                'KJØRETID': 'BIL MORN BRJ',
+                'PENDLEVEI_RETUR_16': 'PENDL DAG BRJ',
+                'KJØRETID_RETUR_16': 'BIL DAG BRJ'
+            }
+            for old_name, new_name in column_renames.items():
+                if old_name in existing_df.columns:
+                    existing_df.rename(columns={old_name: new_name}, inplace=True)
+            
+            # Extract commute columns from existing data
+            commute_columns = ['Finnkode', 'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']
+            existing_commute = existing_df[commute_columns].copy() if all(col in existing_df.columns for col in commute_columns if col != 'Finnkode') else None
+            
+            if existing_commute is not None:
+                # Convert to integers in existing data before merging
+                for col in ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']:
+                    if col in existing_commute.columns:
+                        existing_commute[col] = pd.to_numeric(existing_commute[col], errors='coerce').round().astype('Int64')
+                
+                # Merge commute data back into new dataframe
+                df = df.merge(existing_commute, on='Finnkode', how='left', suffixes=('', '_old'))
+                # Use existing values where new values are NaN
+                for col in ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']:
+                    if col in df.columns and f'{col}_old' in df.columns:
+                        # Fill NaN in new column with values from old column
+                        df[col] = df[col].combine_first(df[f'{col}_old'])
+                        df = df.drop(columns=[f'{col}_old'])
+                print("✓ Merged existing commute data from previous run")
+        except Exception as e:
+            print(f"⚠️  Could not load existing processed data: {e}")
+
     # Convert area columns to numeric, coerce errors to NaN
     for col in ['Primærrom', 'Internt bruksareal (BRA-i)', 'Bruksareal']:
         if col in df.columns:
@@ -79,31 +119,43 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
     # Format capitalization
     df['Adresse'] = df['Adresse'].str.title()
 
+    # Migrate old column names to new names (backward compatibility)
+    column_renames = {
+        'PENDLEVEI': 'PENDL MORN BRJ',
+        'KJØRETID': 'BIL MORN BRJ',
+        'PENDLEVEI_RETUR_16': 'PENDL DAG BRJ',
+        'KJØRETID_RETUR_16': 'BIL DAG BRJ'
+    }
+    for old_name, new_name in column_renames.items():
+        if old_name in df.columns and new_name not in df.columns:
+            df.rename(columns={old_name: new_name}, inplace=True)
+            print(f"✓ Migrated column: {old_name} → {new_name}")
+
     # Initialize columns if not present
-    if 'PENDLEVEI' not in df.columns:
-        df['PENDLEVEI'] = None
-    if 'KJØRETID' not in df.columns:
-        df['KJØRETID'] = None
-    if 'PENDLEVEI_RETUR_16' not in df.columns:
-        df['PENDLEVEI_RETUR_16'] = None
-    if 'KJØRETID_RETUR_16' not in df.columns:
-        df['KJØRETID_RETUR_16'] = None
+    if 'PENDL MORN BRJ' not in df.columns:
+        df['PENDL MORN BRJ'] = None
+    if 'BIL MORN BRJ' not in df.columns:
+        df['BIL MORN BRJ'] = None
+    if 'PENDL DAG BRJ' not in df.columns:
+        df['PENDL DAG BRJ'] = None
+    if 'BIL DAG BRJ' not in df.columns:
+        df['BIL DAG BRJ'] = None
     
-    # Calculate PENDLEVEI (total public transit commute time) and KJØRETID (driving time)
+    # Calculate PENDL MORN BRJ (total public transit commute time) and BIL MORN BRJ (driving time)
     eligible_mask = pd.Series([True] * len(df), index=df.index)
     if MAX_PRICE is not None and 'Pris' in df.columns:
         eligible_mask = df['Pris'].fillna(0) <= MAX_PRICE
 
-    pendlevei_missing = df.loc[eligible_mask, 'PENDLEVEI'].isna().sum()
-    kjoretid_missing = df.loc[eligible_mask, 'KJØRETID'].isna().sum()
-    pendlevei_retur_missing = df.loc[eligible_mask, 'PENDLEVEI_RETUR_16'].isna().sum()
-    kjoretid_retur_missing = df.loc[eligible_mask, 'KJØRETID_RETUR_16'].isna().sum()
+    pendl_morn_missing = df.loc[eligible_mask, 'PENDL MORN BRJ'].isna().sum()
+    bil_morn_missing = df.loc[eligible_mask, 'BIL MORN BRJ'].isna().sum()
+    pendl_dag_missing = df.loc[eligible_mask, 'PENDL DAG BRJ'].isna().sum()
+    bil_dag_missing = df.loc[eligible_mask, 'BIL DAG BRJ'].isna().sum()
     
-    if pendlevei_missing > 0 or kjoretid_missing > 0 or pendlevei_retur_missing > 0 or kjoretid_retur_missing > 0:
-        print(f"\n⚠️  {pendlevei_missing} properties missing PENDLEVEI (public transit commute time)")
-        print(f"⚠️  {kjoretid_missing} properties missing KJØRETID (driving time)")
-        print(f"⚠️  {pendlevei_retur_missing} properties missing PENDLEVEI_RETUR_16 (public transit return at 16:00)")
-        print(f"⚠️  {kjoretid_retur_missing} properties missing KJØRETID_RETUR_16 (driving return at 16:00)")
+    if pendl_morn_missing > 0 or bil_morn_missing > 0 or pendl_dag_missing > 0 or bil_dag_missing > 0:
+        print(f"\n⚠️  {pendl_morn_missing} properties missing PENDL MORN BRJ (public transit morning commute time)")
+        print(f"⚠️  {bil_morn_missing} properties missing BIL MORN BRJ (driving morning commute time)")
+        print(f"⚠️  {pendl_dag_missing} properties missing PENDL DAG BRJ (public transit return at 16:00)")
+        print(f"⚠️  {bil_dag_missing} properties missing BIL DAG BRJ (driving return at 16:00)")
         if MAX_PRICE is not None:
             print(f"⚠️  Price filter active: MAX_PRICE = {MAX_PRICE}")
         
@@ -117,16 +169,16 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
             
             # Initialize calculators
             work_address = "Rådmann Halmrasts Vei 5"
-            # PENDLEVEI = public transit commute time to work
+            # PENDL MORN BRJ = public transit commute time to work
             transit_commute_calculator = PublicTransitCommuteTime(work_address)
-            # KJØRETID = driving time to work
+            # BIL MORN BRJ = driving time to work
             driving_calculator = CommutingTimeToWorkAddress(work_address)
             
             calculated_transit = 0
             calculated_driving = 0
             calculated_transit_return = 0
             calculated_driving_return = 0
-            total_properties = pendlevei_missing + kjoretid_missing
+            total_properties = pendl_morn_missing + bil_morn_missing
             
             print(f"\n🚀 Starting calculations for {len(df)} properties...")
             print(f"   (This may take a while - each property needs 2 API calls)\n")
@@ -140,13 +192,13 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                 if current_num % 5 == 0 or current_num < 5:
                     print(f"⏳ Processing property {current_num + 1}/{len(df)}: {address}")
                 
-                # Calculate PENDLEVEI (total public transit commute time to work)
-                if pd.isna(row.get('PENDLEVEI')):
+                # Calculate PENDL MORN BRJ (total public transit commute time to work)
+                if pd.isna(row.get('PENDL MORN BRJ')):
                     try:
                         print(f"   📍 Calculating public transit time...", end='', flush=True)
                         minutes = transit_commute_calculator.calculate(address, postnummer)
                         if minutes is not None:
-                            df.at[idx, 'PENDLEVEI'] = int(minutes)
+                            df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
                             calculated_transit += 1
                             print(f" ✓ {minutes} min")
                         else:
@@ -154,13 +206,13 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                     except Exception as e:
                         print(f" ✗ Error: {str(e)}")
                 
-                # Calculate KJØRETID (driving time to work)
-                if pd.isna(row.get('KJØRETID')):
+                # Calculate BIL MORN BRJ (driving time to work)
+                if pd.isna(row.get('BIL MORN BRJ')):
                     try:
                         print(f"   🚗 Calculating driving time...", end='', flush=True)
                         minutes = driving_calculator.calculate(address, postnummer)
                         if minutes is not None:
-                            df.at[idx, 'KJØRETID'] = int(minutes)
+                            df.at[idx, 'BIL MORN BRJ'] = int(minutes)
                             calculated_driving += 1
                             print(f" ✓ {minutes} min")
                         else:
@@ -170,8 +222,8 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
 
                 destination = f"{address}, {postnummer}" if pd.notna(postnummer) and postnummer else address
 
-                # Calculate PENDLEVEI_RETUR_16 (public transit return at 16:00 Monday)
-                if pd.isna(row.get('PENDLEVEI_RETUR_16')):
+                # Calculate PENDL DAG BRJ (public transit return at 16:00 Monday)
+                if pd.isna(row.get('PENDL DAG BRJ')):
                     try:
                         print(f"   🚌 Calculating public transit return (16:00)...", end='', flush=True)
                         minutes = transit_commute_calculator.calculate(
@@ -182,7 +234,7 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                             destination_override=destination
                         )
                         if minutes is not None:
-                            df.at[idx, 'PENDLEVEI_RETUR_16'] = int(minutes)
+                            df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
                             calculated_transit_return += 1
                             print(f" ✓ {minutes} min")
                         else:
@@ -190,8 +242,8 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                     except Exception as e:
                         print(f" ✗ Error: {str(e)}")
 
-                # Calculate KJØRETID_RETUR_16 (driving return at 16:00 Monday)
-                if pd.isna(row.get('KJØRETID_RETUR_16')):
+                # Calculate BIL DAG BRJ (driving return at 16:00 Monday)
+                if pd.isna(row.get('BIL DAG BRJ')):
                     try:
                         print(f"   🚙 Calculating driving return (16:00)...", end='', flush=True)
                         minutes = driving_calculator.calculate(
@@ -202,7 +254,7 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                             destination_override=destination
                         )
                         if minutes is not None:
-                            df.at[idx, 'KJØRETID_RETUR_16'] = int(minutes)
+                            df.at[idx, 'BIL DAG BRJ'] = int(minutes)
                             calculated_driving_return += 1
                             print(f" ✓ {minutes} min")
                         else:
@@ -227,7 +279,12 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
         else:
             print("Skipped location features calculation")
     else:
-        print(f"✓ All properties already have PENDLEVEI, KJØRETID, and return time data")
+        print(f"✓ All properties already have PENDL MORN BRJ, BIL MORN BRJ, and return time data")
+
+    # Ensure commute time columns are integers without decimals
+    for col in ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').round().astype('Int64')
 
     # Drop unnecessary columns
     df = df.drop(columns=['Primærrom',
