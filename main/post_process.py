@@ -61,7 +61,7 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
         except ImportError:
             MAX_PRICE = None
 
-    # Load existing processed data to preserve commute times
+    # Load existing processed data to preserve commute times from CSV snapshot
     import os
     processed_file_path = f'{projectName}/{outputFileName}'
     if os.path.exists(processed_file_path):
@@ -79,25 +79,28 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                 if old_name in existing_df.columns:
                     existing_df.rename(columns={old_name: new_name}, inplace=True)
             
-            # Extract commute columns from existing data
-            commute_columns = ['Finnkode', 'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']
-            existing_commute = existing_df[commute_columns].copy() if all(col in existing_df.columns for col in commute_columns if col != 'Finnkode') else None
+            # Extract commute columns from existing data (BRJ + MVV)
+            commute_columns = ['Finnkode', 'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                             'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
+            # Filter to only include columns that exist in existing data
+            existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_df.columns]
+            existing_commute = existing_df[existing_commute_cols].copy() if len(existing_commute_cols) > 1 else None
             
             if existing_commute is not None:
                 # Convert to integers in existing data before merging
-                for col in ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']:
+                for col in commute_columns[1:]:
                     if col in existing_commute.columns:
                         existing_commute[col] = pd.to_numeric(existing_commute[col], errors='coerce').round().astype('Int64')
                 
                 # Merge commute data back into new dataframe
                 df = df.merge(existing_commute, on='Finnkode', how='left', suffixes=('', '_old'))
                 # Use existing values where new values are NaN
-                for col in ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']:
+                for col in commute_columns[1:]:
                     if col in df.columns and f'{col}_old' in df.columns:
                         # Fill NaN in new column with values from old column
                         df[col] = df[col].combine_first(df[f'{col}_old'])
                         df = df.drop(columns=[f'{col}_old'])
-                print("✓ Merged existing commute data from previous run")
+                print("✓ Merged existing commute data from snapshot")
         except Exception as e:
             print(f"⚠️  Could not load existing processed data: {e}")
 
@@ -140,6 +143,14 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
         df['PENDL DAG BRJ'] = None
     if 'BIL DAG BRJ' not in df.columns:
         df['BIL DAG BRJ'] = None
+    if 'PENDL MORN MVV' not in df.columns:
+        df['PENDL MORN MVV'] = None
+    if 'BIL MORN MVV' not in df.columns:
+        df['BIL MORN MVV'] = None
+    if 'PENDL DAG MVV' not in df.columns:
+        df['PENDL DAG MVV'] = None
+    if 'BIL DAG MVV' not in df.columns:
+        df['BIL DAG MVV'] = None
     
     # Calculate PENDL MORN BRJ (total public transit commute time) and BIL MORN BRJ (driving time)
     eligible_mask = pd.Series([True] * len(df), index=df.index)
@@ -150,12 +161,21 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
     bil_morn_missing = df.loc[eligible_mask, 'BIL MORN BRJ'].isna().sum()
     pendl_dag_missing = df.loc[eligible_mask, 'PENDL DAG BRJ'].isna().sum()
     bil_dag_missing = df.loc[eligible_mask, 'BIL DAG BRJ'].isna().sum()
+    pendl_morn_mvv_missing = df.loc[eligible_mask, 'PENDL MORN MVV'].isna().sum()
+    bil_morn_mvv_missing = df.loc[eligible_mask, 'BIL MORN MVV'].isna().sum()
+    pendl_dag_mvv_missing = df.loc[eligible_mask, 'PENDL DAG MVV'].isna().sum()
+    bil_dag_mvv_missing = df.loc[eligible_mask, 'BIL DAG MVV'].isna().sum()
     
-    if pendl_morn_missing > 0 or bil_morn_missing > 0 or pendl_dag_missing > 0 or bil_dag_missing > 0:
+    if pendl_morn_missing > 0 or bil_morn_missing > 0 or pendl_dag_missing > 0 or bil_dag_missing > 0 or \
+       pendl_morn_mvv_missing > 0 or bil_morn_mvv_missing > 0 or pendl_dag_mvv_missing > 0 or bil_dag_mvv_missing > 0:
         print(f"\n⚠️  {pendl_morn_missing} properties missing PENDL MORN BRJ (public transit morning commute time)")
         print(f"⚠️  {bil_morn_missing} properties missing BIL MORN BRJ (driving morning commute time)")
         print(f"⚠️  {pendl_dag_missing} properties missing PENDL DAG BRJ (public transit return at 16:00)")
         print(f"⚠️  {bil_dag_missing} properties missing BIL DAG BRJ (driving return at 16:00)")
+        print(f"⚠️  {pendl_morn_mvv_missing} properties missing PENDL MORN MVV (public transit to Oslo Sentralstasjon)")
+        print(f"⚠️  {bil_morn_mvv_missing} properties missing BIL MORN MVV (driving to Oslo Sentralstasjon)")
+        print(f"⚠️  {pendl_dag_mvv_missing} properties missing PENDL DAG MVV (public transit return from Oslo Sentralstasjon)")
+        print(f"⚠️  {bil_dag_mvv_missing} properties missing BIL DAG MVV (driving return from Oslo Sentralstasjon)")
         if MAX_PRICE is not None:
             print(f"⚠️  Price filter active: MAX_PRICE = {MAX_PRICE}")
         
@@ -220,17 +240,18 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                     except Exception as e:
                         print(f" ✗ Error: {str(e)}")
 
-                destination = f"{address}, {postnummer}" if pd.notna(postnummer) and postnummer else address
+                destination = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
 
                 # Calculate PENDL DAG BRJ (public transit return at 16:00 Monday)
                 if pd.isna(row.get('PENDL DAG BRJ')):
                     try:
                         print(f"   🚌 Calculating public transit return (16:00)...", end='', flush=True)
+                        work_addr_norway = f"{work_address}, Norway" if "Norway" not in work_address else work_address
                         minutes = transit_commute_calculator.calculate(
                             address,
                             postnummer,
                             departure_time=16,
-                            origin_override=work_address,
+                            origin_override=work_addr_norway,
                             destination_override=destination
                         )
                         if minutes is not None:
@@ -250,7 +271,7 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                             address,
                             postnummer,
                             departure_time=16,
-                            origin_override=work_address,
+                            origin_override=work_addr_norway,
                             destination_override=destination
                         )
                         if minutes is not None:
@@ -271,18 +292,110 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                         f"= {total_calculated} total\n"
                     )
             
+            # Now calculate MVV (Oslo Sentralstasjon) times
+            mvv_address = "Oslo Sentralstasjon"
+            transit_commute_calculator_mvv = PublicTransitCommuteTime(mvv_address)
+            driving_calculator_mvv = CommutingTimeToWorkAddress(mvv_address)
+            
+            calculated_transit_mvv = 0
+            calculated_driving_mvv = 0
+            calculated_transit_return_mvv = 0
+            calculated_driving_return_mvv = 0
+            
+            print(f"\n🚀 Starting calculations for Oslo Sentralstasjon (MVV)...\n")
+            
+            for idx, row in df.loc[eligible_mask].iterrows():
+                address = row['Adresse']
+                postnummer = row.get('Postnummer')
+                current_num = calculated_transit_mvv + calculated_driving_mvv
+                
+                if current_num % 10 == 0 or current_num < 5:
+                    print(f"⏳ Processing property {current_num + 1}/{len(df[eligible_mask])}: {address}")
+                
+                # Calculate PENDL MORN MVV
+                if pd.isna(row.get('PENDL MORN MVV')):
+                    try:
+                        print(f"   📍 Calculating public transit to Oslo S...", end='', flush=True)
+                        minutes = transit_commute_calculator_mvv.calculate(address, postnummer)
+                        if minutes is not None:
+                            df.at[idx, 'PENDL MORN MVV'] = int(minutes)
+                            calculated_transit_mvv += 1
+                            print(f" ✓ {minutes} min")
+                        else:
+                            print(f" ✗ Failed (returned None)")
+                    except Exception as e:
+                        print(f" ✗ Error: {str(e)}")
+                
+                # Calculate BIL MORN MVV
+                if pd.isna(row.get('BIL MORN MVV')):
+                    try:
+                        print(f"   🚗 Calculating driving to Oslo S...", end='', flush=True)
+                        minutes = driving_calculator_mvv.calculate(address, postnummer)
+                        if minutes is not None:
+                            df.at[idx, 'BIL MORN MVV'] = int(minutes)
+                            calculated_driving_mvv += 1
+                            print(f" ✓ {minutes} min")
+                        else:
+                            print(f" ✗ Failed (returned None)")
+                    except Exception as e:
+                        print(f" ✗ Error: {str(e)}")
+                
+                destination_mvv = f"{address}, {postnummer}" if pd.notna(postnummer) and postnummer else address
+                
+                # Calculate PENDL DAG MVV
+                if pd.isna(row.get('PENDL DAG MVV')):
+                    try:
+                        print(f"   🚌 Calculating public transit return from Oslo S (16:00)...", end='', flush=True)
+                        minutes = transit_commute_calculator_mvv.calculate(
+                            address,
+                            postnummer,
+                            departure_time=16,
+                            origin_override=mvv_address,
+                            destination_override=destination_mvv
+                        )
+                        if minutes is not None:
+                            df.at[idx, 'PENDL DAG MVV'] = int(minutes)
+                            calculated_transit_return_mvv += 1
+                            print(f" ✓ {minutes} min")
+                        else:
+                            print(f" ✗ Failed (returned None)")
+                    except Exception as e:
+                        print(f" ✗ Error: {str(e)}")
+                
+                # Calculate BIL DAG MVV
+                if pd.isna(row.get('BIL DAG MVV')):
+                    try:
+                        print(f"   🚙 Calculating driving return from Oslo S (16:00)...", end='', flush=True)
+                        minutes = driving_calculator_mvv.calculate(
+                            address,
+                            postnummer,
+                            departure_time=16,
+                            origin_override=mvv_address,
+                            destination_override=destination_mvv
+                        )
+                        if minutes is not None:
+                            df.at[idx, 'BIL DAG MVV'] = int(minutes)
+                            calculated_driving_return_mvv += 1
+                            print(f" ✓ {minutes} min")
+                        else:
+                            print(f" ✗ Failed (returned None)")
+                    except Exception as e:
+                        print(f" ✗ Error: {str(e)}")
+            
             print(
-                f"\n✓ Successfully calculated {calculated_transit} transit commute times, "
-                f"{calculated_driving} driving times, {calculated_transit_return} transit return times, "
-                f"and {calculated_driving_return} driving return times"
+                f"\n✓ Successfully calculated {calculated_transit_mvv} transit times to Oslo S, "
+                f"{calculated_driving_mvv} driving times, {calculated_transit_return_mvv} transit return times, "
+                f"and {calculated_driving_return_mvv} driving return times"
             )
         else:
             print("Skipped location features calculation")
     else:
-        print(f"✓ All properties already have PENDL MORN BRJ, BIL MORN BRJ, and return time data")
+        print(f"✓ All properties already have commute data for BRJ and MVV")
 
     # Ensure commute time columns are integers without decimals
-    for col in ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']:
+    commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                    'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
+    for col in commute_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').round().astype('Int64')
 

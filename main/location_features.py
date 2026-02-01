@@ -205,9 +205,11 @@ class CommutingTimeToWorkAddress(LocationFeature):
             if origin_override:
                 origin = origin_override
             else:
-                origin = f"{address}, {postnummer}" if postnummer else address
+                origin = f"{address}, {postnummer}, Norway" if postnummer else f"{address}, Norway"
 
             destination = destination_override or self.work_address
+            if destination and "Norway" not in destination and "Norge" not in destination:
+                destination = f"{destination}, Norway"
             
             # Using Google Maps Routes API
             base_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
@@ -317,9 +319,11 @@ class PublicTransitCommuteTime(LocationFeature):
             if origin_override:
                 origin = origin_override
             else:
-                origin = f"{address}, {postnummer}" if postnummer else address
+                origin = f"{address}, {postnummer}, Norway" if postnummer else f"{address}, Norway"
 
             destination = destination_override or self.work_address
+            if destination and "Norway" not in destination and "Norge" not in destination:
+                destination = f"{destination}, Norway"
             
             # Using Google Maps Routes API with TRANSIT travel mode
             base_url = "https://routes.googleapis.com/directions/v2:computeRoutes"

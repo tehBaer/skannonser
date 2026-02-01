@@ -40,11 +40,12 @@ def run_eiendom_scrape(db_path: str = None):
     projectName = 'data/eiendom'
 
     # Step 1: Extract URLs from the search results
-    print("\n" + "="*60)
-    print("Step 1: Extracting URLs from search results")
-    print("="*60)
+    print("\n" + "="*40)
+    print("Step 1: URLs")
+    print("="*40)
     
-    urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.515814226086547+59.830255688429475%2C10.718914241615323+59.89350518832623%2C10.860312986603077+59.90510937383482%2C10.816607919971034+59.96564316999155%2C10.233016736110244+60.03634039140428%2C10.376986367371302+59.84059035321431%2C10.515814226086547+59.830255688429475&property_type=4&property_type=1'
+    # urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.515814226086547+59.830255688429475%2C10.718914241615323+59.89350518832623%2C10.860312986603077+59.90510937383482%2C10.816607919971034+59.96564316999155%2C10.233016736110244+60.03634039140428%2C10.376986367371302+59.84059035321431%2C10.515814226086547+59.830255688429475&property_type=4&property_type=1'
+    urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.931112810853534+59.91640688425295%2C10.442541860909444+60.168376907054125%2C10.202261065854913+60.02462948131998%2C10.19692149263156+59.80380210029858%2C10.394485701898361+59.6827306506911%2C10.653455003235536+59.88025405163344%2C10.931112810853534+59.91640688425295&property_type=4&property_type=1'
     regex = r'/realestate/.*?/ad\.html\?finnkode=\d+'
     
     # urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")
@@ -53,11 +54,11 @@ def run_eiendom_scrape(db_path: str = None):
     print(f"Found {len(urls)} URLs")
     
     # Step 2: Extract data from each ad
-    print("\n" + "="*60)
-    print("Step 2: Extracting data from ads")
-    print("="*60)
+    print("\n" + "="*40)
+    print("Step 2: Ads")
+    print("="*40)
     
-    extractEiendomDataFromAds(projectName, urls, "A_live.csv")
+    # extractEiendomDataFromAds(projectName, urls, "A_live.csv")
     
     # Step 3: Post-process the data
     print("\n" + "="*60)

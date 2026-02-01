@@ -24,7 +24,8 @@ from googleapiclient.errors import HttpError
 def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     """Clean data for Google Sheets export."""
     # Convert commute columns to integers without decimals before fillna
-    commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ']
+    commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                    'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
     for col in commute_cols:
         if col in df.columns:
             # Convert to numeric, round, and convert to int (NaN becomes empty string in next step)

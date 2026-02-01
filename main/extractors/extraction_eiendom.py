@@ -31,8 +31,9 @@ def extract_eiendom_data(url, index, projectName, auto_save_new=True, force_save
             tilgjengelig = element.get_text(strip=True)
             break
 
+    finnkode = url.split('finnkode=')[1]
     data = {
-        'Finnkode': url.split('finnkode=')[1],
+        'Finnkode': finnkode,
         'Tilgjengelighet': tilgjengelig,
         'Adresse': address,
         'Postnummer': area,
@@ -45,7 +46,7 @@ def extract_eiendom_data(url, index, projectName, auto_save_new=True, force_save
         'Balkong/Terrasse (TBA)': sizes.get('info-open-area'),
         'Bruttoareal': sizes.get('info-gross-area'),
     }
-    print(f'Index {index}: {data}')
+    print(f"Ad {index}: {finnkode}")
 
     return data
 

@@ -16,7 +16,7 @@ def parse_resultpage(urlBase, term, folder, page: int = 1, df=None, isNAV: bool 
             append = f'&page={page}'
     url = urlBase + append
 
-    print("Analyzing result page: ", url)
+    print(f"Analyzing result page {page}")
     response = requests.get(url)
     response.raise_for_status()  # Check if the request was successful
 
@@ -42,7 +42,7 @@ def parse_resultpage(urlBase, term, folder, page: int = 1, df=None, isNAV: bool 
         # print(f'  Found match: {match}')
 
     # Count the unique matches
-    print(f'Number of unique matches on page {page}: {len(matches)}')
+    print(f'Page {page}: {len(matches)} matches')
 
     # Store the URLs in a pandas DataFrame
     new_df = pd.DataFrame(full_urls, columns=['URL'])
@@ -77,7 +77,7 @@ def extract_URLs(url, searchTerm, projectname, outputFileName: str, isNAV: bool 
 
     # Save the DataFrame as a CSV file inside the folder
     df.to_csv(os.path.join(projectname, outputFileName), index=False)
-    print("Crawling completed. Results saved to ", os.path.join(projectname, outputFileName))
+    print(f"Crawling completed. Saved to {projectname}/{outputFileName}")
     return df
 
 
