@@ -9,10 +9,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from main.sync.sync_to_sheets import sync_eiendom_to_sheets, sync_unlisted_eiendom_to_sheets
+    from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets, sync_unlisted_eiendom_to_sheets
 except ImportError:
-    from sync.sync_to_sheets import sync_eiendom_to_sheets, sync_unlisted_eiendom_to_sheets
+    from sync.helper_sync_to_sheets import sync_eiendom_to_sheets, sync_unlisted_eiendom_to_sheets
 
 if __name__ == "__main__":
     sync_eiendom_to_sheets()
-    sync_unlisted_eiendom_to_sheets()

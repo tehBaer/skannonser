@@ -114,6 +114,7 @@ def get_existing_finnkodes_from_sheet(service, sheet_name: str) -> List[str]:
 def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     """
     Sync property listings from database to Google Sheets.
+    Includes all listings: active, unlisted/inactive, and sold.
     Only adds new listings that aren't already in the sheet.
     
     Args:
@@ -136,14 +137,14 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
         print(f"Error connecting to Google Sheets: {e}")
         return False
     
-    # Get all active listings from database
+    # Get all listings from database (active, unlisted/inactive, and sold)
     df = db.get_eiendom_for_sheets()
     
     if df.empty:
-        print("No active listings to sync")
+        print("No listings to sync")
         return True
     
-    print(f"Found {len(df)} active listings in database")
+    print(f"Found {len(df)} listings in database (all statuses)")
     
     # Get existing Finnkodes from sheet
     existing_finnkodes = get_existing_finnkodes_from_sheet(service, sheet_name)
@@ -214,116 +215,12 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
 
 def sync_unlisted_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie(unlisted)"):
     """
-    Sync unlisted property listings from database to Google Sheets.
-    Only adds new unlisted listings that aren't already in the sheet.
-    
-    Args:
-        db_path: Optional path to database file
-        sheet_name: Name of the sheet to sync to (default: "Eie(unlisted)")
+    DEPRECATED: Unlisted listings are now included in the main sheet.
+    This function is kept for backward compatibility but does nothing.
     """
-    # Check if unlisted should be included
-    try:
-        from main.config.filters import INCLUDE_UNLISTED
-    except ImportError:
-        try:
-            from config.filters import INCLUDE_UNLISTED
-        except ImportError:
-            INCLUDE_UNLISTED = True
-    
-    if not INCLUDE_UNLISTED:
-        print("INCLUDE_UNLISTED is disabled - skipping unlisted sync")
-        return True
-    
-    print(f"\n{'='*60}")
-    print(f"Syncing unlisted eiendom data to Google Sheets")
-    print(f"Sheet: {sheet_name}")
-    print(f"{'='*60}\n")
-    
-    # Initialize database
-    db = PropertyDatabase(db_path)
-    
-    # Get credentials and service
-    try:
-        creds = get_credentials()
-        service = build("sheets", "v4", credentials=creds)
-    except Exception as e:
-        print(f"Error connecting to Google Sheets: {e}")
-        return False
-    
-    # Get all unlisted listings from database
-    df = db.get_unlisted_eiendom_for_sheets()
-    
-    if df.empty:
-        print("No unlisted listings to sync")
-        return True
-    
-    print(f"Found {len(df)} unlisted listings in database")
-    
-    # Get existing Finnkodes from sheet
-    existing_finnkodes = get_existing_finnkodes_from_sheet(service, sheet_name)
-    print(f"Found {len(existing_finnkodes)} existing listings in Google Sheets")
-    
-    # Filter to only new listings
-    df['Finnkode'] = df['Finnkode'].astype(str).str.strip()
-    new_listings = df[~df['Finnkode'].isin(existing_finnkodes)]
-    
-    if new_listings.empty:
-        print("No new unlisted listings to add to Google Sheets")
-        return True
-    
-    print(f"Found {len(new_listings)} new unlisted listings to add")
-    
-    # Sanitize data
-    new_listings = sanitize_for_sheets(new_listings)
-
-    # Ensure headers contain new columns and align row order
-    desired_columns = list(new_listings.columns)
-    header_row = ensure_sheet_headers(service, sheet_name, desired_columns)
-    new_rows = []
-    for _, row in new_listings.iterrows():
-        new_rows.append([row.get(col, '') for col in header_row])
-    
-    # Find the next available row in the sheet
-    try:
-        range_name = f"{sheet_name}!A1:H10000"
-        result = service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, 
-            range=range_name
-        ).execute()
-        existing_data = result.get("values", [])
-        next_row = len(existing_data) + 1
-    except HttpError as e:
-        print(f"Error finding next row: {e}")
-        next_row = 2  # Default to row 2 if error
-    
-    # Append new rows to the sheet
-    try:
-        body = {"values": new_rows}
-        result = service.spreadsheets().values().append(
-            spreadsheetId=SPREADSHEET_ID,
-            range=f"{sheet_name}!A{next_row}",
-            valueInputOption="USER_ENTERED",
-            insertDataOption="INSERT_ROWS",
-            body=body
-        ).execute()
-        
-        updates = result.get('updates', {})
-        updated_rows = updates.get('updatedRows', 0)
-        
-        print(f"\n✓ Successfully added {updated_rows} new unlisted listings to Google Sheets")
-        
-        # Mark as exported in database
-        exported_finnkodes = new_listings['Finnkode'].tolist()
-        clean_finnkodes = [str(fk) for fk in exported_finnkodes]
-        
-        marked = db.mark_as_exported('eiendom', clean_finnkodes)
-        print(f"✓ Marked {marked} unlisted listings as exported in database")
-        
-        return True
-        
-    except HttpError as e:
-        print(f"Error appending to sheet: {e}")
-        return False
+    print("\n⚠️  Note: Unlisted/inactive listings are now included in the main 'Eie' sheet.")
+    print("This function is no longer needed.")
+    return True
 
 
 def full_sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):

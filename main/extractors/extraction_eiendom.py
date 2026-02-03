@@ -20,16 +20,7 @@ def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True
     address, area = getAddress(soup)
     sizes = getAllSizes(soup)
     buy_price = getBuyPrice(soup)
-
-    statuses = ["warning", "negative"]
-    tilgjengelig = None
-
-    for status in statuses:
-        searchString = f"!text-m mb-24 py-4 px-8 border-0 rounded-4 text-xs inline-flex bg-[--w-color-badge-{status}-background] s-text"
-        element = soup.find('div', class_=searchString)
-        if element:
-            tilgjengelig = element.get_text(strip=True)
-            break
+    tilgjengelig = getStatus(soup)
 
     finnkode = url.split('finnkode=')[1]
     data = {

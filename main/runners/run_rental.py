@@ -25,7 +25,7 @@ extractRentalDataFromAds(projectName, urls, "A_live.csv")
 
 # Also extract data from the downloaded sheets
 live_data = pd.read_csv(f'{projectName}/A_live.csv')
-post_process_rental(live_data, projectName, "AB_processed.csv")
+post_process_rental(live_data, projectName)
 
 # Define headers for validation (after post-processing, area columns are replaced with AREAL and PRIS KVM)
 headers = ['Finnkode', 'Tilgjengelighet', 'Adresse', 'Postnummer', 'Leiepris', 'Depositum', 'URL',

@@ -292,8 +292,33 @@ class PropertyDatabase:
         
         return marked
     
+    def update_eiendom_status(self, finnkode: str, new_status: str):
+        """
+        Update the tilgjengelighet (status) for a property listing.
+        Also updates is_active based on status and timestamp.
+        
+        Args:
+            finnkode: The FINN code for the listing
+            new_status: The new status (e.g., 'Solgt', None for active)
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Determine is_active based on status
+        # If status is 'Solgt', mark as inactive, otherwise keep as active
+        is_active = 0 if new_status and 'Solgt' in str(new_status) else 1
+        
+        cursor.execute('''
+            UPDATE eiendom
+            SET tilgjengelighet = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE finnkode = ?
+        ''', (new_status, is_active, finnkode))
+        
+        conn.commit()
+        conn.close()
+    
     def get_eiendom_for_sheets(self) -> pd.DataFrame:
-        """Get property listings formatted for Google Sheets export."""
+        """Get property listings formatted for Google Sheets export (includes all listings: active, unlisted/inactive, and sold)."""
         conn = self.get_connection()
 
         # Optional price filter
@@ -305,7 +330,7 @@ class PropertyDatabase:
             except ImportError:
                 MAX_PRICE = None
         
-        # Get active listings with the exact column names for Sheets
+        # Get all listings regardless of status
         # Uses cleaned addresses from eiendom_processed table when available
         query = '''
             SELECT 
@@ -328,7 +353,7 @@ class PropertyDatabase:
                 ep.google_maps_url as "GOOGLE_MAPS_URL"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
-            WHERE e.is_active = 1
+            WHERE 1=1
         '''
 
         params = []
@@ -336,7 +361,7 @@ class PropertyDatabase:
             query += " AND e.pris <= ?"
             params.append(MAX_PRICE)
 
-        query += " ORDER BY e.scraped_at DESC"
+        query += " ORDER BY e.is_active DESC, e.scraped_at DESC"
 
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()

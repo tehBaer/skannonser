@@ -12,10 +12,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from main.runners.run_eiendom_db import run_eiendom_scrape
-    from main.sync.sync_to_sheets import sync_eiendom_to_sheets
+    from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets
 except ImportError:
     from runners.run_eiendom_db import run_eiendom_scrape
-    from sync.sync_to_sheets import sync_eiendom_to_sheets
+    from sync.helper_sync_to_sheets import sync_eiendom_to_sheets
 
 
 def run_scheduled_task(task_name: str, sync_sheets: bool = True):

@@ -25,16 +25,7 @@ def extract_rental_data(url, index, projectName, auto_save_new=True, force_save=
     sizes = getAllSizes(soup)
     prices = getRentPrice(soup)
     date = getDate(soup)
-
-    statuses = ["warning", "negative"]
-    tilgjengelig = None
-
-    for status in statuses:
-        searchString = f"!text-m mb-24 py-4 px-8 border-0 rounded-4 text-xs inline-flex bg-[--w-color-badge-{status}-background] s-text"
-        element = soup.find('div', class_=searchString)
-        if element:
-            tilgjengelig = element.get_text(strip=True)
-            break
+    tilgjengelig = getStatus(soup)
 
     data = {
         # 'Index': index,

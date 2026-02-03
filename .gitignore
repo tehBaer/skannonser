@@ -6,6 +6,7 @@ token.json
 config.py
 .venv
 .idea
+main/temp/
 
 # SQLite temporary files
 *.db-shm

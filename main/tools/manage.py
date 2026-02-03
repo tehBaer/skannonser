@@ -18,12 +18,12 @@ from datetime import datetime
 try:
     from main.database.db import PropertyDatabase
     from main.runners.run_eiendom_db import run_eiendom_scrape
-    from main.sync.sync_to_sheets import sync_eiendom_to_sheets, full_sync_eiendom_to_sheets
+    from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets, full_sync_eiendom_to_sheets
     from main.tools.scheduler import run_scheduled_task
 except ImportError:
     from database.db import PropertyDatabase
     from runners.run_eiendom_db import run_eiendom_scrape
-    from sync.sync_to_sheets import sync_eiendom_to_sheets, full_sync_eiendom_to_sheets
+    from sync.helper_sync_to_sheets import sync_eiendom_to_sheets, full_sync_eiendom_to_sheets
     from scheduler import run_scheduled_task
 
 

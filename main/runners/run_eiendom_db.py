@@ -66,14 +66,12 @@ def run_eiendom_scrape(db_path: str = None):
     print("="*60)
     
     live_data = pd.read_csv(f'{projectName}/A_live.csv')
-    post_process_eiendom(live_data, projectName, "AB_processed.csv")
+    processed_data = post_process_eiendom(live_data, projectName, db)
     
-    # Step 4: Load processed data into database
+    # Step 4: Store data in database
     print("\n" + "="*60)
     print("Step 4: Storing data in database")
     print("="*60)
-    
-    processed_data = pd.read_csv(f'{projectName}/AB_processed.csv')
     
     # Insert or update records in database
     inserted, updated = db.insert_or_update_eiendom(processed_data)

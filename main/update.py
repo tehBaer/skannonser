@@ -91,7 +91,7 @@ def get_everything_updated(df_saved: pd.DataFrame):
     data = pd.DataFrame(updated_rows)
     data.to_csv("leie/xx.csv", index=False)
 
-    cleaned_df = post_process_rental(data, 'leie', '_temp.csv')
+    cleaned_df = post_process_rental(data, 'leie', save_csv=False)
 
     # If a row has "Slettet", fill inn the values from df_saved instead
     for index, row in cleaned_df.iterrows():

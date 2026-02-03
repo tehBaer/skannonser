@@ -13,11 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from main.database.db import PropertyDatabase
     from main.googleUtils import get_credentials, SPREADSHEET_ID
-    from main.sync.sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
+    from main.sync.helper_sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
 except ImportError:
     from database.db import PropertyDatabase
     from googleUtils import get_credentials, SPREADSHEET_ID
-    from sync.sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
+    from sync.helper_sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -67,6 +67,16 @@ def get_sheet_data_with_row_numbers(service, sheet_name: str) -> Dict:
     except HttpError as e:
         print(f"Error reading from sheet: {e}")
         return {}
+
+
+def requires_confirmation(old_val, new_val) -> bool:
+    """Check if a change from old_val to new_val requires user confirmation."""
+    # Consider value non-null if it's not empty/None after normalization
+    old_is_non_null = normalize_value(old_val) != ''
+    new_is_non_null = normalize_value(new_val) != ''
+    
+    # Require confirmation if changing from one non-null value to another different non-null value
+    return old_is_non_null and new_is_non_null and normalize_value(old_val) != normalize_value(new_val)
 
 
 def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
@@ -119,7 +129,6 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
 
     # Normalize header (strip whitespace from column names)
     header_row_normalized = [col.strip() for col in header_row]
-    print(f"Sheet columns: {header_row_normalized}")
     
     # Build finnkode to row mapping
     finnkode_to_row = {}
@@ -135,6 +144,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     # Find updates needed
     updates_list = []
     updated_count = 0
+    requires_confirmation_list = []
     
     for _, db_row in df.iterrows():
         finnkode = str(db_row['Finnkode']).strip()
@@ -155,32 +165,67 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         sheet_row_normalized = [normalize_value(v) for v in sheet_row_data]
         new_row_normalized = [normalize_value(v) for v in new_row_data]
         
-        # Check if any data is different (after normalization)
-        if sheet_row_normalized != new_row_normalized:
-            updates_list.append({
+        # Collect differences and check if any require confirmation
+        differences = []
+        needs_confirmation = False
+        
+        for i, header in enumerate(header_row_normalized):
+            old_val = sheet_row_data[i] if i < len(sheet_row_data) else ''
+            new_val = new_row_data[i] if i < len(new_row_data) else ''
+            old_norm = sheet_row_normalized[i] if i < len(sheet_row_normalized) else ''
+            new_norm = new_row_normalized[i] if i < len(new_row_normalized) else ''
+            
+            if old_norm != new_norm:
+                differences.append(f"{header}: '{old_val}' → '{new_val}'")
+                if requires_confirmation(old_val, new_val):
+                    needs_confirmation = True
+        
+        # Only proceed with update if there are actual differences
+        if differences:
+            update_info = {
                 "range": f"{sheet_name}!A{sheet_row_num}",
-                "values": [new_row_data]
-            })
-            updated_count += 1
+                "values": [new_row_data],
+                "finnkode": finnkode,
+                "adresse": db_row.get('ADRESSE', 'N/A'),
+                "differences": differences
+            }
             
-            # Collect differences
-            differences = []
-            for i, header in enumerate(header_row_normalized):
-                old_val = sheet_row_data[i] if i < len(sheet_row_data) else ''
-                new_val = new_row_data[i] if i < len(new_row_data) else ''
-                old_norm = sheet_row_normalized[i] if i < len(sheet_row_normalized) else ''
-                new_norm = new_row_normalized[i] if i < len(new_row_normalized) else ''
-                
-                if old_norm != new_norm:
-                    differences.append(f"{header}: '{old_val}' → '{new_val}'")
-            
-            # Output on single line with property address if available
-            adresse = db_row.get('ADRESSE', 'N/A')
-            if differences:
-                diff_str = " //// ".join(differences)
-                print(f"✓ {adresse} ({finnkode}): {diff_str}")
+            if needs_confirmation:
+                requires_confirmation_list.append(update_info)
             else:
-                print(f"✓ {finnkode} needs update (no individual differences found)")
+                updates_list.append(update_info)
+                updated_count += 1
+                
+                # Output on single line with property address
+                diff_str = " //// ".join(differences)
+                print(f"✓ {update_info['adresse']} ({finnkode}): {diff_str}")
+    
+    # Handle confirmation for non-null to non-null changes
+    if requires_confirmation_list:
+        print(f"\n{'='*60}")
+        print(f"⚠️  WARNING: The following changes would replace non-null values:")
+        print(f"{'='*60}\n")
+        
+        for update_info in requires_confirmation_list:
+            diff_str = " //// ".join(update_info['differences'])
+            print(f"  {update_info['adresse']} ({update_info['finnkode']})")
+            print(f"    {diff_str}\n")
+        
+        print(f"Total changes requiring confirmation: {len(requires_confirmation_list)}")
+        response = input("\nDo you want to proceed with these changes? (yes/no): ").strip().lower()
+        
+        if response in ['yes', 'y']:
+            # Add confirmed updates to the main updates list
+            for update_info in requires_confirmation_list:
+                updates_list.append({
+                    "range": update_info["range"],
+                    "values": update_info["values"]
+                })
+                updated_count += 1
+                diff_str = " //// ".join(update_info['differences'])
+                print(f"✓ {update_info['adresse']} ({update_info['finnkode']}): {diff_str}")
+        else:
+            print(f"\n⚠️  Skipped {len(requires_confirmation_list)} changes requiring confirmation")
     
     if not updates_list:
         print("\nNo updates needed - all data is current")
@@ -188,7 +233,9 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     
     # Apply updates using batch update
     try:
-        body = {"data": updates_list, "valueInputOption": "USER_ENTERED"}
+        # Extract only range and values for API call
+        batch_data = [{"range": u["range"], "values": u["values"]} for u in updates_list]
+        body = {"data": batch_data, "valueInputOption": "USER_ENTERED"}
         result = service.spreadsheets().values().batchUpdate(
             spreadsheetId=SPREADSHEET_ID,
             body=body

@@ -29,7 +29,7 @@ extractJobDataFromAds_FINN(projectName, urls, "A_live.csv")
 
 # 4
 live_data = pd.read_csv(f'{projectName}/A_live.csv')
-post_process_jobs(live_data, projectName, "AB_processed.csv")
+post_process_jobs(live_data, projectName)
 
 headers = ['Finnkode', 'URL', 'Selskap', 'Stillingstittel', 'Industri', 'Tittel', 'Søknadsfrist', 'Posisjoner', 'FRIST', 'Innhold']
 

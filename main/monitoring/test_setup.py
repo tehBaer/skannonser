@@ -15,7 +15,7 @@ def test_imports():
     try:
         from main.database.db import PropertyDatabase
         from main.runners.run_eiendom_db import run_eiendom_scrape
-        from main.sync.sync_to_sheets import sync_eiendom_to_sheets
+        from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets
         from main.tools.scheduler import run_scheduled_task
         print("✓ All imports successful")
         return True

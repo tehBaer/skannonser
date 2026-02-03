@@ -41,9 +41,21 @@ def confirm_with_rate_limit(prompt: str) -> tuple[bool, float]:
     return False, 1.0
 
 
-def post_process_rental(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
+def post_process_rental(df: DataFrame, projectName: str, save_csv: bool = True) -> DataFrame:
+    """
+    Post-process rental data.
+    
+    Args:
+        df: DataFrame with raw rental data
+        projectName: Project directory name (e.g., 'data/flippe')
+        save_csv: Whether to save to CSV (for backwards compatibility)
+    
+    Returns:
+        Processed DataFrame
+    """
     if df.empty:
-        df.to_csv(f'{projectName}/{outputFileName}', index=False)
+        if save_csv:
+            df.to_csv(f'{projectName}/AB_processed.csv', index=False)
         return df
 
     # Convert area columns to numeric, coerce errors to NaN
@@ -80,13 +92,24 @@ def post_process_rental(df: DataFrame, projectName: str, outputFileName: str, or
                           'Bruttoareal'
                           ])
 
-    df.to_csv(f'{projectName}/{outputFileName}', index=False)
+    if save_csv:
+        df.to_csv(f'{projectName}/AB_processed.csv', index=False)
 
     return df
 
-def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
+def post_process_eiendom(df: DataFrame, projectName: str, db=None) -> DataFrame:
+    """
+    Post-process eiendom data by calculating location features and cleaning data.
+    
+    Args:
+        df: DataFrame with raw eiendom data
+        projectName: Project directory name (e.g., 'data/eiendom')
+        db: PropertyDatabase instance (if None, will save to CSV for backwards compatibility)
+    
+    Returns:
+        Processed DataFrame
+    """
     if df.empty:
-        df.to_csv(f'{projectName}/{outputFileName}', index=False)
         return df
 
     # Optional price filter for API calls and sheets export
@@ -98,36 +121,21 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
         except ImportError:
             MAX_PRICE = None
 
-    # Load existing processed data to preserve commute times from CSV snapshot
-    import os
-    processed_file_path = f'{projectName}/{outputFileName}'
-    if os.path.exists(processed_file_path):
+    # Load existing commute data from database if available
+    if db is not None:
         try:
-            existing_df = pd.read_csv(processed_file_path)
+            existing_data = db.get_eiendom_for_sheets()
             
-            # Migrate old column names in existing data
-            column_renames = {
-                'PENDLEVEI': 'PENDL MORN BRJ',
-                'KJØRETID': 'BIL MORN BRJ',
-                'PENDLEVEI_RETUR_16': 'PENDL DAG BRJ',
-                'KJØRETID_RETUR_16': 'BIL DAG BRJ'
-            }
-            for old_name, new_name in column_renames.items():
-                if old_name in existing_df.columns:
-                    existing_df.rename(columns={old_name: new_name}, inplace=True)
-            
-            # Extract commute columns from existing data (BRJ + MVV)
+            # Extract commute columns from existing database data (BRJ + MVV)
             commute_columns = ['Finnkode', 'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
                              'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
-            # Filter to only include columns that exist in existing data
-            existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_df.columns]
-            existing_commute = existing_df[existing_commute_cols].copy() if len(existing_commute_cols) > 1 else None
+            existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_data.columns]
+            existing_commute = existing_data[existing_commute_cols].copy() if len(existing_commute_cols) > 1 else None
             
-            if existing_commute is not None:
-                # Convert to integers in existing data before merging
-                for col in commute_columns[1:]:
-                    if col in existing_commute.columns:
-                        existing_commute[col] = pd.to_numeric(existing_commute[col], errors='coerce').round().astype('Int64')
+            if existing_commute is not None and not existing_commute.empty:
+                # Convert Finnkode to string for consistent merging
+                existing_commute['Finnkode'] = existing_commute['Finnkode'].astype(str)
+                df['Finnkode'] = df['Finnkode'].astype(str)
                 
                 # Merge commute data back into new dataframe
                 df = df.merge(existing_commute, on='Finnkode', how='left', suffixes=('', '_old'))
@@ -137,9 +145,52 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                         # Fill NaN in new column with values from old column
                         df[col] = df[col].combine_first(df[f'{col}_old'])
                         df = df.drop(columns=[f'{col}_old'])
-                print("✓ Merged existing commute data from snapshot")
+                print("✓ Merged existing commute data from database")
         except Exception as e:
-            print(f"⚠️  Could not load existing processed data: {e}")
+            print(f"⚠️  Could not load existing data from database: {e}")
+    else:
+        # Fallback to CSV if no database provided (backwards compatibility)
+        import os
+        processed_file_path = f'{projectName}/AB_processed.csv'
+        if os.path.exists(processed_file_path):
+            try:
+                existing_df = pd.read_csv(processed_file_path)
+                
+                # Migrate old column names in existing data
+                column_renames = {
+                    'PENDLEVEI': 'PENDL MORN BRJ',
+                    'KJØRETID': 'BIL MORN BRJ',
+                    'PENDLEVEI_RETUR_16': 'PENDL DAG BRJ',
+                    'KJØRETID_RETUR_16': 'BIL DAG BRJ'
+                }
+                for old_name, new_name in column_renames.items():
+                    if old_name in existing_df.columns:
+                        existing_df.rename(columns={old_name: new_name}, inplace=True)
+                
+                # Extract commute columns from existing data (BRJ + MVV)
+                commute_columns = ['Finnkode', 'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                                 'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
+                # Filter to only include columns that exist in existing data
+                existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_df.columns]
+                existing_commute = existing_df[existing_commute_cols].copy() if len(existing_commute_cols) > 1 else None
+                
+                if existing_commute is not None:
+                    # Convert to integers in existing data before merging
+                    for col in commute_columns[1:]:
+                        if col in existing_commute.columns:
+                            existing_commute[col] = pd.to_numeric(existing_commute[col], errors='coerce').round().astype('Int64')
+                    
+                    # Merge commute data back into new dataframe
+                    df = df.merge(existing_commute, on='Finnkode', how='left', suffixes=('', '_old'))
+                    # Use existing values where new values are NaN
+                    for col in commute_columns[1:]:
+                        if col in df.columns and f'{col}_old' in df.columns:
+                            # Fill NaN in new column with values from old column
+                            df[col] = df[col].combine_first(df[f'{col}_old'])
+                            df = df.drop(columns=[f'{col}_old'])
+                    print("✓ Merged existing commute data from CSV snapshot")
+            except Exception as e:
+                print(f"⚠️  Could not load existing processed data: {e}")
 
     # Convert area columns to numeric, coerce errors to NaN
     for col in ['Primærrom', 'Internt bruksareal (BRA-i)', 'Bruksareal']:
@@ -387,7 +438,7 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                     except Exception as e:
                         print(f" ✗ Error: {str(e)}")
                 
-                destination_mvv = f"{address}, {postnummer}" if pd.notna(postnummer) and postnummer else address
+                destination_mvv = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
                 
                 # Calculate PENDL DAG MVV
                 if pd.isna(row.get('PENDL DAG MVV')):
@@ -455,14 +506,23 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                           'Bruttoareal'
                           ])
 
-    df.to_csv(f'{projectName}/{outputFileName}', index=False)
-
     return df
 
-def post_process_jobs(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
-    """Post-process job data by normalizing dates and formatting text fields."""
+def post_process_jobs(df: DataFrame, projectName: str, save_csv: bool = True) -> DataFrame:
+    """
+    Post-process job data by normalizing dates and formatting text fields.
+    
+    Args:
+        df: DataFrame with raw job data
+        projectName: Project directory name (e.g., 'data/jobbe')
+        save_csv: Whether to save to CSV (for backwards compatibility)
+    
+    Returns:
+        Processed DataFrame
+    """
     if df.empty:
-        df.to_csv(f'{projectName}/{outputFileName}', index=False)
+        if save_csv:
+            df.to_csv(f'{projectName}/AB_processed.csv', index=False)
         return df
 
     def parse_date(deadline):
@@ -478,7 +538,8 @@ def post_process_jobs(df: DataFrame, projectName: str, outputFileName: str, orig
 
     df['FRIST'] = df['Søknadsfrist'].apply(parse_date)
 
-    df.to_csv(f'{projectName}/{outputFileName}', index=False)
+    if save_csv:
+        df.to_csv(f'{projectName}/AB_processed.csv', index=False)
 
     return df
 

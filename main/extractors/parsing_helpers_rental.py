@@ -113,3 +113,23 @@ def getDate(soup):
 
 def removeSpaces(string):
     return string.replace('\xa0', '').replace(' ', '')
+
+
+def getStatus(soup):
+    """
+    Extracts the status from the property listing.
+    Returns the status text if found (e.g., 'Solgt'), otherwise None.
+    
+    The element appears as: <div class="...bg-[--w-color-badge-warning-background]...">Solgt</div>
+    """
+    statuses = ["warning", "negative", "info"]
+    status_text = None
+    
+    for status in statuses:
+        searchString = f"!text-m mb-24 py-4 px-8 border-0 rounded-4 text-xs inline-flex bg-[--w-color-badge-{status}-background] s-text"
+        element = soup.find('div', class_=searchString)
+        if element:
+            status_text = element.get_text(strip=True)
+            break
+    
+    return status_text
