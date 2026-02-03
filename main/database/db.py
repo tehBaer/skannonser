@@ -349,6 +349,62 @@ class PropertyDatabase:
                 df[col] = df[col].fillna(0).astype(int)
         
         return df
+
+    def get_unlisted_eiendom_for_sheets(self) -> pd.DataFrame:
+        """Get unlisted property listings formatted for Google Sheets export."""
+        conn = self.get_connection()
+
+        # Optional price filter
+        try:
+            from main.config.filters import MAX_PRICE
+        except ImportError:
+            try:
+                from config.filters import MAX_PRICE
+            except ImportError:
+                MAX_PRICE = None
+        
+        # Get unlisted listings (not in search anymore, but not explicitly sold)
+        query = '''
+            SELECT 
+                e.finnkode as "Finnkode",
+                e.tilgjengelighet as "Tilgjengelighet",
+                COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
+                e.postnummer as "Postnummer",
+                e.pris as "Pris",
+                e.url as "URL",
+                e.areal as "AREAL",
+                e.pris_kvm as "PRIS KVM",
+                ep.pendl_morn_brj as "PENDL MORN BRJ",
+                ep.bil_morn_brj as "BIL MORN BRJ",
+                ep.pendl_dag_brj as "PENDL DAG BRJ",
+                ep.bil_dag_brj as "BIL DAG BRJ",
+                ep.pendl_morn_mvv as "PENDL MORN MVV",
+                ep.bil_morn_mvv as "BIL MORN MVV",
+                ep.pendl_dag_mvv as "PENDL DAG MVV",
+                ep.bil_dag_mvv as "BIL DAG MVV",
+                ep.google_maps_url as "GOOGLE_MAPS_URL"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            WHERE e.is_active = 0 AND (e.tilgjengelighet IS NULL OR e.tilgjengelighet != 'Solgt')
+        '''
+
+        params = []
+        if MAX_PRICE is not None:
+            query += " AND e.pris <= ?"
+            params.append(MAX_PRICE)
+
+        query += " ORDER BY e.scraped_at DESC"
+
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        
+        # Convert numeric columns back to int (pandas reads them as float64)
+        numeric_columns = ['Pris', 'AREAL', 'PRIS KVM']
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = df[col].fillna(0).astype(int)
+        
+        return df
     
     def _generate_google_maps_url(self, adresse: str, postnummer: str) -> str:
         """Generate a Google Maps search URL from address and postal code."""
