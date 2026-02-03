@@ -544,10 +544,10 @@ class PropertyDatabase:
         total = cursor.fetchone()[0]
         
         cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE is_active = 1')
-        active = cursor.fetchone()[0]
+        listed = cursor.fetchone()[0]
         
-        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE is_active = 0')
-        inactive = cursor.fetchone()[0]
+        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE is_active = 0 AND tilgjengelighet != \'Solgt\'')
+        unlisted = cursor.fetchone()[0]
         
         cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE exported_to_sheets = 0 AND is_active = 1')
         not_exported = cursor.fetchone()[0]
@@ -556,8 +556,8 @@ class PropertyDatabase:
         
         return {
             'total': total,
-            'active': active,
-            'inactive': inactive,
+            'listed': listed,
+            'unlisted': unlisted,
             'not_exported': not_exported
         }
 

@@ -88,8 +88,8 @@ def run_eiendom_scrape(db_path: str = None):
     print("="*60)
     stats = db.get_stats('eiendom')
     print(f"Total listings in database: {stats['total']}")
-    print(f"Active listings: {stats['active']}")
-    print(f"Inactive listings: {stats['inactive']}")
+    print(f"Listed: {stats['listed']}")
+    print(f"Unlisted: {stats['unlisted']}")
     print(f"Not yet exported to Sheets: {stats['not_exported']}")
     
     print("\n" + "="*60)

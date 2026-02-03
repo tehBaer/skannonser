@@ -1,7 +1,44 @@
 ﻿import re
+import time
 
 import pandas as pd
 from pandas import DataFrame
+
+
+def confirm_with_rate_limit(prompt: str) -> tuple[bool, float]:
+    """
+    Ask user for confirmation with optional rate limiting for API requests.
+    
+    Args:
+        prompt: The confirmation prompt to display
+    
+    Returns:
+        Tuple of (proceed: bool, requests_per_second: float)
+        - proceed: True if user wants to continue, False otherwise
+        - requests_per_second: Rate limit (default 1.0, or user-specified number)
+    
+    Examples:
+        User can enter: yes, no, or a number like 5 (for 5 requests/sec)
+    """
+    valid_input = False
+    while not valid_input:
+        response = input(prompt + " (yes/no/<requests per second>): ").strip().lower()
+        
+        if response in ['yes', 'y']:
+            return True, 1.0  # Default 1 request per second
+        elif response in ['no', 'n']:
+            return False, 1.0
+        else:
+            try:
+                rate = float(response)
+                if rate > 0:
+                    return True, rate
+                else:
+                    print("Please enter a positive number for requests per second")
+            except ValueError:
+                print("Invalid input. Please enter 'yes', 'no', or a number (e.g., 5)")
+    
+    return False, 1.0
 
 
 def post_process_rental(df: DataFrame, projectName: str, outputFileName: str, originalDF: DataFrame = None) -> DataFrame:
@@ -179,9 +216,9 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
         if MAX_PRICE is not None:
             print(f"⚠️  Price filter active: MAX_PRICE = {MAX_PRICE}")
         
-        response = input(f"Calculate location features for these properties? (yes/no): ").strip().lower()
+        proceed, requests_per_second = confirm_with_rate_limit("Calculate location features for these properties?")
         
-        if response in ['yes', 'y']:
+        if proceed:
             try:
                 from main.location_features import PublicTransitCommuteTime, CommutingTimeToWorkAddress
             except ImportError:
@@ -201,7 +238,13 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
             total_properties = pendl_morn_missing + bil_morn_missing
             
             print(f"\n🚀 Starting calculations for {len(df)} properties...")
-            print(f"   (This may take a while - each property needs 2 API calls)\n")
+            print(f"   (This may take a while - each property needs 2 API calls)")
+            if requests_per_second < 1.0:
+                print(f"   Rate limited to {requests_per_second} requests/second\n")
+            else:
+                print(f"   Running at {requests_per_second} requests/second\n")
+            
+            delay_between_requests = 1.0 / requests_per_second if requests_per_second > 0 else 0
             
             for idx, row in df.loc[eligible_mask].iterrows():
                 address = row['Adresse']
@@ -221,6 +264,8 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                             df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
                             calculated_transit += 1
                             print(f" ✓ {minutes} min")
+                            if delay_between_requests > 0:
+                                time.sleep(delay_between_requests)
                         else:
                             print(f" ✗ Failed (returned None)")
                     except Exception as e:
@@ -235,6 +280,8 @@ def post_process_eiendom(df: DataFrame, projectName: str, outputFileName: str, o
                             df.at[idx, 'BIL MORN BRJ'] = int(minutes)
                             calculated_driving += 1
                             print(f" ✓ {minutes} min")
+                            if delay_between_requests > 0:
+                                time.sleep(delay_between_requests)
                         else:
                             print(f" ✗ Failed (returned None)")
                     except Exception as e:

@@ -163,13 +163,24 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
             })
             updated_count += 1
             
-            # Output what's changing (show actual differences after normalization)
-            print(f"✓ {finnkode} needs update")
-            for i, (header, old_val, new_val, old_norm, new_norm) in enumerate(zip(
-                header_row_normalized, sheet_row_data, new_row_data, sheet_row_normalized, new_row_normalized
-            )):
+            # Collect differences
+            differences = []
+            for i, header in enumerate(header_row_normalized):
+                old_val = sheet_row_data[i] if i < len(sheet_row_data) else ''
+                new_val = new_row_data[i] if i < len(new_row_data) else ''
+                old_norm = sheet_row_normalized[i] if i < len(sheet_row_normalized) else ''
+                new_norm = new_row_normalized[i] if i < len(new_row_normalized) else ''
+                
                 if old_norm != new_norm:
-                    print(f"    {header}: '{old_val}' → '{new_val}' (normalized: '{old_norm}' → '{new_norm}')")
+                    differences.append(f"{header}: '{old_val}' → '{new_val}'")
+            
+            # Output on single line with property address if available
+            adresse = db_row.get('ADRESSE', 'N/A')
+            if differences:
+                diff_str = " //// ".join(differences)
+                print(f"✓ {adresse} ({finnkode}): {diff_str}")
+            else:
+                print(f"✓ {finnkode} needs update (no individual differences found)")
     
     if not updates_list:
         print("\nNo updates needed - all data is current")

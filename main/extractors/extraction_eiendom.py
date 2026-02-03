@@ -10,7 +10,7 @@ except ImportError:
     from extractors.parsing_helpers_rental import *
 
 
-def extract_eiendom_data(url, index, projectName, auto_save_new=True, force_save=False):
+def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True, force_save=False):
     try:
         soup = load_or_fetch_ad_html(url, projectName, auto_save_new, force_save)
     except Exception as e:
@@ -46,7 +46,10 @@ def extract_eiendom_data(url, index, projectName, auto_save_new=True, force_save
         'Balkong/Terrasse (TBA)': sizes.get('info-open-area'),
         'Bruttoareal': sizes.get('info-gross-area'),
     }
-    print(f"Ad {index}: {finnkode}")
+    if total:
+        print(f"{index}/{total}: {finnkode}")
+    else:
+        print(f"{index}: {finnkode}")
 
     return data
 
@@ -56,14 +59,15 @@ def extractEiendomDataFromAds(projectName: str, urls: DataFrame, outputFileName:
     os.makedirs(projectName, exist_ok=True)
 
     collectedData = []
+    total_urls = len(urls)
 
     # Loop through each URL and extract eiendom data
     try:
         # Create a folder inside the previous folder for the htmls
         os.makedirs(f'{projectName}/html_extracted', exist_ok=True)
-        for index, url in enumerate(urls['URL']):
+        for index, url in enumerate(urls['URL'], start=1):
             try:
-                data = extract_eiendom_data(url, index, projectName)
+                data = extract_eiendom_data(url, index, projectName, total=total_urls)
                 collectedData.append(data)
             except Exception as e:
                 print(f'Error processing URL at index {index}: {url} - {e}')
