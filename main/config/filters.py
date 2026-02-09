@@ -11,5 +11,5 @@ Set INCLUDE_UNLISTED to True to include listings that are no longer in search
 results (unlisted). Set to False to exclude them from database and exports.
 """
 
-MAX_PRICE = 8500000
+MAX_PRICE = 8000000
 INCLUDE_UNLISTED = True

@@ -50,6 +50,7 @@ def extractEiendomDataFromAds(projectName: str, urls: DataFrame, outputFileName:
     os.makedirs(projectName, exist_ok=True)
 
     collectedData = []
+    failedUrls = []
     total_urls = len(urls)
 
     # Loop through each URL and extract eiendom data
@@ -61,13 +62,42 @@ def extractEiendomDataFromAds(projectName: str, urls: DataFrame, outputFileName:
                 data = extract_eiendom_data(url, index, projectName, total=total_urls)
                 collectedData.append(data)
             except Exception as e:
-                print(f'Error processing URL at index {index}: {url} - {e}')
+                finnkode = url.split('finnkode=')[1] if 'finnkode=' in url else 'unknown'
+                error_type = type(e).__name__
+                error_msg = str(e)
+                
+                print(f'\n❌ Error processing URL at index {index}: {url}')
+                print(f'   Finnkode: {finnkode}')
+                print(f'   Error type: {error_type}')
+                print(f'   Error: {error_msg}')
+                
+                # Check if it's a planned property
+                is_planned = '/realestate/planned/' in url
+                if is_planned:
+                    print(f'   Note: This is a PLANNED property (not yet built)')
+                
+                failedUrls.append({
+                    'URL': url,
+                    'Finnkode': finnkode,
+                    'Index': index,
+                    'Error_Type': error_type,
+                    'Error_Message': error_msg,
+                    'Is_Planned': is_planned
+                })
     finally:
-        pass
         # Save the combined data to a new CSV file in the output directory
         df = pd.DataFrame(collectedData)
         df.to_csv(f'{projectName}/{outputFileName}', index=False)
-        print(f"Data extraction completed. {len(collectedData)} records saved to {projectName}/{outputFileName}")
+        
+        # Save failed URLs to a separate file
+        if failedUrls:
+            failed_df = pd.DataFrame(failedUrls)
+            failed_df.to_csv(f'{projectName}/A_failed.csv', index=False)
+            print(f"\n⚠️  {len(failedUrls)} URLs failed - saved to {projectName}/A_failed.csv")
+            print(f"   Planned properties: {sum(1 for f in failedUrls if f['Is_Planned'])}")
+            print(f"   Regular properties: {sum(1 for f in failedUrls if not f['Is_Planned'])}")
+        
+        print(f"\n✓ Data extraction completed. {len(collectedData)} records saved to {projectName}/{outputFileName}")
         return df
 
 

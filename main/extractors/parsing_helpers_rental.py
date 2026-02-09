@@ -2,19 +2,39 @@ import re
 
 
 def getBuyPrice(soup):
+    # First try regular property price
     pricing_section = soup.find('div', {'data-testid': 'pricing-total-price'})
-    total_price_match = re.search(r'([\d\xa0\s]+) kr', pricing_section.get_text())
-    total_price = None
-    if total_price_match:
-        price_str = total_price_match.group(1).replace('\xa0', '').replace(' ', '')
-        try:
-            total_price = int(price_str)
-        except ValueError:
-            total_price = None
-    return total_price
+    if pricing_section:
+        total_price_match = re.search(r'([\d\xa0\s]+) kr', pricing_section.get_text())
+        if total_price_match:
+            price_str = total_price_match.group(1).replace('\xa0', '').replace(' ', '')
+            try:
+                return int(price_str)
+            except ValueError:
+                pass
+    
+    # Try "Prisantydning" for properties without total price
+    pricing_section = soup.find('div', {'data-testid': 'pricing-incicative-price'})
+    if pricing_section:
+        total_price_match = re.search(r'([\d\xa0\s]+) kr', pricing_section.get_text())
+        if total_price_match:
+            price_str = total_price_match.group(1).replace('\xa0', '').replace(' ', '')
+            try:
+                return int(price_str)
+            except ValueError:
+                pass
+    
+    # Check if it's a planned property ("Pris kommer")
+    # For planned properties, we can't extract a numeric price yet
+    nøkkelinfo = soup.find('section', {'aria-label': 'Nøkkelinfo'})
+    if nøkkelinfo and 'Pris kommer' in nøkkelinfo.get_text():
+        return None  # Price not yet available for planned properties
+    
+    return None
 
 
 def getAddress(soup):
+    # Try regular property address format first
     address_element = soup.find('span', {'data-testid': 'object-address'})
     if address_element:
         full_address = address_element.get_text().strip()
@@ -24,10 +44,20 @@ def getAddress(soup):
         else:
             address = None
             area = GetArea(full_address)
-    else:
-        address = None
-        area = None
-    return address, area
+        return address, area
+    
+    # Try planned property format (title contains address)
+    title_element = soup.find('h1')
+    if title_element:
+        title = title_element.get_text().strip()
+        # For planned properties, title is often just the address
+        # Extract postnummer from anywhere in the page
+        full_text = soup.get_text()
+        postnummer_match = re.search(r'\b(\d{4})\s+', full_text)
+        area = postnummer_match.group(1) if postnummer_match else None
+        return title, area
+    
+    return None, None
 
 
 def GetArea(part):
