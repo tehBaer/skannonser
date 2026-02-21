@@ -226,6 +226,7 @@ class PropertyDatabase:
                 'info_usable_b_area': self._to_int(row.get('Innglasset balkong (BRA-b)')),
                 'info_open_area': self._to_int(row.get('Balkong/Terrasse (TBA)')),
                 'info_plot_area': self._to_int(row.get('Tomteareal')),
+                'info_construction_year': self._to_int(row.get('Byggeår')),
                 'areal': self._to_int(row.get('AREAL')),
                 'pris_kvm': self._to_int(row.get('PRIS KVM')),
             }
@@ -257,7 +258,7 @@ class PropertyDatabase:
                         pris = ?, url = ?,
                         info_usable_area = ?, info_usable_i_area = ?, info_primary_area = ?,
                                                 info_gross_area = ?, info_usable_e_area = ?, info_usable_b_area = ?,
-                                                info_open_area = ?, info_plot_area = ?,
+                                                info_open_area = ?, info_plot_area = ?, info_construction_year = ?,
                         pris_kvm = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE finnkode = ?
@@ -265,7 +266,7 @@ class PropertyDatabase:
                       data['pris'], data['url'],
                       data['info_usable_area'], data['info_usable_i_area'], data['info_primary_area'],
                                             data['info_gross_area'], data['info_usable_e_area'], data['info_usable_b_area'],
-                                            data['info_open_area'], data['info_plot_area'],
+                                            data['info_open_area'], data['info_plot_area'], data['info_construction_year'],
                       data['pris_kvm'],
                       finnkode))
                 updated += 1
@@ -276,14 +277,14 @@ class PropertyDatabase:
                     (finnkode, tilgjengelighet, adresse, postnummer, pris, url,
                      info_usable_area, info_usable_i_area, info_primary_area,
                                          info_gross_area, info_usable_e_area, info_usable_b_area,
-                                         info_open_area, info_plot_area,
+                                         info_open_area, info_plot_area, info_construction_year,
                      pris_kvm)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (finnkode, data['tilgjengelighet'], data['adresse'], data['postnummer'],
                       data['pris'], data['url'],
                       data['info_usable_area'], data['info_usable_i_area'], data['info_primary_area'],
                                             data['info_gross_area'], data['info_usable_e_area'], data['info_usable_b_area'],
-                                            data['info_open_area'], data['info_plot_area'],
+                                            data['info_open_area'], data['info_plot_area'], data['info_construction_year'],
                       data['pris_kvm']))
                 inserted += 1
             
