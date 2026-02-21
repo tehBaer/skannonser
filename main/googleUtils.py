@@ -12,22 +12,50 @@ SPREADSHEET_ID = "1ggwnC3eYklqWnHx9ebWWOIDyCUyBFqs40KrSFWUaB3Y"
 # Get the directory where this script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
+def _is_invalid_grant_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return "invalid_grant" in message or "expired or revoked" in message
+
+
+def _remove_token_file(token_path: str) -> None:
+    if os.path.exists(token_path):
+        os.remove(token_path)
+
 def get_credentials():
     """Retrieve or refresh Google API credentials."""
     creds = None
     token_path = os.path.join(SCRIPT_DIR, "config", "token.json")
     credentials_path = os.path.join(SCRIPT_DIR, "config", "credentials.json")
+
+    def run_oauth_flow():
+        flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+        return flow.run_local_server(port=0)
     
     if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        except Exception:
+            _remove_token_file(token_path)
+            creds = None
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except Exception as error:
+                if _is_invalid_grant_error(error):
+                    print("Google token is expired/revoked. Deleting token and re-authenticating...")
+                    _remove_token_file(token_path)
+                    creds = run_oauth_flow()
+                else:
+                    raise
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
+            creds = run_oauth_flow()
+
         with open(token_path, "w") as token:
             token.write(creds.to_json())
+
     return creds
 
 
