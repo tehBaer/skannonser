@@ -13,11 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from main.database.db import PropertyDatabase
-    from main.extractors.extraction import load_or_fetch_ad_html
+    from main.extractors.ad_html_loader import load_or_fetch_ad_html
     from main.extractors.parsing_helpers_rental import getStatus
 except ImportError:
     from database.db import PropertyDatabase
-    from extractors.extraction import load_or_fetch_ad_html
+    from extractors.ad_html_loader import load_or_fetch_ad_html
     from extractors.parsing_helpers_rental import getStatus
 
 
@@ -27,12 +27,11 @@ def refresh_listing(finnkode: str, url: str, project_name: str = "data/eiendom")
     
     Args:
         finnkode: The FINN code for the listing
-        url: The URL of the listing
         project_name: The project folder name for storing HTML files
         
     Returns:
         Dict with updated data (finnkode and tilgjengelighet/status)
-    """
+
     try:
         # Force re-download by setting force_save=True
         soup = load_or_fetch_ad_html(url, project_name, auto_save_new=True, force_save=True)

@@ -4,11 +4,11 @@ import pandas as pd
 from pandas import DataFrame
 
 try:
-    from main.extractors.extraction import load_or_fetch_ad_html
+    from main.extractors.ad_html_loader import load_or_fetch_ad_html
     from main.extractors.parsing_helpers_jobs_FINN import FinnParser
     from main.extractors.parsing_helpers_rental import *
 except ImportError:
-    from extraction import load_or_fetch_ad_html
+    from ad_html_loader import load_or_fetch_ad_html
     from parsing_helpers_jobs_FINN import FinnParser
     from parsing_helpers_rental import *
 
