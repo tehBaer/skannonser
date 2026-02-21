@@ -119,3 +119,11 @@ def getConstructionYear(soup):
         return ""
     match = re.search(r'(\d{4})', element.get_text())
     return match.group(1) if match else ""
+
+
+def getPlotOwnership(soup):
+    element = soup.find('div', {'data-testid': 'info-plot-area'})
+    if not element:
+        return ""
+    match = re.search(r'\(([^)]+)\)', element.get_text())
+    return match.group(1).strip() if match else ""

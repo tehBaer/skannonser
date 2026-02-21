@@ -52,7 +52,7 @@ def normalize_value(val):
 def get_sheet_data_with_row_numbers(service, sheet_name: str) -> Dict:
     """Get all sheet data with row numbers (1-indexed)."""
     try:
-        range_name = f"{sheet_name}!A1:Z10000"
+        range_name = f"{sheet_name}!A1:AZ10000"
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, 
             range=range_name

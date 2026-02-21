@@ -70,7 +70,7 @@ def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
 
 def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -> List[str]:
     """Ensure sheet header includes all desired columns, appending missing ones."""
-    range_name = f"{sheet_name}!A1:Z1"
+    range_name = f"{sheet_name}!A1:AZ1"
     result = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
         range=range_name
