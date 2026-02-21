@@ -14,13 +14,11 @@ try:
     from main.crawl import extract_URLs
     from main.extractors.extraction_eiendom import extractEiendomDataFromAds
     from main.post_process import post_process_eiendom
-    from main.runners.run_helper import ensure_venv
     from main.database.db import PropertyDatabase
 except ImportError:
     from crawl import extract_URLs
     from extractors.extraction_eiendom import extractEiendomDataFromAds
     from post_process import post_process_eiendom
-    from run_helper import ensure_venv
     from database.db import PropertyDatabase
 
 
@@ -31,8 +29,6 @@ def run_eiendom_scrape(db_path: str = None):
     Args:
         db_path: Optional path to database file. If None, uses default location.
     """
-    ensure_venv()
-    
     # Initialize database
     db = PropertyDatabase(db_path)
     print(f"Using database: {db.db_path}")

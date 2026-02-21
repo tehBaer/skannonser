@@ -39,7 +39,15 @@ class PropertyDatabase:
                 postnummer TEXT,
                 pris INTEGER,
                 url TEXT,
-                areal INTEGER,
+                info_usable_area INTEGER,
+                info_usable_i_area INTEGER,
+                info_primary_area INTEGER,
+                info_gross_area INTEGER,
+                info_usable_e_area INTEGER,
+                info_usable_b_area INTEGER,
+                info_open_area INTEGER,
+                info_plot_area INTEGER,
+                info_construction_year INTEGER,
                 pris_kvm INTEGER,
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -54,6 +62,7 @@ class PropertyDatabase:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finnkode TEXT UNIQUE NOT NULL,
                 adresse_cleaned TEXT,
+                areal INTEGER,
                 pendl_morn_brj INTEGER,
                 bil_morn_brj INTEGER,
                 pendl_dag_brj INTEGER,
@@ -68,10 +77,29 @@ class PropertyDatabase:
             )
         ''')
 
+        # Ensure new columns exist for existing eiendom databases
+        cursor.execute("PRAGMA table_info(eiendom)")
+        existing_eiendom_columns = {row[1] for row in cursor.fetchall()}
+        eiendom_columns_to_add = {
+            "info_usable_area": "INTEGER",
+            "info_usable_i_area": "INTEGER",
+            "info_primary_area": "INTEGER",
+            "info_gross_area": "INTEGER",
+            "info_usable_e_area": "INTEGER",
+            "info_usable_b_area": "INTEGER",
+            "info_open_area": "INTEGER",
+            "info_plot_area": "INTEGER",
+            "info_construction_year": "INTEGER",
+        }
+        for column_name, column_type in eiendom_columns_to_add.items():
+            if column_name not in existing_eiendom_columns:
+                cursor.execute(f"ALTER TABLE eiendom ADD COLUMN {column_name} {column_type}")
+
         # Ensure new columns exist for existing databases
         cursor.execute("PRAGMA table_info(eiendom_processed)")
         existing_columns = {row[1] for row in cursor.fetchall()}
         columns_to_add = {
+            "areal": "INTEGER",
             "bil_morn_brj": "INTEGER",
             "pendl_dag_brj": "INTEGER",
             "bil_dag_brj": "INTEGER",
@@ -83,6 +111,39 @@ class PropertyDatabase:
         for column_name, column_type in columns_to_add.items():
             if column_name not in existing_columns:
                 cursor.execute(f"ALTER TABLE eiendom_processed ADD COLUMN {column_name} {column_type}")
+
+        # Backfill legacy areal values from eiendom.areal to eiendom_processed.areal
+        # (only applicable on older databases that still have eiendom.areal)
+        if "areal" in existing_eiendom_columns:
+            cursor.execute('''
+                UPDATE eiendom_processed
+                SET areal = (
+                    SELECT e.areal
+                    FROM eiendom e
+                    WHERE e.finnkode = eiendom_processed.finnkode
+                )
+                WHERE areal IS NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM eiendom e
+                      WHERE e.finnkode = eiendom_processed.finnkode
+                        AND e.areal IS NOT NULL
+                  )
+            ''')
+            updated_areal = cursor.rowcount
+
+            cursor.execute('''
+                INSERT INTO eiendom_processed (finnkode, areal)
+                SELECT e.finnkode, e.areal
+                FROM eiendom e
+                LEFT JOIN eiendom_processed ep ON ep.finnkode = e.finnkode
+                WHERE ep.finnkode IS NULL
+                  AND e.areal IS NOT NULL
+            ''')
+            inserted_areal = cursor.rowcount
+
+            if updated_areal > 0 or inserted_areal > 0:
+                print(f"✓ Backfilled AREAL to eiendom_processed: {updated_areal} updated, {inserted_areal} inserted")
         
         # Create indexes for better query performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_finnkode ON eiendom(finnkode)')
@@ -127,7 +188,14 @@ class PropertyDatabase:
             'Postnummer': 'postnummer',
             'Pris': 'pris',
             'URL': 'url',
-            'AREAL': 'areal',
+            'Bruksareal': 'info_usable_area',
+            'Internt bruksareal (BRA-i)': 'info_usable_i_area',
+            'Primærrom': 'info_primary_area',
+            'Bruttoareal': 'info_gross_area',
+            'Eksternt bruksareal (BRA-e)': 'info_usable_e_area',
+            'Innglasset balkong (BRA-b)': 'info_usable_b_area',
+            'Balkong/Terrasse (TBA)': 'info_open_area',
+            'Tomteareal': 'info_plot_area',
             'PRIS KVM': 'pris_kvm'
         }
         
@@ -150,6 +218,14 @@ class PropertyDatabase:
                 'postnummer': row.get('Postnummer', ''),
                 'pris': self._to_int(row.get('Pris')),
                 'url': row.get('URL', ''),
+                'info_usable_area': self._to_int(row.get('Bruksareal')),
+                'info_usable_i_area': self._to_int(row.get('Internt bruksareal (BRA-i)')),
+                'info_primary_area': self._to_int(row.get('Primærrom')),
+                'info_gross_area': self._to_int(row.get('Bruttoareal')),
+                'info_usable_e_area': self._to_int(row.get('Eksternt bruksareal (BRA-e)')),
+                'info_usable_b_area': self._to_int(row.get('Innglasset balkong (BRA-b)')),
+                'info_open_area': self._to_int(row.get('Balkong/Terrasse (TBA)')),
+                'info_plot_area': self._to_int(row.get('Tomteareal')),
                 'areal': self._to_int(row.get('AREAL')),
                 'pris_kvm': self._to_int(row.get('PRIS KVM')),
             }
@@ -178,21 +254,37 @@ class PropertyDatabase:
                 cursor.execute('''
                     UPDATE eiendom 
                     SET tilgjengelighet = ?, adresse = ?, postnummer = ?, 
-                        pris = ?, url = ?, areal = ?, pris_kvm = ?,
+                        pris = ?, url = ?,
+                        info_usable_area = ?, info_usable_i_area = ?, info_primary_area = ?,
+                                                info_gross_area = ?, info_usable_e_area = ?, info_usable_b_area = ?,
+                                                info_open_area = ?, info_plot_area = ?,
+                        pris_kvm = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE finnkode = ?
                 ''', (data['tilgjengelighet'], data['adresse'], data['postnummer'],
-                      data['pris'], data['url'], data['areal'], data['pris_kvm'],
+                      data['pris'], data['url'],
+                      data['info_usable_area'], data['info_usable_i_area'], data['info_primary_area'],
+                                            data['info_gross_area'], data['info_usable_e_area'], data['info_usable_b_area'],
+                                            data['info_open_area'], data['info_plot_area'],
+                      data['pris_kvm'],
                       finnkode))
                 updated += 1
             else:
                 # Insert new record
                 cursor.execute('''
                     INSERT INTO eiendom 
-                    (finnkode, tilgjengelighet, adresse, postnummer, pris, url, areal, pris_kvm)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (finnkode, tilgjengelighet, adresse, postnummer, pris, url,
+                     info_usable_area, info_usable_i_area, info_primary_area,
+                                         info_gross_area, info_usable_e_area, info_usable_b_area,
+                                         info_open_area, info_plot_area,
+                     pris_kvm)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (finnkode, data['tilgjengelighet'], data['adresse'], data['postnummer'],
-                      data['pris'], data['url'], data['areal'], data['pris_kvm']))
+                      data['pris'], data['url'],
+                      data['info_usable_area'], data['info_usable_i_area'], data['info_primary_area'],
+                                            data['info_gross_area'], data['info_usable_e_area'], data['info_usable_b_area'],
+                                            data['info_open_area'], data['info_plot_area'],
+                      data['pris_kvm']))
                 inserted += 1
             
             # Also insert/update processed data with commute times and Google Maps URL
@@ -201,6 +293,7 @@ class PropertyDatabase:
                 finnkode,
                 data['adresse'],
                 data['postnummer'],
+                data.get('areal'),
                 pendl_morn_brj,
                 bil_morn_brj,
                 pendl_dag_brj,
@@ -340,7 +433,16 @@ class PropertyDatabase:
                 e.postnummer as "Postnummer",
                 e.pris as "Pris",
                 e.url as "URL",
-                e.areal as "AREAL",
+                e.info_usable_area as "Bruksareal",
+                e.info_usable_i_area as "Internt bruksareal (BRA-i)",
+                e.info_primary_area as "Primærrom",
+                e.info_gross_area as "Bruttoareal",
+                e.info_usable_e_area as "Eksternt bruksareal (BRA-e)",
+                e.info_usable_b_area as "Innglasset balkong (BRA-b)",
+                e.info_open_area as "Balkong/Terrasse (TBA)",
+                e.info_plot_area as "Tomteareal",
+                e.info_construction_year as "Byggeår",
+                ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
                 ep.pendl_morn_brj as "PENDL MORN BRJ",
                 ep.bil_morn_brj as "BIL MORN BRJ",
@@ -397,7 +499,15 @@ class PropertyDatabase:
                 e.postnummer as "Postnummer",
                 e.pris as "Pris",
                 e.url as "URL",
-                e.areal as "AREAL",
+                e.info_usable_area as "Bruksareal",
+                e.info_usable_i_area as "Internt bruksareal (BRA-i)",
+                e.info_primary_area as "Primærrom",
+                e.info_gross_area as "Bruttoareal",
+                e.info_usable_e_area as "Eksternt bruksareal (BRA-e)",
+                e.info_usable_b_area as "Innglasset balkong (BRA-b)",
+                e.info_open_area as "Balkong/Terrasse (TBA)",
+                e.info_plot_area as "Tomteareal",
+                ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
                 ep.pendl_morn_brj as "PENDL MORN BRJ",
                 ep.bil_morn_brj as "BIL MORN BRJ",
@@ -444,7 +554,8 @@ class PropertyDatabase:
         return f"https://www.google.com/maps/place/{search_query}"
     
     def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str,
-                                         postnummer: str, pendl_morn_brj: str = None, bil_morn_brj: str = None,
+                                         postnummer: str, areal: int = None,
+                                         pendl_morn_brj: str = None, bil_morn_brj: str = None,
                                          pendl_dag_brj: str = None, bil_dag_brj: str = None,
                                          pendl_morn_mvv: str = None, bil_morn_mvv: str = None,
                                          pendl_dag_mvv: str = None, bil_dag_mvv: str = None):
@@ -462,22 +573,22 @@ class PropertyDatabase:
         if existing:
             cursor.execute('''
                 UPDATE eiendom_processed
-                SET adresse_cleaned = ?, pendl_morn_brj = ?, bil_morn_brj = ?,
+                SET adresse_cleaned = ?, areal = ?, pendl_morn_brj = ?, bil_morn_brj = ?,
                     pendl_dag_brj = ?, bil_dag_brj = ?,
                     pendl_morn_mvv = ?, bil_morn_mvv = ?,
                     pendl_dag_mvv = ?, bil_dag_mvv = ?,
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+            ''', (adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                   pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
                   google_maps_url, finnkode))
         else:
             cursor.execute('''
                 INSERT INTO eiendom_processed
-                (finnkode, adresse_cleaned, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+                (finnkode, adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                  pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (finnkode, adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                   pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url))
         
         conn.commit()
@@ -547,7 +658,14 @@ class PropertyDatabase:
             pendlevei = row['pendlevei']
             
             # No kjøretid in old eiendom table, so pass None
-            self.insert_or_update_eiendom_processed(finnkode, adresse, postnummer, pendlevei, None)
+            self.insert_or_update_eiendom_processed(
+                finnkode,
+                adresse,
+                postnummer,
+                areal=None,
+                pendl_morn_brj=pendlevei,
+                bil_morn_brj=None
+            )
             migrated += 1
         
         print(f"Migrated {migrated} properties to processed table")

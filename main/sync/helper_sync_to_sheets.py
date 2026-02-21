@@ -24,9 +24,26 @@ def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     # Convert commute columns to integers without decimals before fillna
     commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
                     'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
+    area_cols = [
+        'Bruksareal',
+        'Internt bruksareal (BRA-i)',
+        'Primærrom',
+        'Bruttoareal',
+        'Eksternt bruksareal (BRA-e)',
+        'Innglasset balkong (BRA-b)',
+        'Balkong/Terrasse (TBA)',
+        'Tomteareal'
+    ]
+    year_cols = ['Byggeår']
     for col in commute_cols:
         if col in df.columns:
             # Convert to numeric, round, and convert to int (NaN becomes empty string in next step)
+            df[col] = pd.to_numeric(df[col], errors='coerce').round()
+    for col in area_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').round()
+    for col in year_cols:
+        if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').round()
     
     # Replace NaN with empty string
@@ -34,6 +51,12 @@ def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     
     # Convert numeric columns that should be integers (after fillna converted NaN to '')
     for col in commute_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: int(x) if x != '' and pd.notna(x) else x)
+    for col in area_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: int(x) if x != '' and pd.notna(x) else x)
+    for col in year_cols:
         if col in df.columns:
             df[col] = df[col].apply(lambda x: int(x) if x != '' and pd.notna(x) else x)
     

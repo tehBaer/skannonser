@@ -497,15 +497,6 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None) -> DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').round().astype('Int64')
 
-    # Drop unnecessary columns
-    df = df.drop(columns=['Primærrom',
-                          'Internt bruksareal (BRA-i)',
-                          'Bruksareal',
-                          'Eksternt bruksareal (BRA-e)',
-                          'Balkong/Terrasse (TBA)',
-                          'Bruttoareal'
-                          ])
-
     return df
 
 def post_process_jobs(df: DataFrame, projectName: str, save_csv: bool = True) -> DataFrame:

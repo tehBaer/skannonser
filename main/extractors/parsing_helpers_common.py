@@ -4,8 +4,11 @@ import re
 def getSizeHelper(soup, element):
     usable_area = element.get_text().strip() if element else ""
     if usable_area:
-        usable_area_match = re.search(r'(\d+)\s*m²', usable_area)
-        usable_area = usable_area_match.group(1) if usable_area_match else ""
+        usable_area_match = re.search(r'([\d\s\xa0]+)\s*m²', usable_area)
+        if usable_area_match:
+            usable_area = usable_area_match.group(1).replace('\xa0', '').replace(' ', '')
+        else:
+            usable_area = ""
     return usable_area
 
 
@@ -26,7 +29,9 @@ def getAllSizes(soup):
         'info-primary-area',
         'info-gross-area',
         'info-usable-e-area',
-        'info-open-area'
+        'info-open-area',
+        'info-usable-b-area',
+        'info-plot-area'
     ]
 
     for test_id in test_ids:
@@ -106,3 +111,11 @@ def getStatus(soup):
             break
 
     return status_text
+
+
+def getConstructionYear(soup):
+    element = soup.find('div', {'data-testid': 'info-construction-year'})
+    if not element:
+        return ""
+    match = re.search(r'(\d{4})', element.get_text())
+    return match.group(1) if match else ""

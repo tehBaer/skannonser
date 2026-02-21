@@ -31,6 +31,7 @@ def refresh_listing(finnkode: str, url: str, project_name: str = "data/eiendom")
         
     Returns:
         Dict with updated data (finnkode and tilgjengelighet/status)
+    """
 
     try:
         # Force re-download by setting force_save=True

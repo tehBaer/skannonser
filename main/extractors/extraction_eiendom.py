@@ -4,10 +4,10 @@ from pandas import DataFrame
 
 try:
     from main.extractors.ad_html_loader import load_or_fetch_ad_html
-    from main.extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes
+    from main.extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear
 except ImportError:
     from extractors.ad_html_loader import load_or_fetch_ad_html
-    from extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes
+    from extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear
 
 
 def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True, force_save=False):
@@ -19,6 +19,7 @@ def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True
 
     address, area = getAddress(soup)
     sizes = getAllSizes(soup)
+    construction_year = getConstructionYear(soup)
     buy_price = getBuyPrice(soup)
     tilgjengelig = getStatus(soup)
 
@@ -34,8 +35,11 @@ def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True
         'Internt bruksareal (BRA-i)': sizes.get('info-usable-i-area'),
         'Bruksareal': sizes.get('info-usable-area'),
         'Eksternt bruksareal (BRA-e)': sizes.get('info-usable-e-area'),
+        'Innglasset balkong (BRA-b)': sizes.get('info-usable-b-area'),
         'Balkong/Terrasse (TBA)': sizes.get('info-open-area'),
+        'Tomteareal': sizes.get('info-plot-area'),
         'Bruttoareal': sizes.get('info-gross-area'),
+        'Byggeår': construction_year,
     }
     if total:
         print(f"{index}/{total}: {finnkode}")
