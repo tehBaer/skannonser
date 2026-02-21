@@ -12,14 +12,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from main.database.db import PropertyDatabase
-    from main.googleUtils import get_credentials, SPREADSHEET_ID
+    from main.googleUtils import get_sheets_service, SPREADSHEET_ID
     from main.sync.helper_sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
 except ImportError:
     from database.db import PropertyDatabase
-    from googleUtils import get_credentials, SPREADSHEET_ID
+    from googleUtils import get_sheets_service, SPREADSHEET_ID
     from sync.helper_sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
-
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 
@@ -94,8 +92,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     
     # Get credentials and service
     try:
-        creds = get_credentials()
-        service = build("sheets", "v4", credentials=creds)
+        service = get_sheets_service()
     except Exception as e:
         print(f"Error connecting to Google Sheets: {e}")
         return False

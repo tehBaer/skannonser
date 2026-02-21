@@ -1,14 +1,13 @@
 ﻿import pandas as pd
 
 from main.post_process import post_process_rental
-from main.googleUtils import download_sheet_as_csv, get_credentials, SPREADSHEET_ID
+from main.googleUtils import download_sheet_as_csv, get_sheets_service, SPREADSHEET_ID
 from main.extraction_rental import extract_rental_data
-from googleapiclient.discovery import build
 
 
-def FindNewUnavailable(sheet_name: str, columns: str):
-    creds = get_credentials()
-    service = build("sheets", "v4", credentials=creds)
+def find_new_unavailable(sheet_name: str, columns: str):
+    """Fetch latest listing availability and persist `leie/saved_availability.csv`."""
+    service = get_sheets_service()
     download_sheet_as_csv(service, sheet_name, "leie/_temp2.csv", columns)
 
     # Load the downloaded data into a DataFrame
@@ -25,7 +24,7 @@ def FindNewUnavailable(sheet_name: str, columns: str):
                 "Finnkode": row["Finnkode"],
                 "Tilgjengelighet": row["Tilgjengelighet"],
             })
-            print(f"Finnkode {row['Finnkode']} is already {row["Tilgjengelighet"]}")
+            print(f"Finnkode {row['Finnkode']} is already {row['Tilgjengelighet']}")
             continue
         try:
             # Extract data for the URL
@@ -41,13 +40,12 @@ def FindNewUnavailable(sheet_name: str, columns: str):
     return dfdata
 
 
-def PasteNewAvailability(data, sheet_name, startCell):
-    # Initialize the service
-    creds = get_credentials()
-    service = build("sheets", "v4", credentials=creds)
+def paste_new_availability(data: pd.DataFrame, sheet_name: str, start_cell: str):
+    """Write availability dataframe into an existing sheet range."""
+    service = get_sheets_service()
 
     # Define spreadsheet ID and range name
-    range_name = f"{sheet_name}!{startCell}"  # Adjust the range as needed
+    range_name = f"{sheet_name}!{start_cell}"  # Adjust the range as needed
     # Replace NaN values with an empty string
     data = data.fillna("")
 
@@ -68,6 +66,7 @@ def PasteNewAvailability(data, sheet_name, startCell):
 
 
 def get_everything_updated(df_saved: pd.DataFrame):
+    """Re-extract all listings and write merged dataset to local CSV outputs."""
 
     updated_rows = []
     for index, row in df_saved.iterrows():
@@ -80,7 +79,7 @@ def get_everything_updated(df_saved: pd.DataFrame):
             # Extract data for the URL
             updated_data = extract_rental_data(row["URL"], index, "leie")
             updated_rows.append(updated_data)
-        except Exception as e:
+        except Exception:
             # print(f"Error processing URL at index {index}: {row['Finnkode']} - {e}")
             updated_rows.append({
                 "Finnkode": row["Finnkode"],
@@ -113,11 +112,19 @@ def get_everything_updated(df_saved: pd.DataFrame):
     print("Updated data saved to leie/saved_all_updated.csv")
 
 
+def FindNewUnavailable(sheet_name: str, columns: str):
+    return find_new_unavailable(sheet_name, columns)
+
+
+def PasteNewAvailability(data, sheet_name, startCell):
+    return paste_new_availability(data, sheet_name, startCell)
+
+
 if __name__ == "__main__":
-    sheetName = "Main"
-    # data = FindNewUnavailable(sheetName, "D:L")
+    sheet_name = "Main"
+    # data = find_new_unavailable(sheet_name, "D:L")
     data = pd.read_csv("leie/saved_availability.csv")
-    PasteNewAvailability(data, sheetName, "D2")
+    paste_new_availability(data, sheet_name, "D2")
 
 
     # creds = get_credentials()

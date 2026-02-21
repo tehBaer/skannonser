@@ -1,17 +1,13 @@
 ﻿from typing import List
 
 try:
-    from main.googleUtils import SPREADSHEET_ID, get_credentials, download_sheet_as_csv
+    from main.googleUtils import SPREADSHEET_ID, get_sheets_service, download_sheet_as_csv
 except ImportError:
-    from googleUtils import SPREADSHEET_ID, get_credentials, download_sheet_as_csv
-from googleapiclient.discovery import build
+    from googleUtils import SPREADSHEET_ID, get_sheets_service, download_sheet_as_csv
 from googleapiclient.errors import HttpError
 import pandas as pd
 import csv
 import os
-
-
-import pandas as pd
 
 def align_to_sheet_layout(csv_to_align, sheet_downloaded_path, output_path):
     # Ensure output directory exists
@@ -172,15 +168,11 @@ def merge_above(emptyColCount, sheet_name, path_live_parsed, path_downloaded_spr
                 range="A1:Z1000"):
     """Main function to export data to Google Sheets."""
     try:
-        creds = get_credentials()
-        service = build("sheets", "v4", credentials=creds)
-
+        service = get_sheets_service()
         download_sheet_as_csv(service, sheet_name, path_downloaded_spreadsheet, range)
-
         filter_new_rental_ads(path_live_parsed, path_downloaded_spreadsheet, path_live_missing, emptyColCount)
-
         prepend_missing_ads(service, sheet_name, path_live_missing, range, emptyColCount)
-        print(f"Data successfully updated.")
+        print("Data successfully updated.")
     except HttpError as err:
         print(err)
 
@@ -202,9 +194,8 @@ def try_verify_align_filter_merge_below(sheet_name, pAB_processed, p_sheet, pC_f
     filtered_successfully = try_filter_new_ads(pB_aligned, p_sheet, pC_filtered, headers_to_use)
 
     # Merge missing ads
-    if (filtered_successfully):
-        creds = get_credentials()
-        service = build("sheets", "v4", credentials=creds)
+    if filtered_successfully:
+        service = get_sheets_service()
         append_missing_ads(service, sheet_name, pC_filtered, headers_to_use)
 
 
@@ -217,8 +208,7 @@ def verify_headers(headers_to_use, p_csv_to_check, p_sheet, sheet_name) -> bool:
         print(f"Missing required headers in live data: {headers_missing_in_live}")
         return False
     try:
-        creds = get_credentials()
-        service = build("sheets", "v4", credentials=creds)
+        service = get_sheets_service()
         download_sheet_as_csv(service, sheet_name, p_sheet)
     except HttpError as err:
         print(err)
@@ -248,7 +238,6 @@ def append_missing_ads(service, sheet_name, pC_filtered, headers_to_use: List[st
         missing_rows = [df.columns.tolist()] + df.values.tolist()
 
         # Separate header and data
-        header = missing_rows[0]
         missing_rows = missing_rows[1:]
 
         # Retrieve existing data from the sheet to find the next available row

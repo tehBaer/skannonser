@@ -12,12 +12,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from main.database.db import PropertyDatabase
-    from main.googleUtils import get_credentials, SPREADSHEET_ID, download_sheet_as_csv
+    from main.googleUtils import get_sheets_service, SPREADSHEET_ID, download_sheet_as_csv
 except ImportError:
     from database.db import PropertyDatabase
-    from googleUtils import get_credentials, SPREADSHEET_ID, download_sheet_as_csv
-
-from googleapiclient.discovery import build
+    from googleUtils import get_sheets_service, SPREADSHEET_ID, download_sheet_as_csv
 from googleapiclient.errors import HttpError
 
 
@@ -131,8 +129,7 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     
     # Get credentials and service
     try:
-        creds = get_credentials()
-        service = build("sheets", "v4", credentials=creds)
+        service = get_sheets_service()
     except Exception as e:
         print(f"Error connecting to Google Sheets: {e}")
         return False
@@ -252,8 +249,7 @@ def full_sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     
     # Get credentials and service
     try:
-        creds = get_credentials()
-        service = build("sheets", "v4", credentials=creds)
+        service = get_sheets_service()
     except Exception as e:
         print(f"Error connecting to Google Sheets: {e}")
         return False

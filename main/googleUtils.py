@@ -1,7 +1,9 @@
-﻿import os.path
+﻿import os
+import os.path
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 import csv
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -57,6 +59,12 @@ def get_credentials():
             token.write(creds.to_json())
 
     return creds
+
+
+def get_sheets_service():
+    """Build and return an authenticated Google Sheets service client."""
+    creds = get_credentials()
+    return build("sheets", "v4", credentials=creds)
 
 
 def read_csv(file_path):
