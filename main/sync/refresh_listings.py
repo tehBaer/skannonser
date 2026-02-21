@@ -14,11 +14,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from main.database.db import PropertyDatabase
     from main.extractors.ad_html_loader import load_or_fetch_ad_html
-    from main.extractors.parsing_helpers_rental import getStatus
+    from main.extractors.parsing_helpers_common import getStatus
 except ImportError:
     from database.db import PropertyDatabase
     from extractors.ad_html_loader import load_or_fetch_ad_html
-    from extractors.parsing_helpers_rental import getStatus
+    from extractors.parsing_helpers_common import getStatus
 
 
 def refresh_listing(finnkode: str, url: str, project_name: str = "data/eiendom") -> Dict:

@@ -1,5 +1,10 @@
 import re
 
+try:
+    from main.extractors.parsing_helpers_common import getSize, getSizeHelper, getAllSizes
+except ImportError:
+    from extractors.parsing_helpers_common import getSize, getSizeHelper, getAllSizes
+
 
 def getBuyPrice(soup):
     # First try regular property price
@@ -12,7 +17,7 @@ def getBuyPrice(soup):
                 return int(price_str)
             except ValueError:
                 pass
-    
+
     # Try "Prisantydning" for properties without total price
     pricing_section = soup.find('div', {'data-testid': 'pricing-incicative-price'})
     if pricing_section:
@@ -23,13 +28,13 @@ def getBuyPrice(soup):
                 return int(price_str)
             except ValueError:
                 pass
-    
+
     # Check if it's a planned property ("Pris kommer")
     # For planned properties, we can't extract a numeric price yet
     nøkkelinfo = soup.find('section', {'aria-label': 'Nøkkelinfo'})
     if nøkkelinfo and 'Pris kommer' in nøkkelinfo.get_text():
         return None  # Price not yet available for planned properties
-    
+
     return None
 
 
@@ -45,7 +50,7 @@ def getAddress(soup):
             address = None
             area = GetArea(full_address)
         return address, area
-    
+
     # Try planned property format (title contains address)
     title_element = soup.find('h1')
     if title_element:
@@ -56,7 +61,7 @@ def getAddress(soup):
         postnummer_match = re.search(r'\b(\d{4})\s+', full_text)
         area = postnummer_match.group(1) if postnummer_match else None
         return title, area
-    
+
     return None, None
 
 
@@ -65,42 +70,6 @@ def GetArea(part):
     area_match = re.search(r'(\d+)', area)
     area = area_match.group(1) if area_match else None
     return area
-
-
-def getSize(soup):
-    element = soup.find('div', {'data-testid': 'info-usable-area'})
-    output = getSizeHelper(soup, element)
-    if not output:
-        element = soup.find('div', {'data-testid': 'info-usable-i-area'})
-        output = getSizeHelper(soup, element)
-    return output
-
-
-def getSizeHelper(soup, element):
-    usable_area = element.get_text().strip() if element else ""
-    # print(usable_area)
-    if usable_area:
-        usable_area_match = re.search(r'(\d+)\s*m²', usable_area)
-        usable_area = usable_area_match.group(1) if usable_area_match else ""
-    return usable_area
-
-
-def getAllSizes(soup):
-    sizes = {}
-    test_ids = [
-        'info-usable-area',
-        'info-usable-i-area',
-        'info-primary-area',
-        'info-gross-area',
-        'info-usable-e-area'
-        'info-open-area'
-    ]
-
-    for test_id in test_ids:
-        element = soup.find('div', {'data-testid': test_id})
-        sizes[test_id] = getSizeHelper(soup, element)
-
-    return sizes
 
 
 def getPriceHelper(pricing_section, term):
@@ -124,15 +93,15 @@ def getRentPrice(soup):
         'deposit': deposit_price
     }
 
+
 def getDate(soup):
     output = ""
     timespan_element = soup.find('div', {'data-testid': 'info-timespan'})
     if timespan_element:
         date_element = timespan_element.find('dd', class_='m-0 font-bold')
         if date_element:
-            output= date_element.get_text(strip=True)
+            output = date_element.get_text(strip=True)
     if output:
-    #     strip it, and split it on "-"
         output = output.strip().split('-')
         return {
             'start': output[0],
@@ -149,17 +118,17 @@ def getStatus(soup):
     """
     Extracts the status from the property listing.
     Returns the status text if found (e.g., 'Solgt'), otherwise None.
-    
+
     The element appears as: <div class="...bg-[--w-color-badge-warning-background]...">Solgt</div>
     """
     statuses = ["warning", "negative", "info"]
     status_text = None
-    
+
     for status in statuses:
         searchString = f"!text-m mb-24 py-4 px-8 border-0 rounded-4 text-xs inline-flex bg-[--w-color-badge-{status}-background] s-text"
         element = soup.find('div', class_=searchString)
         if element:
             status_text = element.get_text(strip=True)
             break
-    
+
     return status_text

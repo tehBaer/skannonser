@@ -12,7 +12,7 @@ except ImportError:
     from ad_html_loader import load_or_fetch_ad_html
     from parsing_helpers_jobs_FINN import FinnParser
     from parsing_helpers_jobs_NAV import NAVParser
-    from parsing_helpers_rental import *
+    from extractors.parsing_helpers_rental import *
 
 
 def extract_job_data_NAV(url, index, projectName, auto_save_new=True, force_save=False):

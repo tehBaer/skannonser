@@ -8,7 +8,7 @@ try:
     from main.extractors.parsing_helpers_rental import *
 except ImportError:
     from ad_html_loader import load_or_fetch_ad_html
-    from parsing_helpers_rental import *
+    from extractors.parsing_helpers_rental import *
 
 # Ensure the path to the virtual environment activation script is correct
 # subprocess.run(['..\\.venv\\Scripts\\activate.bat'], shell=True, check=True)

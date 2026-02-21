@@ -4,10 +4,10 @@ from pandas import DataFrame
 
 try:
     from main.extractors.ad_html_loader import load_or_fetch_ad_html
-    from main.extractors.parsing_helpers_rental import *
+    from main.extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes
 except ImportError:
     from extractors.ad_html_loader import load_or_fetch_ad_html
-    from extractors.parsing_helpers_rental import *
+    from extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes
 
 
 def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True, force_save=False):
