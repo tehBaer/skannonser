@@ -101,30 +101,76 @@ def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -
     return [col.strip() for col in updated_header]
 
 
+def _column_number_to_letter(col_num: int) -> str:
+    """Convert 1-based column number to Excel/Sheets column letters."""
+    result = ""
+    while col_num > 0:
+        col_num, rem = divmod(col_num - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
+def _normalize_finnkode(value) -> str:
+    """Normalize Finnkode values from DB/Sheets for stable duplicate checks."""
+    if value is None:
+        return ""
+
+    finnkode = str(value).strip()
+    if not finnkode:
+        return ""
+
+    # If it's a HYPERLINK formula, extract the display text
+    if 'HYPERLINK' in finnkode.upper():
+        parts = finnkode.split('"')
+        if len(parts) >= 4:
+            finnkode = parts[3].strip()
+
+    # Normalize integer-like float representations (e.g. 123456789.0)
+    try:
+        as_float = float(finnkode)
+        if as_float.is_integer():
+            return str(int(as_float))
+    except (ValueError, TypeError):
+        pass
+
+    return finnkode
+
+
 def get_existing_finnkodes_from_sheet(service, sheet_name: str) -> List[str]:
     """Get all existing Finnkodes from the Google Sheet."""
     try:
-        range_name = f"{sheet_name}!A2:A10000"  # Start from row 2 (skip header)
-        result = service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, 
-            range=range_name
+        header_result = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!1:1"
         ).execute()
-        
+        header_row = [str(col).strip() for col in header_result.get("values", [[]])[0]]
+
+        if not header_row:
+            return []
+
+        # Prefer actual Finnkode column by header name; fallback to column A for legacy sheets.
+        if "Finnkode" in header_row:
+            finnkode_col_idx = header_row.index("Finnkode") + 1
+        else:
+            finnkode_col_idx = 1
+
+        finnkode_col_letter = _column_number_to_letter(finnkode_col_idx)
+        result = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!{finnkode_col_letter}2:{finnkode_col_letter}"
+        ).execute()
+
         values = result.get("values", [])
-        
-        # Extract Finnkodes (they might be wrapped in HYPERLINK formulas)
+
         finnkodes = []
+        seen = set()
         for row in values:
             if row and len(row) > 0:
-                finnkode = row[0]
-                # If it's a HYPERLINK formula, extract the display text
-                if isinstance(finnkode, str) and 'HYPERLINK' in finnkode:
-                    # Extract from: =HYPERLINK("url", "finnkode")
-                    parts = finnkode.split('"')
-                    if len(parts) >= 4:
-                        finnkode = parts[3]
-                finnkodes.append(str(finnkode).strip())
-        
+                normalized = _normalize_finnkode(row[0])
+                if normalized and normalized not in seen:
+                    finnkodes.append(normalized)
+                    seen.add(normalized)
+
         return finnkodes
         
     except HttpError as e:
@@ -170,9 +216,16 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     existing_finnkodes = get_existing_finnkodes_from_sheet(service, sheet_name)
     print(f"Found {len(existing_finnkodes)} existing listings in Google Sheets")
     
-    # Filter to only new listings
-    df['Finnkode'] = df['Finnkode'].astype(str).str.strip()
-    new_listings = df[~df['Finnkode'].isin(existing_finnkodes)]
+    # Normalize and de-duplicate source data before filtering
+    df['Finnkode'] = df['Finnkode'].apply(_normalize_finnkode)
+    before_dedup = len(df)
+    df = df[df['Finnkode'] != ''].drop_duplicates(subset=['Finnkode'], keep='first')
+    removed_duplicates = before_dedup - len(df)
+    if removed_duplicates > 0:
+        print(f"Removed {removed_duplicates} duplicate/empty Finnkoder from database result before sync")
+
+    existing_finnkodes_set = set(existing_finnkodes)
+    new_listings = df[~df['Finnkode'].isin(existing_finnkodes_set)]
     
     if new_listings.empty:
         print("No new listings to add to Google Sheets")

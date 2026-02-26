@@ -127,3 +127,15 @@ def getPlotOwnership(soup):
         return ""
     match = re.search(r'\(([^)]+)\)', element.get_text())
     return match.group(1).strip() if match else ""
+
+
+def getPropertyType(soup):
+    element = soup.find('div', {'data-testid': 'info-property-type'})
+    if not element:
+        return ""
+
+    value_element = element.find('dd')
+    if value_element:
+        return value_element.get_text(strip=True)
+
+    return element.get_text(strip=True)

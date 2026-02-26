@@ -48,6 +48,7 @@ class PropertyDatabase:
                 info_open_area INTEGER,
                 info_plot_area INTEGER,
                 info_plot_ownership TEXT,
+                info_property_type TEXT,
                 info_construction_year INTEGER,
                 pris_kvm INTEGER,
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -91,6 +92,7 @@ class PropertyDatabase:
             "info_open_area": "INTEGER",
             "info_plot_area": "INTEGER",
             "info_plot_ownership": "TEXT",
+            "info_property_type": "TEXT",
             "info_construction_year": "INTEGER",
         }
         for column_name, column_type in eiendom_columns_to_add.items():
@@ -199,6 +201,7 @@ class PropertyDatabase:
             'Balkong/Terrasse (TBA)': 'info_open_area',
             'Tomteareal': 'info_plot_area',
             'Eierskap, tomt': 'info_plot_ownership',
+            'Boligtype': 'info_property_type',
             'PRIS KVM': 'pris_kvm'
         }
         
@@ -230,6 +233,7 @@ class PropertyDatabase:
                 'info_open_area': self._to_int(row.get('Balkong/Terrasse (TBA)')),
                 'info_plot_area': self._to_int(row.get('Tomteareal')),
                 'info_plot_ownership': row.get('Eierskap, tomt', ''),
+                'info_property_type': row.get('Boligtype', ''),
                 'info_construction_year': self._to_int(row.get('Byggeår')),
                 'areal': self._to_int(row.get('AREAL')),
                 'pris_kvm': self._to_int(row.get('PRIS KVM')),
@@ -262,7 +266,7 @@ class PropertyDatabase:
                         pris = ?, url = ?,
                         info_usable_area = ?, info_usable_i_area = ?, info_primary_area = ?,
                                                 info_gross_area = ?, info_usable_e_area = ?, info_usable_b_area = ?,
-                                                info_open_area = ?, info_plot_area = ?, info_plot_ownership = ?, info_construction_year = ?,
+                                                info_open_area = ?, info_plot_area = ?, info_plot_ownership = ?, info_property_type = ?, info_construction_year = ?,
                         pris_kvm = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE finnkode = ?
@@ -270,7 +274,7 @@ class PropertyDatabase:
                       data['pris'], data['url'],
                       data['info_usable_area'], data['info_usable_i_area'], data['info_primary_area'],
                                             data['info_gross_area'], data['info_usable_e_area'], data['info_usable_b_area'],
-                                            data['info_open_area'], data['info_plot_area'], data['info_plot_ownership'], data['info_construction_year'],
+                                            data['info_open_area'], data['info_plot_area'], data['info_plot_ownership'], data['info_property_type'], data['info_construction_year'],
                       data['pris_kvm'],
                       finnkode))
                 updated += 1
@@ -281,14 +285,14 @@ class PropertyDatabase:
                     (finnkode, tilgjengelighet, adresse, postnummer, pris, url,
                      info_usable_area, info_usable_i_area, info_primary_area,
                                          info_gross_area, info_usable_e_area, info_usable_b_area,
-                                         info_open_area, info_plot_area, info_plot_ownership, info_construction_year,
+                                     info_open_area, info_plot_area, info_plot_ownership, info_property_type, info_construction_year,
                      pris_kvm)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (finnkode, data['tilgjengelighet'], data['adresse'], data['postnummer'],
                       data['pris'], data['url'],
                       data['info_usable_area'], data['info_usable_i_area'], data['info_primary_area'],
                                             data['info_gross_area'], data['info_usable_e_area'], data['info_usable_b_area'],
-                                            data['info_open_area'], data['info_plot_area'], data['info_plot_ownership'], data['info_construction_year'],
+                                      data['info_open_area'], data['info_plot_area'], data['info_plot_ownership'], data['info_property_type'], data['info_construction_year'],
                       data['pris_kvm']))
                 inserted += 1
             
@@ -447,6 +451,7 @@ class PropertyDatabase:
                 e.info_open_area as "Balkong/Terrasse (TBA)",
                 e.info_plot_area as "Tomteareal",
                 e.info_plot_ownership as "Eierskap, tomt",
+                e.info_property_type as "Boligtype",
                 e.info_construction_year as "Byggeår",
                 ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
@@ -514,6 +519,7 @@ class PropertyDatabase:
                 e.info_open_area as "Balkong/Terrasse (TBA)",
                 e.info_plot_area as "Tomteareal",
                 e.info_plot_ownership as "Eierskap, tomt",
+                e.info_property_type as "Boligtype",
                 ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
                 ep.pendl_morn_brj as "PENDL MORN BRJ",

@@ -4,10 +4,10 @@ from pandas import DataFrame
 
 try:
     from main.extractors.ad_html_loader import load_or_fetch_ad_html
-    from main.extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership
+    from main.extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership, getPropertyType
 except ImportError:
     from extractors.ad_html_loader import load_or_fetch_ad_html
-    from extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership
+    from extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership, getPropertyType
 
 
 def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True, force_save=False):
@@ -21,6 +21,7 @@ def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True
     sizes = getAllSizes(soup)
     construction_year = getConstructionYear(soup)
     plot_ownership = getPlotOwnership(soup)
+    property_type = getPropertyType(soup)
     buy_price = getBuyPrice(soup)
     tilgjengelig = getStatus(soup)
 
@@ -40,6 +41,7 @@ def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True
         'Balkong/Terrasse (TBA)': sizes.get('info-open-area'),
         'Tomteareal': sizes.get('info-plot-area'),
         'Eierskap, tomt': plot_ownership,
+        'Boligtype': property_type,
         'Bruttoareal': sizes.get('info-gross-area'),
         'Byggeår': construction_year,
     }

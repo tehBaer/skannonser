@@ -126,14 +126,19 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
 
     # Normalize header (strip whitespace from column names)
     header_row_normalized = [col.strip() for col in header_row]
+
+    if 'Finnkode' in header_row_normalized:
+        finnkode_col_idx = header_row_normalized.index('Finnkode')
+    else:
+        finnkode_col_idx = 0
     
     # Build finnkode to row mapping
     finnkode_to_row = {}
     for row_num, row_data in sheet_data.items():
         if row_num == 1:  # Skip header
             continue
-        if row_data and len(row_data) > 0:
-            finnkode = str(row_data[0]).strip()
+        if row_data and len(row_data) > finnkode_col_idx:
+            finnkode = str(row_data[finnkode_col_idx]).strip()
             finnkode_to_row[finnkode] = row_num
     
     print(f"Found {len(finnkode_to_row)} existing listings in sheet\n")
