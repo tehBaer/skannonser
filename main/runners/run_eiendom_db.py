@@ -22,12 +22,13 @@ except ImportError:
     from database.db import PropertyDatabase
 
 
-def run_eiendom_scrape(db_path: str = None):
+def run_eiendom_scrape(db_path: str = None, calculate_location_features: bool = True):
     """
     Run the eiendom scraper and store results in database.
     
     Args:
         db_path: Optional path to database file. If None, uses default location.
+        calculate_location_features: Whether to run location/travel API calculations.
     """
     # Initialize database
     db = PropertyDatabase(db_path)
@@ -62,7 +63,12 @@ def run_eiendom_scrape(db_path: str = None):
     print("="*60)
     
     live_data = pd.read_csv(f'{projectName}/A_live.csv')
-    processed_data = post_process_eiendom(live_data, projectName, db)
+    processed_data = post_process_eiendom(
+        live_data,
+        projectName,
+        db,
+        calculate_location_features=calculate_location_features,
+    )
     
     # Step 4: Store data in database
     print("\n" + "="*60)

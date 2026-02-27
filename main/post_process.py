@@ -97,7 +97,7 @@ def post_process_rental(df: DataFrame, projectName: str, save_csv: bool = True) 
 
     return df
 
-def post_process_eiendom(df: DataFrame, projectName: str, db=None) -> DataFrame:
+def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_location_features: bool = True) -> DataFrame:
     """
     Post-process eiendom data by calculating location features and cleaning data.
     
@@ -105,6 +105,7 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None) -> DataFrame:
         df: DataFrame with raw eiendom data
         projectName: Project directory name (e.g., 'data/eiendom')
         db: PropertyDatabase instance (if None, will save to CSV for backwards compatibility)
+        calculate_location_features: Whether to run Google travel-time API calculations
     
     Returns:
         Processed DataFrame
@@ -240,6 +241,15 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None) -> DataFrame:
     if 'BIL DAG MVV' not in df.columns:
         df['BIL DAG MVV'] = None
     
+    if not calculate_location_features:
+        print("Skipping location feature calculations (travel API calls disabled).")
+        commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                        'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
+        for col in commute_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').round().astype('Int64')
+        return df
+
     # Calculate PENDL MORN BRJ (total public transit commute time) and BIL MORN BRJ (driving time)
     eligible_mask = pd.Series([True] * len(df), index=df.index)
     if MAX_PRICE is not None and 'Pris' in df.columns:
