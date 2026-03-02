@@ -1,0 +1,55 @@
+name: Cleanup Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: "Delete artifact names starting with this prefix"
+        required: true
+        default: "html-delta-"
+      older_than_days:
+        description: "Delete only artifacts older than this many days"
+        required: true
+        default: "7"
+      dry_run:
+        description: "Preview only (no delete)"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal dependency
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Cleanup matching artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PREFIX: ${{ inputs.prefix }}
+          OLDER_THAN_DAYS: ${{ inputs.older_than_days }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS="--repo ${REPO} cleanup-prefix --prefix ${PREFIX} --older-than-days ${OLDER_THAN_DAYS}"
+          if [ "${DRY_RUN}" = "true" ]; then
+            ARGS="${ARGS} --dry-run"
+          fi
+          python main/tools/github_artifacts.py ${ARGS}

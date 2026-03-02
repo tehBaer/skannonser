@@ -1,12 +1,11 @@
-name: Nightly Eiendom Scrape (No Google APIs)
+name: Manual Eiendom Scrape (No Google APIs)
 
 on:
-  schedule:
-    - cron: "0 1 * * *" # 01:00 UTC daily
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   scrape-db-only:
@@ -16,6 +15,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Ensure database directory exists
+        run: mkdir -p main/database
+
+      - name: Restore latest persisted SQLite database (if any)
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          workflow: nightly-eiendom.yml
+          name: properties-db
+          path: main/database
+          if_no_artifact_found: warn
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -27,5 +38,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r main/config/requirements.txt
 
-      - name: Run nightly eiendom scrape (database only, no Google APIs)
+      - name: Run eiendom scrape (database only, no Google APIs)
         run: python main/tools/run_eiendom_github.py
+
+      - name: Upload persisted SQLite database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: properties-db
+          path: |
+            main/database/properties.db
+            main/database/properties.db-wal
+            main/database/properties.db-shm
+          if-no-files-found: warn
+          retention-days: 90
+          overwrite: true

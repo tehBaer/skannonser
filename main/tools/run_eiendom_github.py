@@ -20,4 +20,7 @@ except ImportError:
 
 
 if __name__ == "__main__":
-    run_eiendom_scrape(calculate_location_features=False)
+    run_eiendom_scrape(
+        calculate_location_features=False,
+        calculate_google_directions=False,
+    )

@@ -310,7 +310,7 @@ class PropertyDatabase:
                 pendl_morn_mvv,
                 bil_morn_mvv,
                 pendl_dag_mvv,
-                bil_dag_mvv
+                bil_dag_mvv,
             )
         
         conn.commit()
@@ -593,16 +593,16 @@ class PropertyDatabase:
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
             ''', (adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                  pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
+                                    pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
                   google_maps_url, finnkode))
         else:
             cursor.execute('''
                 INSERT INTO eiendom_processed
                 (finnkode, adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                 pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (finnkode, adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                  pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url))
+                                    pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url))
         
         conn.commit()
         conn.close()

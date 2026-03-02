@@ -22,13 +22,19 @@ except ImportError:
     from database.db import PropertyDatabase
 
 
-def run_eiendom_scrape(db_path: str = None, calculate_location_features: bool = True):
+def run_eiendom_scrape(
+    db_path: str = None,
+    calculate_location_features: bool = True,
+    calculate_google_directions: bool = None,
+):
     """
     Run the eiendom scraper and store results in database.
     
     Args:
         db_path: Optional path to database file. If None, uses default location.
-        calculate_location_features: Whether to run location/travel API calculations.
+        calculate_location_features: Backwards-compatible toggle for Google travel-time API calculations.
+        calculate_google_directions: Whether to run paid Google Directions calculations.
+            If None, defaults to calculate_location_features.
     """
     # Initialize database
     db = PropertyDatabase(db_path)
@@ -42,7 +48,8 @@ def run_eiendom_scrape(db_path: str = None, calculate_location_features: bool = 
     print("="*40)
     
     # urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.515814226086547+59.830255688429475%2C10.718914241615323+59.89350518832623%2C10.860312986603077+59.90510937383482%2C10.816607919971034+59.96564316999155%2C10.233016736110244+60.03634039140428%2C10.376986367371302+59.84059035321431%2C10.515814226086547+59.830255688429475&property_type=4&property_type=1'
-    urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.931112810853534+59.91640688425295%2C10.442541860909444+60.168376907054125%2C10.202261065854913+60.02462948131998%2C10.19692149263156+59.80380210029858%2C10.394485701898361+59.6827306506911%2C10.653455003235536+59.88025405163344%2C10.931112810853534+59.91640688425295&property_type=4&property_type=1&property_type=2&property_type=11&lifecycle=1'
+    # urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.931112810853534+59.91640688425295%2C10.442541860909444+60.168376907054125%2C10.202261065854913+60.02462948131998%2C10.19692149263156+59.80380210029858%2C10.394485701898361+59.6827306506911%2C10.653455003235536+59.88025405163344%2C10.931112810853534+59.91640688425295&property_type=4&property_type=1&property_type=2&property_type=11&lifecycle=1'
+    urlBase = 'https://www.finn.no/realestate/homes/search.html?filters=&polylocation=10.931112810853534+59.91640688425295%2C10.442541860909444+60.168376907054125%2C10.202261065854913+60.02462948131998%2C10.19692149263156+59.80380210029858%2C10.394485701898361+59.6827306506911%2C10.653455003235536+59.88025405163344%2C10.931112810853534+59.91640688425295&property_type=4&property_type=1&property_type=2&property_type=11&lifecycle=1&is_new_property=false&price_to=8000000&property_type=3&area_from=40'
     regex = r'/realestate/.*?/ad\.html\?finnkode=\d+'
     
     urls = extract_URLs(urlBase, regex, projectName, "0_URLs.csv")
@@ -68,6 +75,7 @@ def run_eiendom_scrape(db_path: str = None, calculate_location_features: bool = 
         projectName,
         db,
         calculate_location_features=calculate_location_features,
+        calculate_google_directions=calculate_google_directions,
     )
     
     # Step 4: Store data in database

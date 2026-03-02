@@ -10,35 +10,35 @@ def confirm_with_rate_limit(prompt: str) -> tuple[bool, float]:
     Ask user for confirmation with optional rate limiting for API requests.
     
     Args:
-        prompt: The confirmation prompt to display
+        prompt: The confirmation prompt to display 
     
     Returns:
-        Tuple of (proceed: bool, requests_per_second: float)
+        Tuple of (proceed: bool, requests_per_minute: float)
         - proceed: True if user wants to continue, False otherwise
-        - requests_per_second: Rate limit (default 1.0, or user-specified number)
+        - requests_per_minute: Rate limit (default 60.0, or user-specified number)
     
     Examples:
-        User can enter: yes, no, or a number like 5 (for 5 requests/sec)
+        User can enter: yes, no, or a number like 30 (for 30 requests/min)
     """
     valid_input = False
     while not valid_input:
-        response = input(prompt + " (yes/no/<requests per second>): ").strip().lower()
+        response = input(prompt + " (yes/no/<requests per minute>): ").strip().lower()
         
         if response in ['yes', 'y']:
-            return True, 1.0  # Default 1 request per second
+            return True, 60.0  # Default 60 requests per minute
         elif response in ['no', 'n']:
-            return False, 1.0
+            return False, 60.0
         else:
             try:
                 rate = float(response)
                 if rate > 0:
                     return True, rate
                 else:
-                    print("Please enter a positive number for requests per second")
+                    print("Please enter a positive number for requests per minute")
             except ValueError:
-                print("Invalid input. Please enter 'yes', 'no', or a number (e.g., 5)")
+                print("Invalid input. Please enter 'yes', 'no', or a number (e.g., 30)")
     
-    return False, 1.0
+    return False, 60.0
 
 
 def post_process_rental(df: DataFrame, projectName: str, save_csv: bool = True) -> DataFrame:
@@ -97,7 +97,14 @@ def post_process_rental(df: DataFrame, projectName: str, save_csv: bool = True) 
 
     return df
 
-def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_location_features: bool = True) -> DataFrame:
+
+def post_process_eiendom(
+    df: DataFrame,
+    projectName: str,
+    db=None,
+    calculate_location_features: bool = True,
+    calculate_google_directions: bool = None,
+) -> DataFrame:
     """
     Post-process eiendom data by calculating location features and cleaning data.
     
@@ -105,13 +112,18 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_loc
         df: DataFrame with raw eiendom data
         projectName: Project directory name (e.g., 'data/eiendom')
         db: PropertyDatabase instance (if None, will save to CSV for backwards compatibility)
-        calculate_location_features: Whether to run Google travel-time API calculations
+        calculate_location_features: Backwards-compatible toggle for Google travel-time API calculations
+        calculate_google_directions: Whether to run paid Google Directions calculations.
+            If None, defaults to the value of calculate_location_features.
     
     Returns:
         Processed DataFrame
     """
     if df.empty:
         return df
+
+    if calculate_google_directions is None:
+        calculate_google_directions = calculate_location_features
 
     # Optional price filter for API calls and sheets export
     try:
@@ -241,8 +253,12 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_loc
     if 'BIL DAG MVV' not in df.columns:
         df['BIL DAG MVV'] = None
     
-    if not calculate_location_features:
-        print("Skipping location feature calculations (travel API calls disabled).")
+    eligible_mask = pd.Series([True] * len(df), index=df.index)
+    if MAX_PRICE is not None and 'Pris' in df.columns:
+        eligible_mask = df['Pris'].fillna(0) <= MAX_PRICE
+
+    if not calculate_google_directions:
+        print("Skipping Google Directions calculations (travel API calls disabled).")
         commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
                         'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
         for col in commute_cols:
@@ -251,10 +267,6 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_loc
         return df
 
     # Calculate PENDL MORN BRJ (total public transit commute time) and BIL MORN BRJ (driving time)
-    eligible_mask = pd.Series([True] * len(df), index=df.index)
-    if MAX_PRICE is not None and 'Pris' in df.columns:
-        eligible_mask = df['Pris'].fillna(0) <= MAX_PRICE
-
     pendl_morn_missing = df.loc[eligible_mask, 'PENDL MORN BRJ'].isna().sum()
     bil_morn_missing = df.loc[eligible_mask, 'BIL MORN BRJ'].isna().sum()
     pendl_dag_missing = df.loc[eligible_mask, 'PENDL DAG BRJ'].isna().sum()
@@ -277,7 +289,7 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_loc
         if MAX_PRICE is not None:
             print(f"⚠️  Price filter active: MAX_PRICE = {MAX_PRICE}")
         
-        proceed, requests_per_second = confirm_with_rate_limit("Calculate location features for these properties?")
+        proceed, requests_per_minute = confirm_with_rate_limit("Calculate location features for these properties?")
         
         if proceed:
             try:
@@ -297,108 +309,131 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_loc
             calculated_transit_return = 0
             calculated_driving_return = 0
             total_properties = pendl_morn_missing + bil_morn_missing
+
+            def _checkpoint_row(row_idx):
+                if db is None:
+                    return
+                try:
+                    db.insert_or_update_eiendom(df.loc[[row_idx]].copy())
+                except Exception as checkpoint_error:
+                    print(f"⚠️  Could not checkpoint row {row_idx}: {checkpoint_error}")
             
             print(f"\n🚀 Starting calculations for {len(df)} properties...")
             print(f"   (This may take a while - each property needs 2 API calls)")
-            if requests_per_second < 1.0:
-                print(f"   Rate limited to {requests_per_second} requests/second\n")
+            if requests_per_minute < 60.0:
+                print(f"   Rate limited to {requests_per_minute} requests/minute\n")
             else:
-                print(f"   Running at {requests_per_second} requests/second\n")
+                print(f"   Running at {requests_per_minute} requests/minute\n")
             
-            delay_between_requests = 1.0 / requests_per_second if requests_per_second > 0 else 0
-            
-            for idx, row in df.loc[eligible_mask].iterrows():
-                address = row['Adresse']
-                postnummer = row.get('Postnummer')
-                current_num = calculated_transit + calculated_driving
-                
-                # Show which property we're working on
-                if current_num % 5 == 0 or current_num < 5:
-                    print(f"⏳ Processing property {current_num + 1}/{len(df)}: {address}")
-                
-                # Calculate PENDL MORN BRJ (total public transit commute time to work)
-                if pd.isna(row.get('PENDL MORN BRJ')):
-                    try:
-                        print(f"   📍 Calculating public transit time...", end='', flush=True)
-                        minutes = transit_commute_calculator.calculate(address, postnummer)
-                        if minutes is not None:
-                            df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
-                            calculated_transit += 1
-                            print(f" ✓ {minutes} min")
-                            if delay_between_requests > 0:
-                                time.sleep(delay_between_requests)
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
-                
-                # Calculate BIL MORN BRJ (driving time to work)
-                if pd.isna(row.get('BIL MORN BRJ')):
-                    try:
-                        print(f"   🚗 Calculating driving time...", end='', flush=True)
-                        minutes = driving_calculator.calculate(address, postnummer)
-                        if minutes is not None:
-                            df.at[idx, 'BIL MORN BRJ'] = int(minutes)
-                            calculated_driving += 1
-                            print(f" ✓ {minutes} min")
-                            if delay_between_requests > 0:
-                                time.sleep(delay_between_requests)
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
+            delay_between_requests = 60.0 / requests_per_minute if requests_per_minute > 0 else 0
+            interrupted = False
 
-                destination = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
+            try:
+                for idx, row in df.loc[eligible_mask].iterrows():
+                    address = row['Adresse']
+                    postnummer = row.get('Postnummer')
+                    current_num = calculated_transit + calculated_driving
 
-                # Calculate PENDL DAG BRJ (public transit return at 16:00 Monday)
-                if pd.isna(row.get('PENDL DAG BRJ')):
-                    try:
-                        print(f"   🚌 Calculating public transit return (16:00)...", end='', flush=True)
-                        work_addr_norway = f"{work_address}, Norway" if "Norway" not in work_address else work_address
-                        minutes = transit_commute_calculator.calculate(
-                            address,
-                            postnummer,
-                            departure_time=16,
-                            origin_override=work_addr_norway,
-                            destination_override=destination
+                    # Show which property we're working on
+                    if current_num % 5 == 0 or current_num < 5:
+                        print(f"⏳ Processing property {current_num + 1}/{len(df)}: {address}")
+
+                    # Calculate PENDL MORN BRJ (total public transit commute time to work)
+                    if pd.isna(row.get('PENDL MORN BRJ')):
+                        try:
+                            print(f"   📍 Calculating public transit time...", end='', flush=True)
+                            minutes = transit_commute_calculator.calculate(address, postnummer)
+                            if minutes is not None:
+                                df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
+                                calculated_transit += 1
+                                print(f" ✓ {minutes} min")
+                                if delay_between_requests > 0:
+                                    time.sleep(delay_between_requests)
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    # Calculate BIL MORN BRJ (driving time to work)
+                    if pd.isna(row.get('BIL MORN BRJ')):
+                        try:
+                            print(f"   🚗 Calculating driving time...", end='', flush=True)
+                            minutes = driving_calculator.calculate(address, postnummer)
+                            if minutes is not None:
+                                df.at[idx, 'BIL MORN BRJ'] = int(minutes)
+                                calculated_driving += 1
+                                print(f" ✓ {minutes} min")
+                                if delay_between_requests > 0:
+                                    time.sleep(delay_between_requests)
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    destination = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
+
+                    # Calculate PENDL DAG BRJ (public transit return at 16:00 Monday)
+                    if pd.isna(row.get('PENDL DAG BRJ')):
+                        try:
+                            print(f"   🚌 Calculating public transit return (16:00)...", end='', flush=True)
+                            work_addr_norway = f"{work_address}, Norway" if "Norway" not in work_address else work_address
+                            minutes = transit_commute_calculator.calculate(
+                                address,
+                                postnummer,
+                                departure_time=16,
+                                origin_override=work_addr_norway,
+                                destination_override=destination
+                            )
+                            if minutes is not None:
+                                df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
+                                calculated_transit_return += 1
+                                print(f" ✓ {minutes} min")
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    # Calculate BIL DAG BRJ (driving return at 16:00 Monday)
+                    if pd.isna(row.get('BIL DAG BRJ')):
+                        try:
+                            print(f"   🚙 Calculating driving return (16:00)...", end='', flush=True)
+                            minutes = driving_calculator.calculate(
+                                address,
+                                postnummer,
+                                departure_time=16,
+                                origin_override=work_addr_norway,
+                                destination_override=destination
+                            )
+                            if minutes is not None:
+                                df.at[idx, 'BIL DAG BRJ'] = int(minutes)
+                                calculated_driving_return += 1
+                                print(f" ✓ {minutes} min")
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    _checkpoint_row(idx)
+
+                    # Summary every 10 properties
+                    total_calculated = calculated_transit + calculated_driving + calculated_transit_return + calculated_driving_return
+                    if total_calculated % 20 == 0 and total_calculated > 0:
+                        print(
+                            f"\n📊 Progress: {calculated_transit} transit + {calculated_driving} driving "
+                            f"+ {calculated_transit_return} transit_return + {calculated_driving_return} driving_return "
+                            f"= {total_calculated} total\n"
                         )
-                        if minutes is not None:
-                            df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
-                            calculated_transit_return += 1
-                            print(f" ✓ {minutes} min")
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
+            except KeyboardInterrupt:
+                interrupted = True
+                print("\n⚠️  Interrupted during BRJ travel calculations. Returning partial results and preserving saved progress.")
 
-                # Calculate BIL DAG BRJ (driving return at 16:00 Monday)
-                if pd.isna(row.get('BIL DAG BRJ')):
-                    try:
-                        print(f"   🚙 Calculating driving return (16:00)...", end='', flush=True)
-                        minutes = driving_calculator.calculate(
-                            address,
-                            postnummer,
-                            departure_time=16,
-                            origin_override=work_addr_norway,
-                            destination_override=destination
-                        )
-                        if minutes is not None:
-                            df.at[idx, 'BIL DAG BRJ'] = int(minutes)
-                            calculated_driving_return += 1
-                            print(f" ✓ {minutes} min")
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
-                
-                # Summary every 10 properties
-                total_calculated = calculated_transit + calculated_driving + calculated_transit_return + calculated_driving_return
-                if total_calculated % 20 == 0 and total_calculated > 0:
-                    print(
-                        f"\n📊 Progress: {calculated_transit} transit + {calculated_driving} driving "
-                        f"+ {calculated_transit_return} transit_return + {calculated_driving_return} driving_return "
-                        f"= {total_calculated} total\n"
-                    )
+            if interrupted:
+                commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                                'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
+                for col in commute_cols:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors='coerce').round().astype('Int64')
+                return df
             
             # Now calculate MVV (Oslo Sentralstasjon) times
             mvv_address = "Oslo Sentralstasjon"
@@ -412,83 +447,88 @@ def post_process_eiendom(df: DataFrame, projectName: str, db=None, calculate_loc
             
             print(f"\n🚀 Starting calculations for Oslo Sentralstasjon (MVV)...\n")
             
-            for idx, row in df.loc[eligible_mask].iterrows():
-                address = row['Adresse']
-                postnummer = row.get('Postnummer')
-                current_num = calculated_transit_mvv + calculated_driving_mvv
-                
-                if current_num % 10 == 0 or current_num < 5:
-                    print(f"⏳ Processing property {current_num + 1}/{len(df[eligible_mask])}: {address}")
-                
-                # Calculate PENDL MORN MVV
-                if pd.isna(row.get('PENDL MORN MVV')):
-                    try:
-                        print(f"   📍 Calculating public transit to Oslo S...", end='', flush=True)
-                        minutes = transit_commute_calculator_mvv.calculate(address, postnummer)
-                        if minutes is not None:
-                            df.at[idx, 'PENDL MORN MVV'] = int(minutes)
-                            calculated_transit_mvv += 1
-                            print(f" ✓ {minutes} min")
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
-                
-                # Calculate BIL MORN MVV
-                if pd.isna(row.get('BIL MORN MVV')):
-                    try:
-                        print(f"   🚗 Calculating driving to Oslo S...", end='', flush=True)
-                        minutes = driving_calculator_mvv.calculate(address, postnummer)
-                        if minutes is not None:
-                            df.at[idx, 'BIL MORN MVV'] = int(minutes)
-                            calculated_driving_mvv += 1
-                            print(f" ✓ {minutes} min")
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
-                
-                destination_mvv = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
-                
-                # Calculate PENDL DAG MVV
-                if pd.isna(row.get('PENDL DAG MVV')):
-                    try:
-                        print(f"   🚌 Calculating public transit return from Oslo S (16:00)...", end='', flush=True)
-                        minutes = transit_commute_calculator_mvv.calculate(
-                            address,
-                            postnummer,
-                            departure_time=16,
-                            origin_override=mvv_address,
-                            destination_override=destination_mvv
-                        )
-                        if minutes is not None:
-                            df.at[idx, 'PENDL DAG MVV'] = int(minutes)
-                            calculated_transit_return_mvv += 1
-                            print(f" ✓ {minutes} min")
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
-                
-                # Calculate BIL DAG MVV
-                if pd.isna(row.get('BIL DAG MVV')):
-                    try:
-                        print(f"   🚙 Calculating driving return from Oslo S (16:00)...", end='', flush=True)
-                        minutes = driving_calculator_mvv.calculate(
-                            address,
-                            postnummer,
-                            departure_time=16,
-                            origin_override=mvv_address,
-                            destination_override=destination_mvv
-                        )
-                        if minutes is not None:
-                            df.at[idx, 'BIL DAG MVV'] = int(minutes)
-                            calculated_driving_return_mvv += 1
-                            print(f" ✓ {minutes} min")
-                        else:
-                            print(f" ✗ Failed (returned None)")
-                    except Exception as e:
-                        print(f" ✗ Error: {str(e)}")
+            try:
+                for idx, row in df.loc[eligible_mask].iterrows():
+                    address = row['Adresse']
+                    postnummer = row.get('Postnummer')
+                    current_num = calculated_transit_mvv + calculated_driving_mvv
+
+                    if current_num % 10 == 0 or current_num < 5:
+                        print(f"⏳ Processing property {current_num + 1}/{len(df[eligible_mask])}: {address}")
+
+                    # Calculate PENDL MORN MVV
+                    if pd.isna(row.get('PENDL MORN MVV')):
+                        try:
+                            print(f"   📍 Calculating public transit to Oslo S...", end='', flush=True)
+                            minutes = transit_commute_calculator_mvv.calculate(address, postnummer)
+                            if minutes is not None:
+                                df.at[idx, 'PENDL MORN MVV'] = int(minutes)
+                                calculated_transit_mvv += 1
+                                print(f" ✓ {minutes} min")
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    # Calculate BIL MORN MVV
+                    if pd.isna(row.get('BIL MORN MVV')):
+                        try:
+                            print(f"   🚗 Calculating driving to Oslo S...", end='', flush=True)
+                            minutes = driving_calculator_mvv.calculate(address, postnummer)
+                            if minutes is not None:
+                                df.at[idx, 'BIL MORN MVV'] = int(minutes)
+                                calculated_driving_mvv += 1
+                                print(f" ✓ {minutes} min")
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    destination_mvv = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
+
+                    # Calculate PENDL DAG MVV
+                    if pd.isna(row.get('PENDL DAG MVV')):
+                        try:
+                            print(f"   🚌 Calculating public transit return from Oslo S (16:00)...", end='', flush=True)
+                            minutes = transit_commute_calculator_mvv.calculate(
+                                address,
+                                postnummer,
+                                departure_time=16,
+                                origin_override=mvv_address,
+                                destination_override=destination_mvv
+                            )
+                            if minutes is not None:
+                                df.at[idx, 'PENDL DAG MVV'] = int(minutes)
+                                calculated_transit_return_mvv += 1
+                                print(f" ✓ {minutes} min")
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    # Calculate BIL DAG MVV
+                    if pd.isna(row.get('BIL DAG MVV')):
+                        try:
+                            print(f"   🚙 Calculating driving return from Oslo S (16:00)...", end='', flush=True)
+                            minutes = driving_calculator_mvv.calculate(
+                                address,
+                                postnummer,
+                                departure_time=16,
+                                origin_override=mvv_address,
+                                destination_override=destination_mvv
+                            )
+                            if minutes is not None:
+                                df.at[idx, 'BIL DAG MVV'] = int(minutes)
+                                calculated_driving_return_mvv += 1
+                                print(f" ✓ {minutes} min")
+                            else:
+                                print(f" ✗ Failed (returned None)")
+                        except Exception as e:
+                            print(f" ✗ Error: {str(e)}")
+
+                    _checkpoint_row(idx)
+            except KeyboardInterrupt:
+                print("\n⚠️  Interrupted during MVV travel calculations. Returning partial results and preserving saved progress.")
             
             print(
                 f"\n✓ Successfully calculated {calculated_transit_mvv} transit times to Oslo S, "

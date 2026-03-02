@@ -10,6 +10,7 @@ This script:
 
 No scraping and no Google Sheets sync are performed.
 """
+import argparse
 import os
 import sys
 
@@ -38,8 +39,112 @@ COMMUTE_COLS = [
     'BIL DAG MVV',
 ]
 
+TRANSIT_COLS = [
+    'PENDL MORN BRJ',
+    'PENDL DAG BRJ',
+    'PENDL MORN MVV',
+    'PENDL DAG MVV',
+]
+
+DRIVING_COLS = [
+    'BIL MORN BRJ',
+    'BIL DAG BRJ',
+    'BIL MORN MVV',
+    'BIL DAG MVV',
+]
+
+# Google Maps Routes API pricing assumptions (USD), last checked 2026-02
+FREE_CAP_ESSENTIALS = 10_000
+FREE_CAP_PRO = 5_000
+PRICE_ESSENTIALS_PER_1K = 5.0
+PRICE_PRO_PER_1K = 10.0
+
+
+def _get_max_price():
+    try:
+        from main.config.filters import MAX_PRICE
+        return MAX_PRICE
+    except ImportError:
+        try:
+            from config.filters import MAX_PRICE
+            return MAX_PRICE
+        except ImportError:
+            return None
+
+
+def print_preflight_estimate(df_missing: pd.DataFrame) -> None:
+    max_price = _get_max_price()
+
+    eligible_mask = pd.Series([True] * len(df_missing), index=df_missing.index)
+    if max_price is not None and 'Pris' in df_missing.columns:
+        eligible_mask = df_missing['Pris'].fillna(0) <= max_price
+
+    df_eligible = df_missing.loc[eligible_mask]
+    skipped_due_to_price = len(df_missing) - len(df_eligible)
+
+    missing_by_col = {
+        col: int(df_eligible[col].isna().sum())
+        for col in COMMUTE_COLS
+        if col in df_eligible.columns
+    }
+
+    transit_requests = sum(missing_by_col.get(col, 0) for col in TRANSIT_COLS)
+    driving_requests = sum(missing_by_col.get(col, 0) for col in DRIVING_COLS)
+    total_requests = transit_requests + driving_requests
+
+    billable_essentials = max(0, transit_requests - FREE_CAP_ESSENTIALS)
+    billable_pro = max(0, driving_requests - FREE_CAP_PRO)
+
+    estimated_cost_essentials = (billable_essentials / 1000) * PRICE_ESSENTIALS_PER_1K
+    estimated_cost_pro = (billable_pro / 1000) * PRICE_PRO_PER_1K
+    estimated_total_cost = estimated_cost_essentials + estimated_cost_pro
+
+    print("\n=== Google Routes Preflight Estimate ===")
+    print(f"Listings with missing travel fields: {len(df_missing)}")
+    print(f"Listings eligible for API calls: {len(df_eligible)}")
+    if max_price is not None:
+        print(f"MAX_PRICE filter: {max_price} (skipped by price: {skipped_due_to_price})")
+
+    print("\nEstimated requests (eligible listings only):")
+    print(f"  Essentials-like (TRANSIT): {transit_requests}")
+    print(f"  Pro-like (DRIVING / traffic-aware): {driving_requests}")
+    print(f"  Total: {total_requests}")
+
+    print("\nFree cap check (monthly, per SKU):")
+    print(
+        f"  Essentials cap {FREE_CAP_ESSENTIALS}: "
+        f"{max(0, FREE_CAP_ESSENTIALS - transit_requests)} remaining"
+    )
+    print(
+        f"  Pro cap {FREE_CAP_PRO}: "
+        f"{max(0, FREE_CAP_PRO - driving_requests)} remaining"
+    )
+
+    print("\nEstimated overage (if this is your only usage in the month):")
+    print(f"  Essentials billable requests: {billable_essentials}")
+    print(f"  Pro billable requests: {billable_pro}")
+    print(f"  Estimated cost: ${estimated_total_cost:.2f} USD")
+
+    print("\nMissing fields by column (eligible listings):")
+    for col in COMMUTE_COLS:
+        print(f"  {col}: {missing_by_col.get(col, 0)}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Fill missing travel-time fields, with optional preflight estimate only"
+    )
+    parser.add_argument(
+        "--estimate-only",
+        action="store_true",
+        help="Only print Google Routes request/cost estimate; do not call APIs or update DB",
+    )
+    return parser.parse_args()
+
 
 def main() -> int:
+    args = parse_args()
+
     db = PropertyDatabase()
 
     df = db.get_eiendom_for_sheets()
@@ -63,6 +168,12 @@ def main() -> int:
         df_missing.rename(columns={'ADRESSE': 'Adresse'}, inplace=True)
 
     print(f"Found {len(df_missing)} listings with at least one missing travel field.")
+    print_preflight_estimate(df_missing)
+
+    if args.estimate_only:
+        print("\nEstimate-only mode: no API calls made and no database updates applied.")
+        return 0
+
     print("You will be prompted for confirmation and optional request rate.")
 
     processed = post_process_eiendom(
@@ -70,6 +181,7 @@ def main() -> int:
         projectName='data/eiendom',
         db=db,
         calculate_location_features=True,
+        calculate_google_directions=True,
     )
 
     inserted, updated = db.insert_or_update_eiendom(processed)
