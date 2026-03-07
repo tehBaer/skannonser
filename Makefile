@@ -4,16 +4,27 @@ ARTIFACT_PREFIX ?= html-delta-
 ARTIFACT_DEST ?= artifacts/github
 ARTIFACT_MANIFEST ?= artifacts/github/download_manifest.json
 ARTIFACT_OLDER_DAYS ?= 7
+COORDS_LIMIT ?= 100
+COORDS_RPM ?= 60
+COORDS_INCLUDE_INACTIVE ?= 0
 
-.PHONY: help gha sheet travel full refresh artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix
+.PHONY: help gha sheet travel full refresh artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix map-guide map-push map-deploy coords-missing coords-fill addr-overrides
 
 help:
 	@echo "Available targets:"
 	@echo "  make gha      - Run CI-safe scrape (scrape + DB update, no Google Directions API)"
-	@echo "  make sheet    - Manually sync database to Google Sheets"
+	@echo "  make coords-fill - Geocode missing LAT/LNG in DB"
+	@echo "                     Optional: COORDS_LIMIT=0 COORDS_RPM=40 COORDS_INCLUDE_INACTIVE=1"
 	@echo "  make travel   - Fill missing travel-time fields only (manual)"
-	@echo "  make full     - Full manual run (includes optional travel API prompts)"
+	@echo "  make sheet    - Manually sync database to Google Sheets"
+
 	@echo "  make refresh  - Re-download listing pages and refresh statuses"
+	@echo "  make full     - Full manual run (includes optional travel API prompts)"
+	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
+	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
+	@echo "  make map-guide - Open setup guide for interactive map"
+	@echo "  make map-push  - Push Apps Script map files via clasp"
+	@echo "  make map-deploy - Deploy Apps Script web app via clasp"
 	@echo "  make artifacts-pull             - Download artifacts, then delete remote copies"
 	@echo "  make artifacts-cleanup-manifest - Delete artifacts listed as downloaded in manifest"
 	@echo "  make artifacts-cleanup-prefix   - Delete artifacts by prefix/age"
@@ -32,6 +43,24 @@ full:
 
 refresh:
 	$(PYTHON) main/sync/refresh_listings.py
+
+map-guide:
+	@echo "See docs/INTERACTIVE_MAP_SETUP.md"
+
+map-push:
+	@cd apps_script/map && clasp push
+
+map-deploy:
+	@cd apps_script/map && clasp deploy --description "Interactive map update"
+
+coords-missing:
+	$(PYTHON) main/tools/report_missing_coordinates.py
+
+coords-fill:
+	$(PYTHON) main/tools/fill_missing_coordinates.py --limit "$(COORDS_LIMIT)" --rpm "$(COORDS_RPM)" $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,)
+
+addr-overrides:
+	$(PYTHON) main/tools/address_overrides.py --help
 
 artifacts-pull:
 	@if [ -z "$(REPO)" ]; then echo "Set REPO=owner/repo"; exit 1; fi

@@ -157,10 +157,16 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         sheet_row_num = finnkode_to_row[finnkode]
         sheet_row_data = sheet_data.get(sheet_row_num, [])
         
-        # Build new row data
+        # Build new row data.
+        # Preserve existing values for sheet-only/custom columns that are not present
+        # in the DB export (for example LAT/LNG used by the interactive map).
         new_row_data = []
         for col in header_row_normalized:
-            val = db_row.get(col, '')
+            if col in db_row.index:
+                val = db_row.get(col, '')
+            else:
+                col_idx = header_row_normalized.index(col)
+                val = sheet_row_data[col_idx] if col_idx < len(sheet_row_data) else ''
             new_row_data.append('' if pd.isna(val) else val)
         
         # Normalize both for comparison

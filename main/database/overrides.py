@@ -1,6 +1,6 @@
 """
 Manual overrides manager for property data.
-Handles override operations for correcting property data (areal, pris).
+Handles override operations for correcting property data (adresse/postnummer/areal/pris).
 """
 import sqlite3
 from typing import Optional, Tuple, List
@@ -23,14 +23,24 @@ class PropertyOverrides:
         """Get database connection."""
         return sqlite3.connect(self.db_path)
     
-    def set_override(self, finnkode: str, areal: int = None, pris: int = None, reason: str = None):
+    def set_override(
+        self,
+        finnkode: str,
+        areal: int = None,
+        pris: int = None,
+        reason: str = None,
+        adresse: str = None,
+        postnummer: str = None,
+    ):
         """
-        Set manual override for a property's areal and/or pris.
+        Set manual override for a property's fields.
         
         Args:
             finnkode: The property's finn.no code
             areal: Override value for area (square meters)
             pris: Override value for price
+            adresse: Override address text
+            postnummer: Override postal code
             reason: Explanation for the override
         """
         conn = self._get_connection()
@@ -46,23 +56,28 @@ class PropertyOverrides:
                 UPDATE manual_overrides
                 SET areal = COALESCE(?, areal),
                     pris = COALESCE(?, pris),
+                    adresse = COALESCE(?, adresse),
+                    postnummer = COALESCE(?, postnummer),
                     override_reason = COALESCE(?, override_reason),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (areal, pris, reason, finnkode))
+            ''', (areal, pris, adresse, postnummer, reason, finnkode))
         else:
             # Insert new override
             cursor.execute('''
-                INSERT INTO manual_overrides (finnkode, areal, pris, override_reason)
-                VALUES (?, ?, ?, ?)
-            ''', (finnkode, areal, pris, reason))
+                INSERT INTO manual_overrides (finnkode, areal, pris, adresse, postnummer, override_reason)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (finnkode, areal, pris, adresse, postnummer, reason))
         
         conn.commit()
         conn.close()
         
-        print(f"✓ Override set for {finnkode}: areal={areal}, pris={pris}, reason={reason}")
+        print(
+            f"✓ Override set for {finnkode}: "
+            f"areal={areal}, pris={pris}, adresse={adresse}, postnummer={postnummer}, reason={reason}"
+        )
     
-    def get_override(self, finnkode: str) -> Optional[Tuple[Optional[int], Optional[int], Optional[str]]]:
+    def get_override(self, finnkode: str) -> Optional[Tuple[Optional[int], Optional[int], Optional[str], Optional[str], Optional[str]]]:
         """
         Get override values for a property if they exist.
         
@@ -70,12 +85,15 @@ class PropertyOverrides:
             finnkode: The property's finn.no code
             
         Returns:
-            Tuple of (areal, pris, reason) or None if no override exists
+            Tuple of (areal, pris, adresse, postnummer, reason) or None if no override exists
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
-        cursor.execute('SELECT areal, pris, override_reason FROM manual_overrides WHERE finnkode = ?', (finnkode,))
+        cursor.execute(
+            'SELECT areal, pris, adresse, postnummer, override_reason FROM manual_overrides WHERE finnkode = ?',
+            (finnkode,),
+        )
         result = cursor.fetchone()
         conn.close()
         
@@ -86,14 +104,14 @@ class PropertyOverrides:
         List all active overrides.
         
         Returns:
-            List of tuples: (finnkode, areal, pris, reason, updated_at)
+            List of tuples: (finnkode, areal, pris, adresse, postnummer, reason, updated_at)
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT finnkode, areal, pris, override_reason, updated_at 
-            FROM manual_overrides 
+            SELECT finnkode, areal, pris, adresse, postnummer, override_reason, updated_at
+            FROM manual_overrides
             ORDER BY updated_at DESC
         ''')
         
@@ -105,8 +123,12 @@ class PropertyOverrides:
             return []
         
         print("\n📋 Manual Overrides:")
-        for finnkode, areal, pris, reason, updated_at in results:
+        for finnkode, areal, pris, adresse, postnummer, reason, updated_at in results:
             print(f"  {finnkode}:")
+            if adresse:
+                print(f"    - ADRESSE: {adresse}")
+            if postnummer:
+                print(f"    - Postnummer: {postnummer}")
             if areal is not None:
                 print(f"    - AREAL: {areal}")
             if pris is not None:
@@ -160,5 +182,9 @@ class PropertyOverrides:
                 data['areal'] = override[0]
             if override[1] is not None:  # pris override exists
                 data['pris'] = override[1]
+            if override[2]:  # adresse override exists
+                data['adresse'] = override[2]
+            if override[3]:  # postnummer override exists
+                data['postnummer'] = override[3]
         
         return data

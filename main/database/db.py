@@ -64,6 +64,8 @@ class PropertyDatabase:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finnkode TEXT UNIQUE NOT NULL,
                 adresse_cleaned TEXT,
+                lat REAL,
+                lng REAL,
                 areal INTEGER,
                 pendl_morn_brj INTEGER,
                 bil_morn_brj INTEGER,
@@ -103,6 +105,8 @@ class PropertyDatabase:
         cursor.execute("PRAGMA table_info(eiendom_processed)")
         existing_columns = {row[1] for row in cursor.fetchall()}
         columns_to_add = {
+            "lat": "REAL",
+            "lng": "REAL",
             "areal": "INTEGER",
             "bil_morn_brj": "INTEGER",
             "pendl_dag_brj": "INTEGER",
@@ -163,10 +167,23 @@ class PropertyDatabase:
                 finnkode TEXT UNIQUE NOT NULL,
                 areal INTEGER,
                 pris INTEGER,
+                adresse TEXT,
+                postnummer TEXT,
                 override_reason TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Ensure new override columns exist for existing databases.
+        cursor.execute("PRAGMA table_info(manual_overrides)")
+        existing_override_columns = {row[1] for row in cursor.fetchall()}
+        override_columns_to_add = {
+            "adresse": "TEXT",
+            "postnummer": "TEXT",
+        }
+        for column_name, column_type in override_columns_to_add.items():
+            if column_name not in existing_override_columns:
+                cursor.execute(f"ALTER TABLE manual_overrides ADD COLUMN {column_name} {column_type}")
         
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_manual_overrides_finnkode ON manual_overrides(finnkode)')
         
@@ -299,18 +316,18 @@ class PropertyDatabase:
             # Also insert/update processed data with commute times and Google Maps URL
             conn.commit()  # Commit property update first
             self.insert_or_update_eiendom_processed(
-                finnkode,
-                data['adresse'],
-                data['postnummer'],
-                data.get('areal'),
-                pendl_morn_brj,
-                bil_morn_brj,
-                pendl_dag_brj,
-                bil_dag_brj,
-                pendl_morn_mvv,
-                bil_morn_mvv,
-                pendl_dag_mvv,
-                bil_dag_mvv,
+                finnkode=finnkode,
+                adresse=data['adresse'],
+                postnummer=data['postnummer'],
+                areal=data.get('areal'),
+                pendl_morn_brj=pendl_morn_brj,
+                bil_morn_brj=bil_morn_brj,
+                pendl_dag_brj=pendl_dag_brj,
+                bil_dag_brj=bil_dag_brj,
+                pendl_morn_mvv=pendl_morn_mvv,
+                bil_morn_mvv=bil_morn_mvv,
+                pendl_dag_mvv=pendl_dag_mvv,
+                bil_dag_mvv=bil_dag_mvv,
             )
         
         conn.commit()
@@ -453,6 +470,8 @@ class PropertyDatabase:
                 e.info_plot_ownership as "Eierskap, tomt",
                 e.info_property_type as "Boligtype",
                 e.info_construction_year as "Byggeår",
+                ep.lat as "LAT",
+                ep.lng as "LNG",
                 ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
                 ep.pendl_morn_brj as "PENDL MORN BRJ",
@@ -520,6 +539,8 @@ class PropertyDatabase:
                 e.info_plot_area as "Tomteareal",
                 e.info_plot_ownership as "Eierskap, tomt",
                 e.info_property_type as "Boligtype",
+                ep.lat as "LAT",
+                ep.lng as "LNG",
                 ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
                 ep.pendl_morn_brj as "PENDL MORN BRJ",
@@ -553,6 +574,64 @@ class PropertyDatabase:
                 df[col] = df[col].fillna(0).astype(int)
         
         return df
+
+    def get_eiendom_missing_coordinates(self) -> pd.DataFrame:
+        """Get listings that are missing lat/lng in processed table."""
+        conn = self.get_connection()
+
+        query = '''
+            SELECT
+                e.finnkode as "Finnkode",
+                COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
+                e.postnummer as "Postnummer",
+                e.url as "URL",
+                e.is_active as "IsActive",
+                e.tilgjengelighet as "Tilgjengelighet",
+                ep.lat as "LAT",
+                ep.lng as "LNG"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            WHERE ep.lat IS NULL OR ep.lng IS NULL
+            ORDER BY e.is_active DESC, e.scraped_at DESC
+        '''
+
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+
+    def set_eiendom_coordinates(self, finnkode: str, lat: float, lng: float) -> bool:
+        """Set lat/lng for a listing in eiendom_processed, creating row if needed."""
+        if not finnkode:
+            return False
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT id FROM eiendom_processed WHERE finnkode = ?', (str(finnkode),))
+        existing = cursor.fetchone()
+
+        if existing:
+            cursor.execute(
+                '''
+                UPDATE eiendom_processed
+                SET lat = ?, lng = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE finnkode = ?
+                ''',
+                (lat, lng, str(finnkode)),
+            )
+        else:
+            cursor.execute(
+                '''
+                INSERT INTO eiendom_processed (finnkode, lat, lng)
+                VALUES (?, ?, ?)
+                ''',
+                (str(finnkode), lat, lng),
+            )
+
+        changed = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return changed
     
     def _generate_google_maps_url(self, adresse: str, postnummer: str) -> str:
         """Generate a Google Maps search URL from address and postal code."""
@@ -568,6 +647,7 @@ class PropertyDatabase:
     
     def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str,
                                          postnummer: str, areal: int = None,
+                                         lat: float = None, lng: float = None,
                                          pendl_morn_brj: str = None, bil_morn_brj: str = None,
                                          pendl_dag_brj: str = None, bil_dag_brj: str = None,
                                          pendl_morn_mvv: str = None, bil_morn_mvv: str = None,
@@ -586,22 +666,22 @@ class PropertyDatabase:
         if existing:
             cursor.execute('''
                 UPDATE eiendom_processed
-                SET adresse_cleaned = ?, areal = ?, pendl_morn_brj = ?, bil_morn_brj = ?,
+                SET adresse_cleaned = ?, lat = ?, lng = ?, areal = ?, pendl_morn_brj = ?, bil_morn_brj = ?,
                     pendl_dag_brj = ?, bil_dag_brj = ?,
                     pendl_morn_mvv = ?, bil_morn_mvv = ?,
                     pendl_dag_mvv = ?, bil_dag_mvv = ?,
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+            ''', (adresse_cleaned, lat, lng, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                                     pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
                   google_maps_url, finnkode))
         else:
             cursor.execute('''
                 INSERT INTO eiendom_processed
-                (finnkode, adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+                (finnkode, adresse_cleaned, lat, lng, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                                  pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (finnkode, adresse_cleaned, lat, lng, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                                     pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url))
         
         conn.commit()
@@ -636,6 +716,8 @@ class PropertyDatabase:
             CREATE TABLE eiendom_processed (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finnkode TEXT UNIQUE NOT NULL,
+                lat REAL,
+                lng REAL,
                 pendlevei TEXT,
                 google_maps_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -731,9 +813,24 @@ class PropertyDatabase:
         
         return address
     
-    def set_override(self, finnkode: str, areal: int = None, pris: int = None, reason: str = None):
-        """Set manual override for a property's areal and/or pris."""
-        return self.overrides.set_override(finnkode, areal, pris, reason)
+    def set_override(
+        self,
+        finnkode: str,
+        areal: int = None,
+        pris: int = None,
+        reason: str = None,
+        adresse: str = None,
+        postnummer: str = None,
+    ):
+        """Set manual override for a property (adresse/postnummer/areal/pris)."""
+        return self.overrides.set_override(
+            finnkode=finnkode,
+            areal=areal,
+            pris=pris,
+            reason=reason,
+            adresse=adresse,
+            postnummer=postnummer,
+        )
     
     def get_override(self, finnkode: str):
         """Get override values for a property if they exist."""
