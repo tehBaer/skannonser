@@ -5,20 +5,24 @@ ARTIFACT_DEST ?= artifacts/github
 ARTIFACT_MANIFEST ?= artifacts/github/download_manifest.json
 ARTIFACT_OLDER_DAYS ?= 7
 COORDS_LIMIT ?= 100
-COORDS_RPM ?= 60
+COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 
-.PHONY: help gha sheet travel full refresh artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix map-guide map-push map-deploy coords-missing coords-fill addr-overrides
+.PHONY: help gha sheet travel brj mvv full refresh refresh-inactive artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix map-guide map-push map-deploy coords-missing coords-fill coords-import-sheet addr-overrides
 
 help:
 	@echo "Available targets:"
 	@echo "  make gha      - Run CI-safe scrape (scrape + DB update, no Google Directions API)"
 	@echo "  make coords-fill - Geocode missing LAT/LNG in DB"
 	@echo "                     Optional: COORDS_LIMIT=0 COORDS_RPM=40 COORDS_INCLUDE_INACTIVE=1"
+	@echo "  make coords-import-sheet - Import existing LAT/LNG from sheet back into DB"
 	@echo "  make travel   - Fill missing travel-time fields only (manual)"
+	@echo "  make brj      - Fill missing BRJ transit travel fields only"
+	@echo "  make mvv      - Fill missing MVV transit travel fields only"
 	@echo "  make sheet    - Manually sync database to Google Sheets"
 
 	@echo "  make refresh  - Re-download listing pages and refresh statuses"
+	@echo "  make refresh-inactive - Re-download only listings with search_hit=0"
 	@echo "  make full     - Full manual run (includes optional travel API prompts)"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
 	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
@@ -38,11 +42,20 @@ sheet:
 travel:
 	$(PYTHON) main/tools/manual_fill_missing_travel_times.py
 
+brj:
+	$(PYTHON) main/tools/manual_fill_missing_travel_times.py --target brj
+
+mvv:
+	$(PYTHON) main/tools/manual_fill_missing_travel_times.py --target mvv
+
 full:
 	$(PYTHON) main/tools/manage.py run eiendom
 
 refresh:
 	$(PYTHON) main/sync/refresh_listings.py
+
+refresh-inactive:
+	$(PYTHON) main/sync/refresh_listings.py --only-inactive
 
 map-guide:
 	@echo "See docs/INTERACTIVE_MAP_SETUP.md"
@@ -58,6 +71,9 @@ coords-missing:
 
 coords-fill:
 	$(PYTHON) main/tools/fill_missing_coordinates.py --limit "$(COORDS_LIMIT)" --rpm "$(COORDS_RPM)" $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,)
+
+coords-import-sheet:
+	$(PYTHON) main/tools/import_coordinates_from_sheet.py --sheet Eie
 
 addr-overrides:
 	$(PYTHON) main/tools/address_overrides.py --help

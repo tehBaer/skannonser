@@ -19,6 +19,124 @@ except ImportError:
 from googleapiclient.errors import HttpError
 
 
+HIDDEN_TILGJENGELIGHET_STATUSES = {"solgt", "inaktiv"}
+
+# Canonical header names to avoid duplicate legacy/new variants in Sheets.
+HEADER_ALIASES = {
+    'lat': 'LAT',
+    'lng': 'LNG',
+    'latitude': 'LAT',
+    'longitude': 'LNG',
+}
+
+
+def canonicalize_header_name(name: str) -> str:
+    """Map legacy header variants to a canonical name."""
+    raw = str(name or '').strip()
+    if not raw:
+        return raw
+    alias = HEADER_ALIASES.get(raw.lower())
+    return alias if alias else raw
+
+
+def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> pd.DataFrame:
+    """Exclude rows that should be hidden in sheets for now.
+
+    Hidden rules:
+    - search_hit != 1
+    - Tilgjengelighet in {Solgt, Inaktiv} (case-insensitive)
+    """
+    if df.empty:
+        return df
+
+    out = df.copy()
+    out['Finnkode'] = out['Finnkode'].astype(str).str.strip()
+
+    status_df = db.get_eiendom_for_status_refresh(only_inactive=False)
+    if status_df.empty:
+        return out
+
+    status_df['Finnkode'] = status_df['Finnkode'].astype(str).str.strip()
+    search_hit_lookup = status_df.set_index('Finnkode')['search_hit'].to_dict()
+    tilgjengelighet_lookup = status_df.set_index('Finnkode')['Tilgjengelighet'].to_dict()
+
+    out['_sync_search_hit'] = pd.to_numeric(
+        out['Finnkode'].map(search_hit_lookup), errors='coerce'
+    ).fillna(1).astype(int)
+
+    out['_sync_tilg'] = out['Finnkode'].map(tilgjengelighet_lookup)
+    if 'Tilgjengelighet' in out.columns:
+        out['_sync_tilg'] = out['_sync_tilg'].combine_first(out['Tilgjengelighet'])
+
+    normalized_status = (
+        out['_sync_tilg']
+        .fillna('')
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    visible_mask = (out['_sync_search_hit'] == 1) & (~normalized_status.isin(HIDDEN_TILGJENGELIGHET_STATUSES))
+
+    excluded = int((~visible_mask).sum())
+    if excluded > 0:
+        print(f"Excluded {excluded} rows from sheet sync (search_hit=false or Tilgjengelighet=Solgt/Inaktiv)")
+
+    out = out.loc[visible_mask].copy()
+    out.drop(columns=['_sync_search_hit', '_sync_tilg'], inplace=True, errors='ignore')
+    return out
+
+
+HIDDEN_SHEET_COLUMNS = {
+    'BIL MORN BRJ',
+    'BIL DAG BRJ',
+    'BIL MORN MVV',
+    'BIL DAG MVV',
+    'PENDL MORN CNTR',
+    'BIL MORN CNTR',
+    'PENDL DAG CNTR',
+    'BIL DAG CNTR',
+}
+
+
+def filter_hidden_sheet_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove internal-only columns that should not be written to Google Sheets."""
+    visible_columns = [c for c in df.columns if c not in HIDDEN_SHEET_COLUMNS]
+    return df[visible_columns].copy()
+
+
+def dedupe_and_canonicalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse duplicate/alias columns into one canonical column.
+
+    If multiple source columns map to the same canonical name, keep the first
+    non-empty value from left-to-right for each row.
+    """
+    if df.empty:
+        return df
+
+    canonical_groups = {}
+    ordered_canonical = []
+
+    for idx, col in enumerate(df.columns):
+        canon = canonicalize_header_name(col)
+        if not canon:
+            continue
+        if canon not in canonical_groups:
+            canonical_groups[canon] = []
+            ordered_canonical.append(canon)
+        canonical_groups[canon].append(idx)
+
+    merged = pd.DataFrame(index=df.index)
+    for canon in ordered_canonical:
+        idxs = canonical_groups[canon]
+        subset = df.iloc[:, idxs].copy()
+        # Treat empty strings as missing so we can take first non-empty value.
+        subset = subset.replace('', pd.NA)
+        merged[canon] = subset.bfill(axis=1).iloc[:, 0]
+
+    return merged
+
+
 def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     """Clean data for Google Sheets export."""
     # Convert commute columns to integers without decimals before fillna
@@ -69,7 +187,11 @@ def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -> List[str]:
-    """Ensure sheet header includes all desired columns, appending missing ones."""
+    """Ensure sheet header is canonical and aligned to desired column order.
+
+    Known desired columns are ordered exactly as provided. Any unknown existing
+    columns are preserved and appended to the end.
+    """
     range_name = f"{sheet_name}!A1:AZ1"
     result = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
@@ -78,16 +200,32 @@ def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -
 
     header_row = result.get("values", [[]])
     header = header_row[0] if header_row else []
-    header_normalized = [col.strip() for col in header]
 
-    missing = [col for col in desired_columns if col not in header_normalized]
+    # Canonicalize and de-duplicate existing headers (e.g. lat/LAT -> LAT).
+    updated_header = []
+    seen = set()
+    for col in header:
+        canon = canonicalize_header_name(col)
+        if not canon:
+            continue
+        if canon in seen:
+            continue
+        seen.add(canon)
+        updated_header.append(canon)
 
-    if not header:
-        updated_header = desired_columns
-    elif missing:
-        updated_header = header + missing
-    else:
-        updated_header = header
+    header_normalized = [col.strip() for col in updated_header]
+
+    desired_canonical = []
+    seen_desired = set()
+    for col in desired_columns:
+        canon = canonicalize_header_name(col)
+        if canon and canon not in seen_desired:
+            desired_canonical.append(canon)
+            seen_desired.add(canon)
+
+    # Keep unknown columns (if any) but move them to the end.
+    extras = [col for col in updated_header if col not in seen_desired]
+    updated_header = desired_canonical + extras
 
     if updated_header != header:
         service.spreadsheets().values().update(
@@ -203,14 +341,15 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
         print(f"Error connecting to Google Sheets: {e}")
         return False
     
-    # Get all listings from database (active, unlisted/inactive, and sold)
+    # Get all listings from database then apply temporary sheet visibility rules.
     df = db.get_eiendom_for_sheets()
+    df = filter_rows_for_sheet_visibility(df, db)
     
     if df.empty:
         print("No listings to sync")
         return True
     
-    print(f"Found {len(df)} listings in database (all statuses)")
+    print(f"Found {len(df)} listings in database after sheet visibility filters")
     
     # Get existing Finnkodes from sheet
     existing_finnkodes = get_existing_finnkodes_from_sheet(service, sheet_name)
@@ -233,6 +372,10 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     
     print(f"Found {len(new_listings)} new listings to add")
     
+    # Keep internal-only columns in DB, but hide them from Sheets.
+    new_listings = filter_hidden_sheet_columns(new_listings)
+    # Normalize aliases and remove duplicate columns before building headers.
+    new_listings = dedupe_and_canonicalize_dataframe_columns(new_listings)
     # Sanitize data
     new_listings = sanitize_for_sheets(new_listings)
 
@@ -330,15 +473,20 @@ def full_sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
         print(f"Error connecting to Google Sheets: {e}")
         return False
     
-    # Get all active listings from database
+    # Get all listings from database then apply temporary sheet visibility rules.
     df = db.get_eiendom_for_sheets()
+    df = filter_rows_for_sheet_visibility(df, db)
     
     if df.empty:
-        print("No active listings to sync")
+        print("No visible listings to sync")
         return True
     
     print(f"Syncing {len(df)} listings to Google Sheets")
     
+    # Keep internal-only columns in DB, but hide them from Sheets.
+    df = filter_hidden_sheet_columns(df)
+    # Normalize aliases and remove duplicate columns before writing full sheet.
+    df = dedupe_and_canonicalize_dataframe_columns(df)
     # Sanitize data
     df = sanitize_for_sheets(df)
     
@@ -350,7 +498,7 @@ def full_sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
         # Clear the sheet
         service.spreadsheets().values().clear(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"{sheet_name}!A1:Z10000"
+            range=f"{sheet_name}!A1:ZZ10000"
         ).execute()
         
         # Write new data

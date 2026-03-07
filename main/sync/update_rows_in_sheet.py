@@ -6,6 +6,7 @@ import sys
 import os
 import pandas as pd
 from typing import Dict
+import re
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,11 +14,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from main.database.db import PropertyDatabase
     from main.googleUtils import get_sheets_service, SPREADSHEET_ID
-    from main.sync.helper_sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
+    from main.sync.helper_sync_to_sheets import (
+        sanitize_for_sheets,
+        ensure_sheet_headers,
+        filter_hidden_sheet_columns,
+        filter_rows_for_sheet_visibility,
+        canonicalize_header_name,
+    )
 except ImportError:
     from database.db import PropertyDatabase
     from googleUtils import get_sheets_service, SPREADSHEET_ID
-    from sync.helper_sync_to_sheets import sanitize_for_sheets, ensure_sheet_headers
+    from sync.helper_sync_to_sheets import (
+        sanitize_for_sheets,
+        ensure_sheet_headers,
+        filter_hidden_sheet_columns,
+        filter_rows_for_sheet_visibility,
+        canonicalize_header_name,
+    )
 from googleapiclient.errors import HttpError
 
 
@@ -29,7 +42,6 @@ def normalize_value(val):
     val_str = str(val).strip()
     
     # Remove all whitespace characters (including non-breaking spaces)
-    import re
     val_str = re.sub(r'\s+', '', val_str)
     
     # Remove currency formatting
@@ -47,6 +59,45 @@ def normalize_value(val):
     except (ValueError, TypeError):
         # Not a number, just return the cleaned string
         return val_str
+
+
+def format_grouped_int(value: int) -> str:
+    """Format integer with spaces as thousands separators."""
+    return f"{value:,}".replace(",", " ")
+
+
+def format_clean_value_for_display(header: str, value) -> str:
+    """Return a cleaned, human-friendly display value for selected numeric columns."""
+    header_normalized = str(header or "").strip().upper()
+    norm = normalize_value(value)
+    if norm == "":
+        return ""
+
+    try:
+        num = int(float(norm))
+    except (ValueError, TypeError):
+        return str(value)
+
+    if header_normalized == "PRIS KVM":
+        return f"{format_grouped_int(num)} kr"
+    if header_normalized == "PRIS":
+        return f"{format_grouped_int(num)} kr"
+    return str(value)
+
+
+def format_diff_string(header: str, old_val, new_val) -> str:
+    """Format diff string for display in confirmation prompts."""
+    base = f"{header}: '{old_val}' → '{new_val}'"
+
+    header_normalized = str(header or "").strip().upper()
+    if header_normalized not in {"PRIS", "PRIS KVM"}:
+        return base
+
+    old_clean = format_clean_value_for_display(header, old_val)
+    new_clean = format_clean_value_for_display(header, new_val)
+    if not old_clean and not new_clean:
+        return base
+    return f"{header}: '{old_clean}' → '{new_clean}'"
 
 
 def get_sheet_data_with_row_numbers(service, sheet_name: str) -> Dict:
@@ -77,6 +128,13 @@ def requires_confirmation(old_val, new_val) -> bool:
     return old_is_non_null and new_is_non_null and normalize_value(old_val) != normalize_value(new_val)
 
 
+def is_api_column(header_name: str) -> bool:
+    """Return True for columns that are API-derived travel/commute values."""
+    header_upper = str(header_name or "").upper()
+    api_tokens = ["PENDL", "BIL", "BRJ", "MVV"]
+    return any(token in header_upper for token in api_tokens)
+
+
 def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     """
     Update existing property listings in Google Sheets with new data from database.
@@ -97,13 +155,17 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         print(f"Error connecting to Google Sheets: {e}")
         return False
     
-    # Get all active listings from database
+    # Get all listings and apply temporary sheet visibility rules.
     df = db.get_eiendom_for_sheets()
+    df = filter_rows_for_sheet_visibility(df, db)
     
     if df.empty:
         print("No active listings in database")
         return True
     
+    # Keep internal-only columns in DB, but hide them from Sheets.
+    df = filter_hidden_sheet_columns(df)
+
     # Sanitize data
     df = sanitize_for_sheets(df)
     df['Finnkode'] = df['Finnkode'].astype(str).str.strip()
@@ -125,7 +187,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         return False
 
     # Normalize header (strip whitespace from column names)
-    header_row_normalized = [col.strip() for col in header_row]
+    header_row_normalized = [canonicalize_header_name(col) for col in header_row]
 
     if 'Finnkode' in header_row_normalized:
         finnkode_col_idx = header_row_normalized.index('Finnkode')
@@ -146,7 +208,8 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     # Find updates needed
     updates_list = []
     updated_count = 0
-    requires_confirmation_list = []
+    api_confirmation_list = []
+    non_api_confirmation_list = []
     
     for _, db_row in df.iterrows():
         finnkode = str(db_row['Finnkode']).strip()
@@ -173,9 +236,11 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         sheet_row_normalized = [normalize_value(v) for v in sheet_row_data]
         new_row_normalized = [normalize_value(v) for v in new_row_data]
         
-        # Collect differences and check if any require confirmation
+        # Collect differences and split by confirmation/API category
         differences = []
-        needs_confirmation = False
+        auto_changes = []
+        api_confirmation_changes = []
+        non_api_confirmation_changes = []
         
         for i, header in enumerate(header_row_normalized):
             old_val = sheet_row_data[i] if i < len(sheet_row_data) else ''
@@ -184,9 +249,22 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
             new_norm = new_row_normalized[i] if i < len(new_row_normalized) else ''
             
             if old_norm != new_norm:
-                differences.append(f"{header}: '{old_val}' → '{new_val}'")
+                diff_str = format_diff_string(header, old_val, new_val)
+                differences.append(diff_str)
+                change = {
+                    "col_index": i,
+                    "header": header,
+                    "old_val": old_val,
+                    "new_val": new_val,
+                    "diff_str": diff_str,
+                }
                 if requires_confirmation(old_val, new_val):
-                    needs_confirmation = True
+                    if is_api_column(header):
+                        api_confirmation_changes.append(change)
+                    else:
+                        non_api_confirmation_changes.append(change)
+                else:
+                    auto_changes.append(change)
         
         # Only proceed with update if there are actual differences
         if differences:
@@ -195,45 +273,140 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
                 "values": [new_row_data],
                 "finnkode": finnkode,
                 "adresse": db_row.get('ADRESSE', 'N/A'),
-                "differences": differences
+                "differences": differences,
+                "old_row": sheet_row_data,
+                "new_row": new_row_data,
+                "auto_changes": auto_changes,
+                "api_confirmation_changes": api_confirmation_changes,
+                "non_api_confirmation_changes": non_api_confirmation_changes,
             }
-            
-            if needs_confirmation:
-                requires_confirmation_list.append(update_info)
-            else:
+            if api_confirmation_changes:
+                api_confirmation_list.append(update_info)
+            if non_api_confirmation_changes:
+                non_api_confirmation_list.append(update_info)
+
+            # If no confirmation is required at all, update immediately.
+            if not api_confirmation_changes and not non_api_confirmation_changes:
                 updates_list.append(update_info)
                 updated_count += 1
-                
-                # Output on single line with property address
                 diff_str = " //// ".join(differences)
                 print(f"✓ {update_info['adresse']} ({finnkode}): {diff_str}")
     
-    # Handle confirmation for non-null to non-null changes
-    if requires_confirmation_list:
+    # Build per-row accepted changes (auto changes + confirmed categories)
+    accepted_changes = {}
+    row_context = {}
+
+    def _add_accepted_change(update_info, change):
+        key = update_info["range"]
+        row_context[key] = update_info
+        if key not in accepted_changes:
+            accepted_changes[key] = {}
+        accepted_changes[key][change["col_index"]] = change
+
+    # Always include non-confirmation changes.
+    for group in [api_confirmation_list, non_api_confirmation_list]:
+        for update_info in group:
+            for change in update_info.get("auto_changes", []):
+                _add_accepted_change(update_info, change)
+
+    # Include fully-auto rows that were already added to updates_list.
+    for update_info in updates_list:
+        key = update_info["range"]
+        row_context[key] = update_info
+        if key not in accepted_changes:
+            accepted_changes[key] = {}
+        for idx, (old_val, new_val) in enumerate(zip(update_info.get("old_row", []), update_info.get("new_row", []))):
+            if normalize_value(old_val) != normalize_value(new_val):
+                accepted_changes[key][idx] = {
+                    "col_index": idx,
+                    "header": header_row_normalized[idx] if idx < len(header_row_normalized) else str(idx),
+                    "old_val": old_val,
+                    "new_val": new_val,
+                    "diff_str": format_diff_string(
+                        header_row_normalized[idx] if idx < len(header_row_normalized) else idx,
+                        old_val,
+                        new_val,
+                    ),
+                }
+
+    # Handle API confirmation-required changes first.
+    if api_confirmation_list:
         print(f"\n{'='*60}")
-        print(f"⚠️  WARNING: The following changes would replace non-null values:")
+        print("⚠️  WARNING: API-derived changes would replace non-null values:")
         print(f"{'='*60}\n")
-        
-        for update_info in requires_confirmation_list:
-            diff_str = " //// ".join(update_info['differences'])
+
+        total_api_changes = 0
+        for update_info in api_confirmation_list:
+            api_diffs = [c["diff_str"] for c in update_info.get("api_confirmation_changes", [])]
+            if not api_diffs:
+                continue
+            total_api_changes += len(api_diffs)
             print(f"  {update_info['adresse']} ({update_info['finnkode']})")
-            print(f"    {diff_str}\n")
-        
-        print(f"Total changes requiring confirmation: {len(requires_confirmation_list)}")
-        response = input("\nDo you want to proceed with these changes? (yes/no): ").strip().lower()
-        
+            print(f"    {' //// '.join(api_diffs)}\n")
+
+        print(f"Total API field changes requiring confirmation: {total_api_changes}")
+        response = input("\nProceed with API-derived changes? (yes/no): ").strip().lower()
         if response in ['yes', 'y']:
-            # Add confirmed updates to the main updates list
-            for update_info in requires_confirmation_list:
-                updates_list.append({
-                    "range": update_info["range"],
-                    "values": update_info["values"]
-                })
-                updated_count += 1
-                diff_str = " //// ".join(update_info['differences'])
-                print(f"✓ {update_info['adresse']} ({update_info['finnkode']}): {diff_str}")
+            for update_info in api_confirmation_list:
+                for change in update_info.get("api_confirmation_changes", []):
+                    _add_accepted_change(update_info, change)
         else:
-            print(f"\n⚠️  Skipped {len(requires_confirmation_list)} changes requiring confirmation")
+            print(f"\n⚠️  Skipped API confirmation-required changes")
+
+    # Handle non-API confirmation-required changes separately.
+    if non_api_confirmation_list:
+        print(f"\n{'='*60}")
+        print("⚠️  WARNING: Non-API changes would replace non-null values:")
+        print(f"{'='*60}\n")
+
+        total_non_api_changes = 0
+        for update_info in non_api_confirmation_list:
+            non_api_diffs = [c["diff_str"] for c in update_info.get("non_api_confirmation_changes", [])]
+            if not non_api_diffs:
+                continue
+            total_non_api_changes += len(non_api_diffs)
+            print(f"  {update_info['adresse']} ({update_info['finnkode']})")
+            print(f"    {' //// '.join(non_api_diffs)}\n")
+
+        print(f"Total non-API field changes requiring confirmation: {total_non_api_changes}")
+        response = input("\nProceed with non-API changes? (yes/no): ").strip().lower()
+        if response in ['yes', 'y']:
+            for update_info in non_api_confirmation_list:
+                for change in update_info.get("non_api_confirmation_changes", []):
+                    _add_accepted_change(update_info, change)
+        else:
+            print(f"\n⚠️  Skipped non-API confirmation-required changes")
+
+    # Rebuild updates_list from accepted changes, allowing partial row updates per decision.
+    updates_list = []
+    updated_count = 0
+    for range_name, changes_by_col in accepted_changes.items():
+        if not changes_by_col:
+            continue
+        context = row_context[range_name]
+        old_row = list(context.get("old_row", []))
+        new_row = list(context.get("new_row", []))
+
+        # Ensure row has full width for assignment.
+        max_cols = max(len(header_row_normalized), len(old_row), len(new_row))
+        while len(old_row) < max_cols:
+            old_row.append('')
+        while len(new_row) < max_cols:
+            new_row.append('')
+
+        final_row = list(old_row)
+        for col_idx, change in changes_by_col.items():
+            if col_idx < len(new_row):
+                final_row[col_idx] = new_row[col_idx]
+
+        # Skip if no effective change remains.
+        if [normalize_value(v) for v in final_row] == [normalize_value(v) for v in old_row]:
+            continue
+
+        applied_diffs = [changes_by_col[idx]["diff_str"] for idx in sorted(changes_by_col.keys())]
+        updates_list.append({"range": range_name, "values": [final_row]})
+        updated_count += 1
+        print(f"✓ {context['adresse']} ({context['finnkode']}): {' //// '.join(applied_diffs)}")
     
     if not updates_list:
         print("\nNo updates needed - all data is current")

@@ -89,7 +89,7 @@ def filter_new_rental_ads(analyzed_path, saved_all_path, output_path, empty_colu
             names=['Finnkode', 'Tilgjengelighet', 'Adresse', 'Postnummer', 'Leiepris',
                    'Depositum', 'URL',
                    # 'Innflytting', 'Utflytting',
-                   'AREAL', 'PRIS KVM'],
+                   'PRIS KVM'],
             on_bad_lines='skip'
         )
 

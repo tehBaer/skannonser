@@ -53,7 +53,7 @@ class PropertyDatabase:
                 pris_kvm INTEGER,
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
+                search_hit BOOLEAN DEFAULT 1,
                 exported_to_sheets BOOLEAN DEFAULT 0
             )
         ''')
@@ -66,7 +66,6 @@ class PropertyDatabase:
                 adresse_cleaned TEXT,
                 lat REAL,
                 lng REAL,
-                areal INTEGER,
                 pendl_morn_brj INTEGER,
                 bil_morn_brj INTEGER,
                 pendl_dag_brj INTEGER,
@@ -75,6 +74,11 @@ class PropertyDatabase:
                 bil_morn_mvv INTEGER,
                 pendl_dag_mvv INTEGER,
                 bil_dag_mvv INTEGER,
+                pendl_morn_cntr INTEGER,
+                bil_morn_cntr INTEGER,
+                pendl_dag_cntr INTEGER,
+                bil_dag_cntr INTEGER,
+                travel_copy_from_finnkode TEXT,
                 google_maps_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (finnkode) REFERENCES eiendom(finnkode)
@@ -84,6 +88,30 @@ class PropertyDatabase:
         # Ensure new columns exist for existing eiendom databases
         cursor.execute("PRAGMA table_info(eiendom)")
         existing_eiendom_columns = {row[1] for row in cursor.fetchall()}
+
+        # Normalize legacy activity/search columns to the canonical search_hit name.
+        if "search_hit" not in existing_eiendom_columns:
+            if "found_in_last_search" in existing_eiendom_columns:
+                try:
+                    cursor.execute("ALTER TABLE eiendom RENAME COLUMN found_in_last_search TO search_hit")
+                except sqlite3.OperationalError:
+                    cursor.execute("ALTER TABLE eiendom ADD COLUMN search_hit BOOLEAN DEFAULT 1")
+                    cursor.execute(
+                        "UPDATE eiendom SET search_hit = COALESCE(found_in_last_search, 1)"
+                    )
+            elif "is_active" in existing_eiendom_columns:
+                try:
+                    cursor.execute("ALTER TABLE eiendom RENAME COLUMN is_active TO search_hit")
+                except sqlite3.OperationalError:
+                    cursor.execute("ALTER TABLE eiendom ADD COLUMN search_hit BOOLEAN DEFAULT 1")
+                    cursor.execute(
+                        "UPDATE eiendom SET search_hit = COALESCE(is_active, 1)"
+                    )
+            else:
+                cursor.execute("ALTER TABLE eiendom ADD COLUMN search_hit BOOLEAN DEFAULT 1")
+
+            cursor.execute("PRAGMA table_info(eiendom)")
+            existing_eiendom_columns = {row[1] for row in cursor.fetchall()}
         eiendom_columns_to_add = {
             "info_usable_area": "INTEGER",
             "info_usable_i_area": "INTEGER",
@@ -107,7 +135,6 @@ class PropertyDatabase:
         columns_to_add = {
             "lat": "REAL",
             "lng": "REAL",
-            "areal": "INTEGER",
             "bil_morn_brj": "INTEGER",
             "pendl_dag_brj": "INTEGER",
             "bil_dag_brj": "INTEGER",
@@ -115,47 +142,34 @@ class PropertyDatabase:
             "bil_morn_mvv": "INTEGER",
             "pendl_dag_mvv": "INTEGER",
             "bil_dag_mvv": "INTEGER",
+            "pendl_morn_cntr": "INTEGER",
+            "bil_morn_cntr": "INTEGER",
+            "pendl_dag_cntr": "INTEGER",
+            "bil_dag_cntr": "INTEGER",
+            "travel_copy_from_finnkode": "TEXT",
         }
         for column_name, column_type in columns_to_add.items():
             if column_name not in existing_columns:
                 cursor.execute(f"ALTER TABLE eiendom_processed ADD COLUMN {column_name} {column_type}")
 
-        # Backfill legacy areal values from eiendom.areal to eiendom_processed.areal
-        # (only applicable on older databases that still have eiendom.areal)
-        if "areal" in existing_eiendom_columns:
-            cursor.execute('''
-                UPDATE eiendom_processed
-                SET areal = (
-                    SELECT e.areal
-                    FROM eiendom e
-                    WHERE e.finnkode = eiendom_processed.finnkode
-                )
-                WHERE areal IS NULL
-                  AND EXISTS (
-                      SELECT 1
-                      FROM eiendom e
-                      WHERE e.finnkode = eiendom_processed.finnkode
-                        AND e.areal IS NOT NULL
-                  )
-            ''')
-            updated_areal = cursor.rowcount
+        # One-time migration: old MVV values become CNTR baseline.
+        cursor.execute('''
+            UPDATE eiendom_processed
+            SET pendl_morn_cntr = COALESCE(pendl_morn_cntr, pendl_morn_mvv),
+                bil_morn_cntr = COALESCE(bil_morn_cntr, bil_morn_mvv),
+                pendl_dag_cntr = COALESCE(pendl_dag_cntr, pendl_dag_mvv),
+                bil_dag_cntr = COALESCE(bil_dag_cntr, bil_dag_mvv)
+            WHERE pendl_morn_mvv IS NOT NULL
+               OR bil_morn_mvv IS NOT NULL
+               OR pendl_dag_mvv IS NOT NULL
+               OR bil_dag_mvv IS NOT NULL
+        ''')
 
-            cursor.execute('''
-                INSERT INTO eiendom_processed (finnkode, areal)
-                SELECT e.finnkode, e.areal
-                FROM eiendom e
-                LEFT JOIN eiendom_processed ep ON ep.finnkode = e.finnkode
-                WHERE ep.finnkode IS NULL
-                  AND e.areal IS NOT NULL
-            ''')
-            inserted_areal = cursor.rowcount
-
-            if updated_areal > 0 or inserted_areal > 0:
-                print(f"✓ Backfilled AREAL to eiendom_processed: {updated_areal} updated, {inserted_areal} inserted")
-        
         # Create indexes for better query performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_finnkode ON eiendom(finnkode)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_active ON eiendom(is_active)')
+        cursor.execute('DROP INDEX IF EXISTS idx_eiendom_active')
+        cursor.execute('DROP INDEX IF EXISTS idx_eiendom_found_in_last_search')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_search_hit ON eiendom(search_hit)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_exported ON eiendom(exported_to_sheets)')
         
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_processed_finnkode ON eiendom_processed(finnkode)')
@@ -165,7 +179,6 @@ class PropertyDatabase:
             CREATE TABLE IF NOT EXISTS manual_overrides (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finnkode TEXT UNIQUE NOT NULL,
-                areal INTEGER,
                 pris INTEGER,
                 adresse TEXT,
                 postnummer TEXT,
@@ -252,7 +265,6 @@ class PropertyDatabase:
                 'info_plot_ownership': row.get('Eierskap, tomt', ''),
                 'info_property_type': row.get('Boligtype', ''),
                 'info_construction_year': self._to_int(row.get('Byggeår')),
-                'areal': self._to_int(row.get('AREAL')),
                 'pris_kvm': self._to_int(row.get('PRIS KVM')),
             }
             
@@ -274,6 +286,15 @@ class PropertyDatabase:
             bil_morn_mvv = row.get('BIL MORN MVV', None) if pd.notna(row.get('BIL MORN MVV')) else None
             pendl_dag_mvv = row.get('PENDL DAG MVV', None) if pd.notna(row.get('PENDL DAG MVV')) else None
             bil_dag_mvv = row.get('BIL DAG MVV', None) if pd.notna(row.get('BIL DAG MVV')) else None
+            pendl_morn_cntr = row.get('PENDL MORN CNTR', None) if pd.notna(row.get('PENDL MORN CNTR')) else None
+            bil_morn_cntr = row.get('BIL MORN CNTR', None) if pd.notna(row.get('BIL MORN CNTR')) else None
+            pendl_dag_cntr = row.get('PENDL DAG CNTR', None) if pd.notna(row.get('PENDL DAG CNTR')) else None
+            bil_dag_cntr = row.get('BIL DAG CNTR', None) if pd.notna(row.get('BIL DAG CNTR')) else None
+            travel_copy_from_finnkode = (
+                row.get('TRAVEL_COPY_FROM_FINNKODE', None)
+                if pd.notna(row.get('TRAVEL_COPY_FROM_FINNKODE'))
+                else None
+            )
             
             if existing:
                 # Update existing record
@@ -285,6 +306,7 @@ class PropertyDatabase:
                                                 info_gross_area = ?, info_usable_e_area = ?, info_usable_b_area = ?,
                                                 info_open_area = ?, info_plot_area = ?, info_plot_ownership = ?, info_property_type = ?, info_construction_year = ?,
                         pris_kvm = ?,
+                        search_hit = 1,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE finnkode = ?
                 ''', (data['tilgjengelighet'], data['adresse'], data['postnummer'],
@@ -319,7 +341,6 @@ class PropertyDatabase:
                 finnkode=finnkode,
                 adresse=data['adresse'],
                 postnummer=data['postnummer'],
-                areal=data.get('areal'),
                 pendl_morn_brj=pendl_morn_brj,
                 bil_morn_brj=bil_morn_brj,
                 pendl_dag_brj=pendl_dag_brj,
@@ -328,6 +349,11 @@ class PropertyDatabase:
                 bil_morn_mvv=bil_morn_mvv,
                 pendl_dag_mvv=pendl_dag_mvv,
                 bil_dag_mvv=bil_dag_mvv,
+                pendl_morn_cntr=pendl_morn_cntr,
+                bil_morn_cntr=bil_morn_cntr,
+                pendl_dag_cntr=pendl_dag_cntr,
+                bil_dag_cntr=bil_dag_cntr,
+                travel_copy_from_finnkode=travel_copy_from_finnkode,
             )
         
         conn.commit()
@@ -345,14 +371,14 @@ class PropertyDatabase:
             placeholders = ','.join('?' * len(active_finnkodes))
             cursor.execute(f'''
                 UPDATE {table}
-                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE finnkode NOT IN ({placeholders}) AND is_active = 1
+                SET search_hit = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE finnkode NOT IN ({placeholders}) AND search_hit = 1
             ''', active_finnkodes)
         else:
             cursor.execute(f'''
                 UPDATE {table}
-                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE is_active = 1
+                SET search_hit = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE search_hit = 1
             ''')
         
         deactivated = cursor.rowcount
@@ -367,12 +393,12 @@ class PropertyDatabase:
         conn = self.get_connection()
         
         if as_dataframe:
-            df = pd.read_sql_query(f'SELECT * FROM {table} WHERE is_active = 1 ORDER BY scraped_at DESC', conn)
+            df = pd.read_sql_query(f'SELECT * FROM {table} WHERE search_hit = 1 ORDER BY scraped_at DESC', conn)
             conn.close()
             return df
         else:
             cursor = conn.cursor()
-            cursor.execute(f'SELECT * FROM {table} WHERE is_active = 1 ORDER BY scraped_at DESC')
+            cursor.execute(f'SELECT * FROM {table} WHERE search_hit = 1 ORDER BY scraped_at DESC')
             rows = cursor.fetchall()
             conn.close()
             return rows
@@ -383,7 +409,7 @@ class PropertyDatabase:
         
         df = pd.read_sql_query(f'''
             SELECT * FROM {table} 
-            WHERE is_active = 1 AND exported_to_sheets = 0 
+            WHERE search_hit = 1 AND exported_to_sheets = 0 
             ORDER BY scraped_at DESC
         ''', conn)
         conn.close()
@@ -413,8 +439,11 @@ class PropertyDatabase:
     
     def update_eiendom_status(self, finnkode: str, new_status: str):
         """
-        Update the tilgjengelighet (status) for a property listing.
-        Also updates is_active based on status and timestamp.
+        Update tilgjengelighet (status) for a property listing.
+
+        Note:
+            search_hit is managed by search/scrape matching logic
+            (insert_or_update_eiendom + mark_inactive), not by status refresh.
         
         Args:
             finnkode: The FINN code for the listing
@@ -422,16 +451,12 @@ class PropertyDatabase:
         """
         conn = self.get_connection()
         cursor = conn.cursor()
-        
-        # Determine is_active based on status
-        # If status is 'Solgt', mark as inactive, otherwise keep as active
-        is_active = 0 if new_status and 'Solgt' in str(new_status) else 1
-        
+
         cursor.execute('''
             UPDATE eiendom
-            SET tilgjengelighet = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+            SET tilgjengelighet = ?, updated_at = CURRENT_TIMESTAMP
             WHERE finnkode = ?
-        ''', (new_status, is_active, finnkode))
+        ''', (new_status, finnkode))
         
         conn.commit()
         conn.close()
@@ -472,19 +497,24 @@ class PropertyDatabase:
                 e.info_construction_year as "Byggeår",
                 ep.lat as "LAT",
                 ep.lng as "LNG",
-                ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
-                ep.pendl_morn_brj as "PENDL MORN BRJ",
-                ep.bil_morn_brj as "BIL MORN BRJ",
-                ep.pendl_dag_brj as "PENDL DAG BRJ",
-                ep.bil_dag_brj as "BIL DAG BRJ",
-                ep.pendl_morn_mvv as "PENDL MORN MVV",
-                ep.bil_morn_mvv as "BIL MORN MVV",
-                ep.pendl_dag_mvv as "PENDL DAG MVV",
-                ep.bil_dag_mvv as "BIL DAG MVV",
+                COALESCE(ep.pendl_morn_brj, ep_src.pendl_morn_brj) as "PENDL MORN BRJ",
+                COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
+                COALESCE(ep.pendl_dag_brj, ep_src.pendl_dag_brj) as "PENDL DAG BRJ",
+                COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
+                COALESCE(ep.pendl_morn_mvv, ep_src.pendl_morn_mvv) as "PENDL MORN MVV",
+                COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
+                COALESCE(ep.pendl_dag_mvv, ep_src.pendl_dag_mvv) as "PENDL DAG MVV",
+                COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
+                COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
+                COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
+                COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
+                COALESCE(ep.bil_dag_cntr, ep_src.bil_dag_cntr) as "BIL DAG CNTR",
+                ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE",
                 ep.google_maps_url as "GOOGLE_MAPS_URL"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
             WHERE 1=1
         '''
 
@@ -493,18 +523,47 @@ class PropertyDatabase:
             query += " AND e.pris <= ?"
             params.append(MAX_PRICE)
 
-        query += " ORDER BY e.is_active DESC, e.scraped_at DESC"
+        query += " ORDER BY e.search_hit DESC, e.scraped_at DESC"
 
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         
         # Convert numeric columns back to int (pandas reads them as float64)
         # Keep commute-time columns empty when missing (no fillna(0)).
-        numeric_columns = ['Pris', 'AREAL', 'PRIS KVM']
+        numeric_columns = ['Pris', 'PRIS KVM']
         for col in numeric_columns:
             if col in df.columns:
                 df[col] = df[col].fillna(0).astype(int)
         
+        return df
+
+    def get_eiendom_for_status_refresh(self, only_inactive: bool = False) -> pd.DataFrame:
+        """Get listings for FINN status refresh checks.
+
+        Args:
+            only_inactive: If True, only include listings with search_hit = 0.
+        """
+        conn = self.get_connection()
+        query = '''
+            SELECT
+                e.finnkode as "Finnkode",
+                e.url as "URL",
+                e.tilgjengelighet as "Tilgjengelighet",
+                COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
+                e.search_hit as "search_hit"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            WHERE e.url IS NOT NULL AND TRIM(e.url) != ''
+        '''
+
+        params = []
+        if only_inactive:
+            query += " AND e.search_hit = 0"
+
+        query += " ORDER BY e.search_hit ASC, e.scraped_at DESC"
+
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
         return df
 
     def get_unlisted_eiendom_for_sheets(self) -> pd.DataFrame:
@@ -541,20 +600,25 @@ class PropertyDatabase:
                 e.info_property_type as "Boligtype",
                 ep.lat as "LAT",
                 ep.lng as "LNG",
-                ep.areal as "AREAL",
                 e.pris_kvm as "PRIS KVM",
-                ep.pendl_morn_brj as "PENDL MORN BRJ",
-                ep.bil_morn_brj as "BIL MORN BRJ",
-                ep.pendl_dag_brj as "PENDL DAG BRJ",
-                ep.bil_dag_brj as "BIL DAG BRJ",
-                ep.pendl_morn_mvv as "PENDL MORN MVV",
-                ep.bil_morn_mvv as "BIL MORN MVV",
-                ep.pendl_dag_mvv as "PENDL DAG MVV",
-                ep.bil_dag_mvv as "BIL DAG MVV",
+                COALESCE(ep.pendl_morn_brj, ep_src.pendl_morn_brj) as "PENDL MORN BRJ",
+                COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
+                COALESCE(ep.pendl_dag_brj, ep_src.pendl_dag_brj) as "PENDL DAG BRJ",
+                COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
+                COALESCE(ep.pendl_morn_mvv, ep_src.pendl_morn_mvv) as "PENDL MORN MVV",
+                COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
+                COALESCE(ep.pendl_dag_mvv, ep_src.pendl_dag_mvv) as "PENDL DAG MVV",
+                COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
+                COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
+                COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
+                COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
+                COALESCE(ep.bil_dag_cntr, ep_src.bil_dag_cntr) as "BIL DAG CNTR",
+                ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE",
                 ep.google_maps_url as "GOOGLE_MAPS_URL"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
-            WHERE e.is_active = 0 AND (e.tilgjengelighet IS NULL OR e.tilgjengelighet != 'Solgt')
+            LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
+            WHERE e.search_hit = 0 AND (e.tilgjengelighet IS NULL OR e.tilgjengelighet != 'Solgt')
         '''
 
         params = []
@@ -568,7 +632,7 @@ class PropertyDatabase:
         conn.close()
         
         # Convert numeric columns back to int (pandas reads them as float64)
-        numeric_columns = ['Pris', 'AREAL', 'PRIS KVM']
+        numeric_columns = ['Pris', 'PRIS KVM']
         for col in numeric_columns:
             if col in df.columns:
                 df[col] = df[col].fillna(0).astype(int)
@@ -585,14 +649,14 @@ class PropertyDatabase:
                 COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
                 e.postnummer as "Postnummer",
                 e.url as "URL",
-                e.is_active as "IsActive",
+                e.search_hit as "search_hit",
                 e.tilgjengelighet as "Tilgjengelighet",
                 ep.lat as "LAT",
                 ep.lng as "LNG"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             WHERE ep.lat IS NULL OR ep.lng IS NULL
-            ORDER BY e.is_active DESC, e.scraped_at DESC
+            ORDER BY e.search_hit DESC, e.scraped_at DESC
         '''
 
         df = pd.read_sql_query(query, conn)
@@ -646,12 +710,15 @@ class PropertyDatabase:
         return f"https://www.google.com/maps/place/{search_query}"
     
     def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str,
-                                         postnummer: str, areal: int = None,
+                                         postnummer: str,
                                          lat: float = None, lng: float = None,
                                          pendl_morn_brj: str = None, bil_morn_brj: str = None,
                                          pendl_dag_brj: str = None, bil_dag_brj: str = None,
                                          pendl_morn_mvv: str = None, bil_morn_mvv: str = None,
-                                         pendl_dag_mvv: str = None, bil_dag_mvv: str = None):
+                                         pendl_dag_mvv: str = None, bil_dag_mvv: str = None,
+                                         pendl_morn_cntr: str = None, bil_morn_cntr: str = None,
+                                         pendl_dag_cntr: str = None, bil_dag_cntr: str = None,
+                                         travel_copy_from_finnkode: str = None):
         """Insert or update processed location data for a property."""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -666,23 +733,32 @@ class PropertyDatabase:
         if existing:
             cursor.execute('''
                 UPDATE eiendom_processed
-                SET adresse_cleaned = ?, lat = ?, lng = ?, areal = ?, pendl_morn_brj = ?, bil_morn_brj = ?,
+                SET adresse_cleaned = ?, lat = ?, lng = ?, pendl_morn_brj = ?, bil_morn_brj = ?,
                     pendl_dag_brj = ?, bil_dag_brj = ?,
                     pendl_morn_mvv = ?, bil_morn_mvv = ?,
                     pendl_dag_mvv = ?, bil_dag_mvv = ?,
+                    pendl_morn_cntr = ?, bil_morn_cntr = ?,
+                    pendl_dag_cntr = ?, bil_dag_cntr = ?,
+                    travel_copy_from_finnkode = ?,
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, lat, lng, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+            ''', (adresse_cleaned, lat, lng, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                                     pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
+                                    pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
+                                    travel_copy_from_finnkode,
                   google_maps_url, finnkode))
         else:
             cursor.execute('''
                 INSERT INTO eiendom_processed
-                (finnkode, adresse_cleaned, lat, lng, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                                 pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, lat, lng, areal, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                                    pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv, google_maps_url))
+                (finnkode, adresse_cleaned, lat, lng, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+                                 pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
+                                 pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
+                                 travel_copy_from_finnkode, google_maps_url)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (finnkode, adresse_cleaned, lat, lng, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+                                    pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
+                                    pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
+                                    travel_copy_from_finnkode, google_maps_url))
         
         conn.commit()
         conn.close()
@@ -740,7 +816,7 @@ class PropertyDatabase:
         query = '''
             SELECT finnkode, adresse, postnummer, pendlevei 
             FROM eiendom 
-            WHERE is_active = 1
+            WHERE search_hit = 1
         '''
         df = pd.read_sql_query(query, conn)
         conn.close()
@@ -757,7 +833,6 @@ class PropertyDatabase:
                 finnkode,
                 adresse,
                 postnummer,
-                areal=None,
                 pendl_morn_brj=pendlevei,
                 bil_morn_brj=None
             )
@@ -816,16 +891,14 @@ class PropertyDatabase:
     def set_override(
         self,
         finnkode: str,
-        areal: int = None,
         pris: int = None,
         reason: str = None,
         adresse: str = None,
         postnummer: str = None,
     ):
-        """Set manual override for a property (adresse/postnummer/areal/pris)."""
+        """Set manual override for a property (adresse/postnummer/pris)."""
         return self.overrides.set_override(
             finnkode=finnkode,
-            areal=areal,
             pris=pris,
             reason=reason,
             adresse=adresse,
@@ -852,13 +925,13 @@ class PropertyDatabase:
         cursor.execute(f'SELECT COUNT(*) FROM {table}')
         total = cursor.fetchone()[0]
         
-        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE is_active = 1')
+        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE search_hit = 1')
         listed = cursor.fetchone()[0]
         
-        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE is_active = 0 AND tilgjengelighet != \'Solgt\'')
+        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE search_hit = 0 AND tilgjengelighet != \'Solgt\'')
         unlisted = cursor.fetchone()[0]
         
-        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE exported_to_sheets = 0 AND is_active = 1')
+        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE exported_to_sheets = 0 AND search_hit = 1')
         not_exported = cursor.fetchone()[0]
         
         conn.close()
@@ -898,6 +971,6 @@ if __name__ == "__main__":
         stats = db.get_stats(table)
         print(f"\n{table.upper()} stats:")
         print(f"  Total: {stats['total']}")
-        print(f"  Active: {stats['active']}")
-        print(f"  Inactive: {stats['inactive']}")
+        print(f"  Listed: {stats['listed']}")
+        print(f"  Unlisted: {stats['unlisted']}")
         print(f"  Not exported: {stats['not_exported']}")

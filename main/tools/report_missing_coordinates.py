@@ -25,13 +25,13 @@ def main() -> int:
     df = db.get_eiendom_missing_coordinates()
 
     total = len(df)
-    active_count = int(df["IsActive"].fillna(0).astype(int).sum()) if not df.empty else 0
+    active_count = int(df["search_hit"].fillna(0).astype(int).sum()) if not df.empty else 0
 
     print("=" * 72)
     print("Missing Coordinates Report")
     print("=" * 72)
     print(f"Total missing LAT/LNG: {total}")
-    print(f"Active listings missing LAT/LNG: {active_count}")
+    print(f"Search-hit listings missing LAT/LNG: {active_count}")
 
     if total == 0:
         print("All listings have coordinates.")

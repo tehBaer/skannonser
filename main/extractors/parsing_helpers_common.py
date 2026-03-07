@@ -94,7 +94,8 @@ def getAddress(soup):
 
 def getArea(part):
     area = part.strip()
-    area_match = re.search(r'(\d+)', area)
+    # Norwegian post numbers are 4 digits and may begin with 0 (e.g. 0581).
+    area_match = re.search(r'\b(\d{4})\b', area)
     area = area_match.group(1) if area_match else None
     return area
 

@@ -56,7 +56,7 @@ def refresh_listing(finnkode: str, url: str, project_name: str = "data/eiendom")
         }
 
 
-def refresh_all_listings(db_path: str = None, delay: float = 0.2, limit: int = None):
+def refresh_all_listings(db_path: str = None, delay: float = 0.2, limit: int = None, only_inactive: bool = False):
     """
     Re-download all listings that would appear in Google Sheets.
     
@@ -72,15 +72,18 @@ def refresh_all_listings(db_path: str = None, delay: float = 0.2, limit: int = N
     # Initialize database
     db = PropertyDatabase(db_path)
     
-    # Get all listings that would appear in sheets
-    df = db.get_eiendom_for_sheets()
+    # Get listings for refresh (all or only search_hit=0)
+    df = db.get_eiendom_for_status_refresh(only_inactive=only_inactive)
     
     if df.empty:
         print("No listings to refresh")
         return
     
     total = len(df) if limit is None else min(limit, len(df))
-    print(f"Found {len(df)} listings in database")
+    if only_inactive:
+        print(f"Found {len(df)} inactive listings in database")
+    else:
+        print(f"Found {len(df)} listings in database")
     if limit:
         print(f"Limiting to {limit} listings for testing")
         df = df.head(limit)
@@ -167,7 +170,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Refresh listings from FINN.no')
     parser.add_argument('--limit', type=int, help='Limit number of listings to refresh (for testing)')
     parser.add_argument('--delay', type=float, default=0.2, help='Delay between requests in seconds (default: 0.2)')
+    parser.add_argument('--only-inactive', action='store_true', help='Only refresh listings with search_hit=0')
     
     args = parser.parse_args()
     
-    refresh_all_listings(limit=args.limit, delay=args.delay)
+    refresh_all_listings(limit=args.limit, delay=args.delay, only_inactive=args.only_inactive)

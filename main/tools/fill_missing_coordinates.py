@@ -36,29 +36,117 @@ def resolve_api_key(cli_key: Optional[str]) -> str:
     return ""
 
 
+def normalize_postal_code(postal_code: str) -> str:
+    """Normalize Norwegian postal codes while preserving leading zeros."""
+    raw = str(postal_code or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return ""
+    if len(digits) <= 4:
+        return digits.zfill(4)
+    return digits
+
+
+def _extract_result_country_and_postal(result: dict) -> Tuple[str, str]:
+    """Extract country code and postal code from a geocoder result."""
+    country = ""
+    postal = ""
+    for comp in result.get("address_components", []):
+        types = comp.get("types", [])
+        if "country" in types:
+            country = str(comp.get("short_name") or "").upper()
+        if "postal_code" in types:
+            postal = normalize_postal_code(comp.get("long_name", ""))
+    return country, postal
+
+
+def _result_has_street_level_signal(result: dict) -> bool:
+    """Return True when geocoder result looks like a real street-level address."""
+    result_types = set(result.get("types", []))
+    if result_types.intersection({"street_address", "premise", "subpremise", "route"}):
+        return True
+
+    for comp in result.get("address_components", []):
+        comp_types = set(comp.get("types", []))
+        if comp_types.intersection({"street_number", "route", "premise", "subpremise"}):
+            return True
+
+    return False
+
+
 def geocode_address(address: str, postal_code: str, api_key: str, timeout_sec: float = 10.0) -> Optional[Tuple[float, float]]:
-    query = ", ".join([p for p in [str(address or "").strip(), str(postal_code or "").strip(), "Norway"] if p])
-    if not query:
+    normalized_postal = normalize_postal_code(postal_code)
+    cleaned_address = str(address or "").strip()
+    if not cleaned_address:
         return None
 
-    resp = requests.get(
-        "https://maps.googleapis.com/maps/api/geocode/json",
-        params={"address": query, "key": api_key},
-        timeout=timeout_sec,
-    )
+    def _request_and_choose(request_postal: Optional[str]) -> Optional[dict]:
+        query_parts = [cleaned_address, "Norway"]
+        if request_postal:
+            query_parts.insert(1, request_postal)
 
-    if resp.status_code != 200:
+        params = {
+            "address": ", ".join(query_parts),
+            "key": api_key,
+            "language": "no",
+            "region": "no",
+            "components": f"country:NO|postal_code:{request_postal}" if request_postal else "country:NO",
+        }
+
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params=params,
+            timeout=timeout_sec,
+        )
+
+        if resp.status_code != 200:
+            return None
+
+        payload = resp.json()
+        if payload.get("status") != "OK":
+            return None
+
+        results = payload.get("results", [])
+        if not results:
+            return None
+
+        for result in results:
+            country, result_postal = _extract_result_country_and_postal(result)
+            if country and country != "NO":
+                continue
+            # Only enforce postal code exact match for the strict pass.
+            if request_postal and result_postal and result_postal != request_postal:
+                continue
+
+            # Fallback pass: reject low-quality or clearly wrong-region matches.
+            if not request_postal:
+                if not _result_has_street_level_signal(result):
+                    continue
+
+                # When we know the desired postal code, avoid results from clearly different regions.
+                if normalized_postal and result_postal:
+                    if len(normalized_postal) >= 2 and len(result_postal) >= 2:
+                        if normalized_postal[:2] != result_postal[:2]:
+                            continue
+
+                # Broad approximate matches often point to country/area centroids.
+                location_type = str(result.get("geometry", {}).get("location_type", "")).upper()
+                if location_type == "APPROXIMATE" and normalized_postal != result_postal:
+                    continue
+
+            return result
+
         return None
 
-    payload = resp.json()
-    if payload.get("status") != "OK":
+    # First pass: strict (postal + country). Fallback: address + country only.
+    chosen = _request_and_choose(normalized_postal)
+    if not chosen:
+        chosen = _request_and_choose(None)
+
+    if not chosen:
         return None
 
-    results = payload.get("results", [])
-    if not results:
-        return None
-
-    loc = results[0].get("geometry", {}).get("location", {})
+    loc = chosen.get("geometry", {}).get("location", {})
     lat = loc.get("lat")
     lng = loc.get("lng")
     if lat is None or lng is None:
@@ -86,7 +174,7 @@ def main() -> int:
     df = db.get_eiendom_missing_coordinates()
 
     if not args.include_inactive and not df.empty:
-        df = df[df["IsActive"].fillna(0).astype(int) == 1]
+        df = df[df["search_hit"].fillna(0).astype(int) == 1]
 
     if args.limit > 0:
         df = df.head(args.limit)

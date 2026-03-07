@@ -101,8 +101,6 @@ def get_everything_updated(df_saved: pd.DataFrame):
                 cleaned_df.loc[index, "Leiepris"] = original_row.iloc[0]["Leiepris"]
                 cleaned_df.loc[index, "Depositum"] = original_row.iloc[0]["Depositum"]
                 cleaned_df.loc[index, "URL"] = original_row.iloc[0]["URL"]
-                value = pd.to_numeric(original_row.iloc[0]["AREAL"], errors="coerce")
-                cleaned_df.loc[index, "AREAL"] = value
                 value = pd.to_numeric(original_row.iloc[0]["PRIS KVM"], errors="coerce")
                 cleaned_df.loc[index, "PRIS KVM"] = value
 

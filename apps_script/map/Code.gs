@@ -7,6 +7,7 @@
 
 const DEFAULT_LISTINGS_SHEET = 'Eie';
 const DEFAULT_STATIONS_SHEET = 'Stations';
+const DEFAULT_SEARCH_BUFFER_KM = 5;
 const NORWAY_BOUNDS = {
   minLat: 57,
   maxLat: 72,
@@ -88,7 +89,8 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
   }
 
   const respectSheetFilters = Boolean(options && options.respectSheetFilters === true);
-  const listingResult = getVisibleListings_(listingSheet, respectSheetFilters);
+  const searchBounds = getSearchBounds_(stationSheet);
+  const listingResult = getVisibleListings_(listingSheet, respectSheetFilters, searchBounds);
   const tAfterListings = Date.now();
 
   const stations = stationSheet ? getStations_(stationSheet) : [];
@@ -120,6 +122,7 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
       missingLatLngVisibleRows: listingResult.meta.missingLatLngVisibleRows,
       excludedOutsideNorway: listingResult.meta.excludedOutsideNorway,
       outsideNorwaySamples: listingResult.meta.outsideNorwaySamples,
+      searchBounds: listingResult.meta.searchBounds,
       timingsMs: timingsMs,
     },
   };
@@ -141,7 +144,7 @@ function resolveSpreadsheet_() {
   throw new Error('Spreadsheet not configured. Set Script Property SPREADSHEET_ID to your Google Sheet ID.');
 }
 
-function getVisibleListings_(sheet, respectSheetFilters) {
+function getVisibleListings_(sheet, respectSheetFilters, searchBounds) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   const maxRowsToScan = 5000;
@@ -161,6 +164,7 @@ function getVisibleListings_(sheet, respectSheetFilters) {
         missingLatLngVisibleRows: 0,
         excludedOutsideNorway: 0,
         outsideNorwaySamples: [],
+        searchBounds: searchBounds,
       },
     };
   }
@@ -215,7 +219,7 @@ function getVisibleListings_(sheet, respectSheetFilters) {
     const lngValue = lngIdx >= 0 ? toNumberOrNull_(row[lngIdx]) : null;
     if (latValue == null || lngValue == null) {
       missingLatLngVisibleRows += 1;
-    } else if (!isInNorwayBounds_(latValue, lngValue)) {
+    } else if (!isWithinBounds_(latValue, lngValue, searchBounds)) {
       excludedOutsideNorway += 1;
       if (outsideNorwaySamples.length < 5) {
         outsideNorwaySamples.push({
@@ -257,17 +261,74 @@ function getVisibleListings_(sheet, respectSheetFilters) {
       missingLatLngVisibleRows: missingLatLngVisibleRows,
       excludedOutsideNorway: excludedOutsideNorway,
       outsideNorwaySamples: outsideNorwaySamples,
+      searchBounds: searchBounds,
     },
   };
 }
 
-function isInNorwayBounds_(lat, lng) {
+function isWithinBounds_(lat, lng, bounds) {
+  const target = bounds || NORWAY_BOUNDS;
   return (
-    lat >= NORWAY_BOUNDS.minLat &&
-    lat <= NORWAY_BOUNDS.maxLat &&
-    lng >= NORWAY_BOUNDS.minLng &&
-    lng <= NORWAY_BOUNDS.maxLng
+    lat >= target.minLat &&
+    lat <= target.maxLat &&
+    lng >= target.minLng &&
+    lng <= target.maxLng
   );
+}
+
+function getSearchBounds_(stationSheet) {
+  if (!stationSheet) {
+    return NORWAY_BOUNDS;
+  }
+
+  const stations = getStations_(stationSheet);
+  if (!stations.length) {
+    return NORWAY_BOUNDS;
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const configuredBuffer = Number(props.getProperty('SEARCH_AREA_BUFFER_KM'));
+  const bufferKm = Number.isFinite(configuredBuffer) && configuredBuffer > 0
+    ? configuredBuffer
+    : DEFAULT_SEARCH_BUFFER_KM;
+
+  return buildBufferedBounds_(stations, bufferKm);
+}
+
+function buildBufferedBounds_(stations, bufferKm) {
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+
+  for (let i = 0; i < stations.length; i++) {
+    const s = stations[i];
+    const lat = Number(s.LAT);
+    const lng = Number(s.LNG);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      continue;
+    }
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLng = Math.min(minLng, lng);
+    maxLng = Math.max(maxLng, lng);
+  }
+
+  if (!Number.isFinite(minLat) || !Number.isFinite(maxLat) || !Number.isFinite(minLng) || !Number.isFinite(maxLng)) {
+    return NORWAY_BOUNDS;
+  }
+
+  const meanLat = (minLat + maxLat) / 2;
+  const latBufferDeg = bufferKm / 111;
+  const lngKmPerDeg = 111 * Math.max(0.2, Math.cos((meanLat * Math.PI) / 180));
+  const lngBufferDeg = bufferKm / lngKmPerDeg;
+
+  return {
+    minLat: minLat - latBufferDeg,
+    maxLat: maxLat + latBufferDeg,
+    minLng: minLng - lngBufferDeg,
+    maxLng: maxLng + lngBufferDeg,
+  };
 }
 
 function getStations_(sheet) {
