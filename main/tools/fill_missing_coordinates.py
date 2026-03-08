@@ -80,7 +80,7 @@ def geocode_address(address: str, postal_code: str, api_key: str, timeout_sec: f
     if not cleaned_address:
         return None
 
-    def _request_and_choose(request_postal: Optional[str]) -> Optional[dict]:
+    def _request_and_choose(request_postal: Optional[str], strict_postal: bool) -> Optional[dict]:
         query_parts = [cleaned_address, "Norway"]
         if request_postal:
             query_parts.insert(1, request_postal)
@@ -90,7 +90,11 @@ def geocode_address(address: str, postal_code: str, api_key: str, timeout_sec: f
             "key": api_key,
             "language": "no",
             "region": "no",
-            "components": f"country:NO|postal_code:{request_postal}" if request_postal else "country:NO",
+            "components": (
+                f"country:NO|postal_code:{request_postal}"
+                if strict_postal and request_postal
+                else "country:NO"
+            ),
         }
 
         resp = requests.get(
@@ -114,12 +118,12 @@ def geocode_address(address: str, postal_code: str, api_key: str, timeout_sec: f
             country, result_postal = _extract_result_country_and_postal(result)
             if country and country != "NO":
                 continue
-            # Only enforce postal code exact match for the strict pass.
-            if request_postal and result_postal and result_postal != request_postal:
-                continue
-
-            # Fallback pass: reject low-quality or clearly wrong-region matches.
-            if not request_postal:
+            # Strict pass: require exact postal match when geocoder returns a postal.
+            if strict_postal:
+                if request_postal and result_postal and result_postal != request_postal:
+                    continue
+            else:
+                # Relaxed/fallback pass: reject low-quality or clearly wrong-region matches.
                 if not _result_has_street_level_signal(result):
                     continue
 
@@ -138,10 +142,14 @@ def geocode_address(address: str, postal_code: str, api_key: str, timeout_sec: f
 
         return None
 
-    # First pass: strict (postal + country). Fallback: address + country only.
-    chosen = _request_and_choose(normalized_postal)
+    # First pass: strict (postal + country + postal component + exact postal).
+    chosen = _request_and_choose(normalized_postal, True)
+    # Second pass: relaxed (postal in query, country component only).
+    if not chosen and normalized_postal:
+        chosen = _request_and_choose(normalized_postal, False)
+    # Final fallback: address + country only.
     if not chosen:
-        chosen = _request_and_choose(None)
+        chosen = _request_and_choose(None, False)
 
     if not chosen:
         return None
@@ -174,7 +182,19 @@ def main() -> int:
     df = db.get_eiendom_missing_coordinates()
 
     if not args.include_inactive and not df.empty:
-        df = df[df["search_hit"].fillna(0).astype(int) == 1]
+        # Keep geocoding scope aligned with what is visible in Sheets by default.
+        visible_statuses = {"solgt", "inaktiv"}
+        status_normalized = (
+            df["Tilgjengelighet"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        df = df[
+            (df["stale"].fillna(0).astype(int) == 1)
+            & (~status_normalized.isin(visible_statuses))
+        ]
 
     if args.limit > 0:
         df = df.head(args.limit)
@@ -195,47 +215,78 @@ def main() -> int:
         return 1
 
     sleep_sec = 60.0 / args.rpm
+    started_at = time.time()
 
     ok = 0
     failed = 0
     skipped = 0
 
-    for i, row in df.iterrows():
-        finnkode = str(row.get("Finnkode", "")).strip()
-        adresse = str(row.get("ADRESSE", "")).strip()
-        postnummer = str(row.get("Postnummer", "")).strip()
+    def _format_duration(seconds: float) -> str:
+        total_sec = max(int(seconds), 0)
+        hours, rem = divmod(total_sec, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
 
-        if not finnkode or not adresse:
-            skipped += 1
-            print(f"- SKIP #{finnkode or '?'} missing finnkode/address")
-            continue
+    interrupted = False
+    try:
+        for seq, (_, row) in enumerate(df.iterrows(), start=1):
+            elapsed = time.time() - started_at
+            processed_before = seq - 1
+            avg_per_row = elapsed / processed_before if processed_before > 0 else 0.0
+            remaining_rows = total - processed_before
+            eta = avg_per_row * remaining_rows if avg_per_row > 0 else 0.0
+            pct = (processed_before / total) * 100 if total else 100.0
 
-        result = geocode_address(adresse, postnummer, api_key)
-        if not result:
-            failed += 1
-            print(f"- FAIL #{finnkode} {adresse}")
-            time.sleep(sleep_sec)
-            continue
+            finnkode = str(row.get("Finnkode", "")).strip()
+            adresse = str(row.get("ADRESSE", "")).strip()
+            postnummer = str(row.get("Postnummer", "")).strip()
 
-        lat, lng = result
-        if args.dry_run:
-            print(f"- DRY #{finnkode} -> ({lat:.6f}, {lng:.6f})")
-            ok += 1
-        else:
-            changed = db.set_eiendom_coordinates(finnkode, lat, lng)
-            if changed:
-                ok += 1
-                print(f"- OK  #{finnkode} -> ({lat:.6f}, {lng:.6f})")
-            else:
+            progress_prefix = (
+                f"[{seq}/{total} | {pct:5.1f}% | elapsed {_format_duration(elapsed)} | "
+                f"eta {_format_duration(eta)}]"
+            )
+
+            if not finnkode or not adresse:
+                skipped += 1
+                print(f"{progress_prefix} - SKIP #{finnkode or '?'} missing finnkode/address")
+                continue
+
+            result = geocode_address(adresse, postnummer, api_key)
+            if not result:
                 failed += 1
-                print(f"- FAIL #{finnkode} DB update")
+                print(f"{progress_prefix} - FAIL #{finnkode} {adresse}")
+                time.sleep(sleep_sec)
+                continue
 
-        time.sleep(sleep_sec)
+            lat, lng = result
+            if args.dry_run:
+                print(f"{progress_prefix} - DRY #{finnkode} -> ({lat:.6f}, {lng:.6f})")
+                ok += 1
+            else:
+                # Each successful row is committed immediately in set_eiendom_coordinates().
+                changed = db.set_eiendom_coordinates(finnkode, lat, lng)
+                if changed:
+                    ok += 1
+                    print(f"{progress_prefix} - OK  #{finnkode} -> ({lat:.6f}, {lng:.6f})")
+                else:
+                    failed += 1
+                    print(f"{progress_prefix} - FAIL #{finnkode} DB update")
+
+            time.sleep(sleep_sec)
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\nInterrupted by user (Ctrl+C). Already-saved rows are preserved.")
 
     print("\nSummary")
     print(f"  Updated: {ok}")
     print(f"  Failed:  {failed}")
     print(f"  Skipped: {skipped}")
+    print(f"  Elapsed: {_format_duration(time.time() - started_at)}")
+
+    if interrupted:
+        return 130
 
     return 0 if failed == 0 else 2
 

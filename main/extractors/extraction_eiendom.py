@@ -4,10 +4,10 @@ from pandas import DataFrame
 
 try:
     from main.extractors.ad_html_loader import load_or_fetch_ad_html
-    from main.extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership, getPropertyType
+    from main.extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership, getPropertyType, getImageUrl
 except ImportError:
     from extractors.ad_html_loader import load_or_fetch_ad_html
-    from extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership, getPropertyType
+    from extractors.parsing_helpers_common import getAddress, getBuyPrice, getStatus, getAllSizes, getConstructionYear, getPlotOwnership, getPropertyType, getImageUrl
 
 
 def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True, force_save=False):
@@ -22,6 +22,7 @@ def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True
     construction_year = getConstructionYear(soup)
     plot_ownership = getPlotOwnership(soup)
     property_type = getPropertyType(soup)
+    image_url = getImageUrl(soup)
     buy_price = getBuyPrice(soup)
     tilgjengelig = getStatus(soup)
 
@@ -33,6 +34,7 @@ def extract_eiendom_data(url, index, projectName, total=None, auto_save_new=True
         'Postnummer': area,
         'Pris': buy_price,
         'URL': url,
+        'IMAGE_URL': image_url,
         'Primærrom': sizes.get('info-primary-area'),
         'Internt bruksareal (BRA-i)': sizes.get('info-usable-i-area'),
         'Bruksareal': sizes.get('info-usable-area'),

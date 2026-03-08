@@ -1,4 +1,4 @@
-PYTHON ?= python
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,$(shell command -v python3 || command -v python))
 REPO ?=
 ARTIFACT_PREFIX ?= html-delta-
 ARTIFACT_DEST ?= artifacts/github
@@ -7,6 +7,7 @@ ARTIFACT_OLDER_DAYS ?= 7
 COORDS_LIMIT ?= 100
 COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
+COORDS_CONFIRM ?= 1
 
 .PHONY: help gha sheet travel brj mvv full refresh refresh-inactive artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix map-guide map-push map-deploy coords-missing coords-fill coords-import-sheet addr-overrides
 
@@ -15,6 +16,9 @@ help:
 	@echo "  make gha      - Run CI-safe scrape (scrape + DB update, no Google Directions API)"
 	@echo "  make coords-fill - Geocode missing LAT/LNG in DB"
 	@echo "                     Optional: COORDS_LIMIT=0 COORDS_RPM=40 COORDS_INCLUDE_INACTIVE=1"
+	@echo "  make full     - Full manual run (scrape + coords fill + sheet sync)"
+	@echo "                     Prompts before geocoding API call by default; set COORDS_CONFIRM=0 to skip prompt"
+	@echo "                     Geocodes all missing coordinates (no limit)"
 	@echo "  make coords-import-sheet - Import existing LAT/LNG from sheet back into DB"
 	@echo "  make travel   - Fill missing travel-time fields only (manual)"
 	@echo "  make brj      - Fill missing BRJ transit travel fields only"
@@ -23,7 +27,6 @@ help:
 
 	@echo "  make refresh  - Re-download listing pages and refresh statuses"
 	@echo "  make refresh-inactive - Re-download only listings with search_hit=0"
-	@echo "  make full     - Full manual run (includes optional travel API prompts)"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
 	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
 	@echo "  make map-guide - Open setup guide for interactive map"
@@ -49,7 +52,7 @@ mvv:
 	$(PYTHON) main/tools/manual_fill_missing_travel_times.py --target mvv
 
 full:
-	$(PYTHON) main/tools/manage.py run eiendom
+	COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/tools/manage.py run eiendom
 
 refresh:
 	$(PYTHON) main/sync/refresh_listings.py

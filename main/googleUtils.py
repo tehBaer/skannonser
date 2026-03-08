@@ -2,6 +2,7 @@
 import os.path
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import csv
@@ -15,6 +16,30 @@ SPREADSHEET_ID = "1ggwnC3eYklqWnHx9ebWWOIDyCUyBFqs40KrSFWUaB3Y"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def get_service_account_credentials(scopes):
+    """Return service-account credentials when configured, else None.
+
+    Supported locations:
+    - env GOOGLE_SERVICE_ACCOUNT_FILE
+    - main/config/service_account.json
+    """
+    sa_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+    candidate_paths = []
+    if sa_path:
+        candidate_paths.append(sa_path)
+
+    candidate_paths.extend([
+        os.path.join(SCRIPT_DIR, "config", "service_account.json"),
+        os.path.join(SCRIPT_DIR, "config", "thumbnail-service-key.json"),
+    ])
+
+    for path in candidate_paths:
+        if os.path.exists(path):
+            return service_account.Credentials.from_service_account_file(path, scopes=scopes)
+
+    return None
+
+
 def _is_invalid_grant_error(error: Exception) -> bool:
     message = str(error).lower()
     return "invalid_grant" in message or "expired or revoked" in message
@@ -26,6 +51,11 @@ def _remove_token_file(token_path: str) -> None:
 
 def get_credentials():
     """Retrieve or refresh Google API credentials."""
+    # Prefer service-account auth when configured (no interactive login/token refresh needed).
+    service_account_creds = get_service_account_credentials(SCOPES)
+    if service_account_creds is not None:
+        return service_account_creds
+
     creds = None
     token_path = os.path.join(SCRIPT_DIR, "config", "token.json")
     credentials_path = os.path.join(SCRIPT_DIR, "config", "credentials.json")

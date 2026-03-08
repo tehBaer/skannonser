@@ -140,3 +140,32 @@ def getPropertyType(soup):
         return value_element.get_text(strip=True)
 
     return element.get_text(strip=True)
+
+
+def getImageUrl(soup):
+    """Extract primary listing image URL from FINN ad HTML."""
+    if not soup:
+        return ""
+
+    # Preferred: social preview metadata.
+    meta_selectors = [
+        ('meta', {'property': 'og:image'}),
+        ('meta', {'name': 'og:image'}),
+        ('meta', {'name': 'twitter:image'}),
+    ]
+    for tag_name, attrs in meta_selectors:
+        meta = soup.find(tag_name, attrs=attrs)
+        if not meta:
+            continue
+        content = (meta.get('content') or '').strip()
+        if content.startswith('http://') or content.startswith('https://'):
+            return content
+
+    # Fallback: image URLs embedded in scripts.
+    script_text = soup.get_text(' ', strip=False)
+    if script_text:
+        match = re.search(r'https://images\.finncdn\.no[^"\'\s>]+', script_text)
+        if match:
+            return match.group(0)
+
+    return ""

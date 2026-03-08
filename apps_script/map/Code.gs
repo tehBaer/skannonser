@@ -7,7 +7,8 @@
 
 const DEFAULT_LISTINGS_SHEET = 'Eie';
 const DEFAULT_STATIONS_SHEET = 'Stations';
-const DEFAULT_SEARCH_BUFFER_KM = 5;
+const DEFAULT_FINN_POLYGON_SHEET = 'Finn Polygon Coords';
+const SEARCH_POLYGON_BUFFER_KM = 2;
 const NORWAY_BOUNDS = {
   minLat: 57,
   maxLat: 72,
@@ -89,8 +90,9 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
   }
 
   const respectSheetFilters = Boolean(options && options.respectSheetFilters === true);
-  const searchBounds = getSearchBounds_(stationSheet);
-  const listingResult = getVisibleListings_(listingSheet, respectSheetFilters, searchBounds);
+  const searchPolygon = getFinnSearchPolygon_();
+  const searchBounds = getSearchBoundsFromPolygon_(searchPolygon, SEARCH_POLYGON_BUFFER_KM);
+  const listingResult = getVisibleListings_(listingSheet, respectSheetFilters, searchBounds, searchPolygon);
   const tAfterListings = Date.now();
 
   const stations = stationSheet ? getStations_(stationSheet) : [];
@@ -122,10 +124,58 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
       missingLatLngVisibleRows: listingResult.meta.missingLatLngVisibleRows,
       excludedOutsideNorway: listingResult.meta.excludedOutsideNorway,
       outsideNorwaySamples: listingResult.meta.outsideNorwaySamples,
+      outsideNorwayRows: listingResult.meta.outsideNorwayRows,
       searchBounds: listingResult.meta.searchBounds,
+      searchPolygon: searchPolygon,
       timingsMs: timingsMs,
     },
   };
+}
+
+function getFinnSearchPolygon_() {
+  // Sheet-only behavior: always read polygon points from dedicated sheet.
+  const props = PropertiesService.getScriptProperties();
+  const polygonSheetName = (props.getProperty('FINN_POLYGON_SHEET') || DEFAULT_FINN_POLYGON_SHEET).trim();
+  const ss = resolveSpreadsheet_();
+  const polygonSheet = ss.getSheetByName(polygonSheetName);
+  if (!polygonSheet) {
+    return [];
+  }
+
+  return readPolygonFromSheet_(polygonSheet);
+}
+
+function readPolygonFromSheet_(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 2) {
+    return [];
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(normalizeHeader_);
+  let latIdx = headers.indexOf('LAT');
+  let lngIdx = headers.indexOf('LNG');
+
+  // Allow legacy order-based layouts: A=Order, B=LAT, C=LNG.
+  if (latIdx < 0 && lastCol >= 2) latIdx = 1;
+  if (lngIdx < 0 && lastCol >= 3) lngIdx = 2;
+  if (latIdx < 0 || lngIdx < 0) {
+    return [];
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const points = [];
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const lat = toNumberOrNull_(row[latIdx]);
+    const lng = toNumberOrNull_(row[lngIdx]);
+    if (lat == null || lng == null) {
+      continue;
+    }
+    points.push({ lat: lat, lng: lng });
+  }
+
+  return points;
 }
 
 function resolveSpreadsheet_() {
@@ -144,7 +194,7 @@ function resolveSpreadsheet_() {
   throw new Error('Spreadsheet not configured. Set Script Property SPREADSHEET_ID to your Google Sheet ID.');
 }
 
-function getVisibleListings_(sheet, respectSheetFilters, searchBounds) {
+function getVisibleListings_(sheet, respectSheetFilters, searchBounds, searchPolygon) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   const maxRowsToScan = 5000;
@@ -164,6 +214,7 @@ function getVisibleListings_(sheet, respectSheetFilters, searchBounds) {
         missingLatLngVisibleRows: 0,
         excludedOutsideNorway: 0,
         outsideNorwaySamples: [],
+        outsideNorwayRows: [],
         searchBounds: searchBounds,
       },
     };
@@ -189,6 +240,7 @@ function getVisibleListings_(sheet, respectSheetFilters, searchBounds) {
   let missingLatLngVisibleRows = 0;
   let excludedOutsideNorway = 0;
   const outsideNorwaySamples = [];
+  const outsideNorwayRows = [];
 
   for (let i = 0; i < values.length; i++) {
     const rowNumber = i + 2;
@@ -219,8 +271,15 @@ function getVisibleListings_(sheet, respectSheetFilters, searchBounds) {
     const lngValue = lngIdx >= 0 ? toNumberOrNull_(row[lngIdx]) : null;
     if (latValue == null || lngValue == null) {
       missingLatLngVisibleRows += 1;
-    } else if (!isWithinBounds_(latValue, lngValue, searchBounds)) {
+    } else if (!isWithinSearchArea_(latValue, lngValue, searchPolygon, searchBounds)) {
       excludedOutsideNorway += 1;
+      outsideNorwayRows.push({
+        Finnkode: finnkode,
+        ADRESSE: valueOrEmpty_(obj.ADRESSE || obj.Adresse),
+        URL: finnUrl,
+        LAT: latValue,
+        LNG: lngValue,
+      });
       if (outsideNorwaySamples.length < 5) {
         outsideNorwaySamples.push({
           Finnkode: finnkode,
@@ -241,6 +300,8 @@ function getVisibleListings_(sheet, respectSheetFilters, searchBounds) {
       Tilgjengelighet: valueOrEmpty_(obj.Tilgjengelighet),
       GOOGLE_MAPS_URL: parseUrl_(obj.GOOGLE_MAPS_URL),
       URL: finnUrl,
+      IMAGE_HOSTED_URL: parseUrl_(obj.IMAGE_HOSTED_URL),
+      IMAGE_URL: parseUrl_(obj.IMAGE_URL),
       LAT: latValue,
       LNG: lngValue,
       details: obj,
@@ -261,6 +322,7 @@ function getVisibleListings_(sheet, respectSheetFilters, searchBounds) {
       missingLatLngVisibleRows: missingLatLngVisibleRows,
       excludedOutsideNorway: excludedOutsideNorway,
       outsideNorwaySamples: outsideNorwaySamples,
+      outsideNorwayRows: outsideNorwayRows,
       searchBounds: searchBounds,
     },
   };
@@ -276,35 +338,20 @@ function isWithinBounds_(lat, lng, bounds) {
   );
 }
 
-function getSearchBounds_(stationSheet) {
-  if (!stationSheet) {
+function getSearchBoundsFromPolygon_(searchPolygon, bufferKm) {
+  if (!searchPolygon || searchPolygon.length < 3) {
     return NORWAY_BOUNDS;
   }
 
-  const stations = getStations_(stationSheet);
-  if (!stations.length) {
-    return NORWAY_BOUNDS;
-  }
-
-  const props = PropertiesService.getScriptProperties();
-  const configuredBuffer = Number(props.getProperty('SEARCH_AREA_BUFFER_KM'));
-  const bufferKm = Number.isFinite(configuredBuffer) && configuredBuffer > 0
-    ? configuredBuffer
-    : DEFAULT_SEARCH_BUFFER_KM;
-
-  return buildBufferedBounds_(stations, bufferKm);
-}
-
-function buildBufferedBounds_(stations, bufferKm) {
   let minLat = Infinity;
   let maxLat = -Infinity;
   let minLng = Infinity;
   let maxLng = -Infinity;
 
-  for (let i = 0; i < stations.length; i++) {
-    const s = stations[i];
-    const lat = Number(s.LAT);
-    const lng = Number(s.LNG);
+  for (let i = 0; i < searchPolygon.length; i++) {
+    const point = searchPolygon[i] || {};
+    const lat = Number(point.lat);
+    const lng = Number(point.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       continue;
     }
@@ -318,17 +365,124 @@ function buildBufferedBounds_(stations, bufferKm) {
     return NORWAY_BOUNDS;
   }
 
-  const meanLat = (minLat + maxLat) / 2;
-  const latBufferDeg = bufferKm / 111;
-  const lngKmPerDeg = 111 * Math.max(0.2, Math.cos((meanLat * Math.PI) / 180));
-  const lngBufferDeg = bufferKm / lngKmPerDeg;
+  const effectiveBufferKm = Number(bufferKm);
+  if (Number.isFinite(effectiveBufferKm) && effectiveBufferKm > 0) {
+    const avgLat = (minLat + maxLat) / 2;
+    const latBufferDeg = effectiveBufferKm / 111.32;
+    const cosLat = Math.max(0.1, Math.cos(avgLat * Math.PI / 180));
+    const lngBufferDeg = effectiveBufferKm / (111.32 * cosLat);
+    minLat -= latBufferDeg;
+    maxLat += latBufferDeg;
+    minLng -= lngBufferDeg;
+    maxLng += lngBufferDeg;
+  }
 
   return {
-    minLat: minLat - latBufferDeg,
-    maxLat: maxLat + latBufferDeg,
-    minLng: minLng - lngBufferDeg,
-    maxLng: maxLng + lngBufferDeg,
+    minLat: minLat,
+    maxLat: maxLat,
+    minLng: minLng,
+    maxLng: maxLng,
   };
+}
+
+function isWithinSearchArea_(lat, lng, searchPolygon, searchBounds) {
+  if (!isWithinBounds_(lat, lng, searchBounds)) {
+    return false;
+  }
+
+  if (!searchPolygon || searchPolygon.length < 3) {
+    // When no FINN polygon is configured, keep the coarse bounds fallback.
+    return true;
+  }
+
+  if (isPointInPolygon_(lat, lng, searchPolygon)) {
+    return true;
+  }
+
+  return isPointWithinPolygonBuffer_(lat, lng, searchPolygon, SEARCH_POLYGON_BUFFER_KM);
+}
+
+function isPointInPolygon_(lat, lng, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const pi = polygon[i] || {};
+    const pj = polygon[j] || {};
+    const yi = Number(pi.lat);
+    const xi = Number(pi.lng);
+    const yj = Number(pj.lat);
+    const xj = Number(pj.lng);
+
+    if (!Number.isFinite(yi) || !Number.isFinite(xi) || !Number.isFinite(yj) || !Number.isFinite(xj)) {
+      continue;
+    }
+
+    const intersects = ((yi > lat) !== (yj > lat)) &&
+      (lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+function isPointWithinPolygonBuffer_(lat, lng, polygon, bufferKm) {
+  const effectiveBufferKm = Number(bufferKm);
+  if (!Number.isFinite(effectiveBufferKm) || effectiveBufferKm <= 0) {
+    return false;
+  }
+
+  const bufferMeters = effectiveBufferKm * 1000;
+  const metersPerDegLat = 111320;
+  const metersPerDegLng = 111320 * Math.max(0.1, Math.cos(lat * Math.PI / 180));
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const pi = polygon[i] || {};
+    const pj = polygon[j] || {};
+    const yi = Number(pi.lat);
+    const xi = Number(pi.lng);
+    const yj = Number(pj.lat);
+    const xj = Number(pj.lng);
+
+    if (!Number.isFinite(yi) || !Number.isFinite(xi) || !Number.isFinite(yj) || !Number.isFinite(xj)) {
+      continue;
+    }
+
+    const ax = (xj - lng) * metersPerDegLng;
+    const ay = (yj - lat) * metersPerDegLat;
+    const bx = (xi - lng) * metersPerDegLng;
+    const by = (yi - lat) * metersPerDegLat;
+
+    if (distancePointToSegmentMeters_(0, 0, ax, ay, bx, by) <= bufferMeters) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function distancePointToSegmentMeters_(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const abLenSq = abx * abx + aby * aby;
+
+  if (abLenSq <= 0) {
+    const dx = px - ax;
+    const dy = py - ay;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  let t = (apx * abx + apy * aby) / abLenSq;
+  t = Math.max(0, Math.min(1, t));
+
+  const cx = ax + t * abx;
+  const cy = ay + t * aby;
+  const dx = px - cx;
+  const dy = py - cy;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function getStations_(sheet) {
@@ -449,4 +603,252 @@ function parseUrl_(value) {
   }
 
   return str;
+}
+
+/**
+ * Resolve thumbnail URLs for selected listings by reading og:image from FINN pages.
+ * Input: [{ key: string, url: string }]
+ * Output: { [key]: thumbnailUrl }
+ */
+function getListingThumbnails(requests) {
+  const out = {};
+  const items = Array.isArray(requests) ? requests : [];
+  if (!items.length) {
+    return out;
+  }
+
+  const cache = CacheService.getScriptCache();
+  const maxItems = Math.min(items.length, 20);
+
+  for (let i = 0; i < maxItems; i++) {
+    const req = items[i] || {};
+    const key = String(req.key || '').trim();
+    const url = parseUrl_(req.url);
+
+    if (!key) {
+      continue;
+    }
+
+    if (!url) {
+      out[key] = '';
+      continue;
+    }
+
+    const cacheKey = 'thumb:' + Utilities.base64EncodeWebSafe(url).slice(0, 220);
+    const cached = cache.get(cacheKey);
+    if (cached != null) {
+      out[key] = cached;
+      continue;
+    }
+
+    let thumbnailUrl = '';
+    let thumbnailValue = '';
+    let errorReason = '';
+    try {
+      let html = '';
+      let status = 0;
+      const firstRes = fetchFinnHtml_(url);
+      status = firstRes.status;
+      html = firstRes.html;
+
+      if (!(status >= 200 && status < 300)) {
+        errorReason = 'HTTP ' + status;
+      }
+
+      thumbnailUrl = extractOgImageFromHtml_(html);
+      if (!thumbnailUrl) {
+        thumbnailUrl = extractFinnImageUrlFromHtml_(html);
+      }
+
+      if (!thumbnailUrl) {
+        const fk = extractFinnkodeFromUrl_(url);
+        if (fk) {
+          const canonicalUrl = 'https://www.finn.no/realestate/homes/ad.html?finnkode=' + fk;
+          const secondRes = fetchFinnHtml_(canonicalUrl);
+          if (secondRes.status >= 200 && secondRes.status < 300) {
+            thumbnailUrl = extractOgImageFromHtml_(secondRes.html) || extractFinnImageUrlFromHtml_(secondRes.html);
+          }
+          if (!thumbnailUrl && !errorReason && secondRes.status) {
+            errorReason = 'No image metadata (HTTP ' + secondRes.status + ')';
+          }
+        } else if (!errorReason) {
+          errorReason = 'No image metadata';
+        }
+      }
+    } catch (err) {
+      thumbnailUrl = '';
+      errorReason = summarizeThumbnailError_(err);
+    }
+
+    if (thumbnailUrl) {
+      // Inline data URLs avoid browser-side cross-origin image blocking in Apps Script iframes.
+      thumbnailValue = toInlineImageDataUrl_(thumbnailUrl) || thumbnailUrl;
+    }
+
+    if (!thumbnailValue && errorReason) {
+      thumbnailValue = '__ERR__:' + errorReason;
+    }
+
+    out[key] = thumbnailValue;
+    if (thumbnailValue) {
+      putSmallCacheValue_(cache, cacheKey, thumbnailValue, 60 * 60 * 6);
+    } else {
+      putSmallCacheValue_(cache, cacheKey, '', 60 * 30);
+    }
+  }
+
+  return out;
+}
+
+function fetchFinnHtml_(url) {
+  const res = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    followRedirects: true,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'nb-NO,nb;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Referer': 'https://www.finn.no/',
+      'Upgrade-Insecure-Requests': '1',
+    },
+  });
+
+  return {
+    status: Number(res.getResponseCode()),
+    html: res.getContentText(),
+  };
+}
+
+function extractFinnkodeFromUrl_(url) {
+  const str = String(url || '').trim();
+  if (!str) return '';
+  const match = str.match(/[?&]finnkode=(\d+)/i);
+  return match && match[1] ? match[1] : '';
+}
+
+function summarizeThumbnailError_(err) {
+  const msg = String(err || 'Unknown error');
+  if (/permission|authorization|required|scope/i.test(msg)) {
+    return 'UrlFetch authorization required';
+  }
+  if (/timed?\s*out|deadline/i.test(msg)) {
+    return 'Request timeout';
+  }
+  return msg.slice(0, 140);
+}
+
+function putSmallCacheValue_(cache, key, value, ttlSeconds) {
+  const str = String(value || '');
+  // CacheService rejects large payloads; skip caching oversized values.
+  if (str.length > 90000) {
+    return;
+  }
+  cache.put(key, str, ttlSeconds);
+}
+
+function toInlineImageDataUrl_(imageUrl) {
+  const url = String(imageUrl || '').trim();
+  if (!url) {
+    return '';
+  }
+
+  try {
+    const imgRes = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true,
+      followRedirects: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; PropertyMapBot/1.0)',
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      },
+    });
+
+    const status = Number(imgRes.getResponseCode());
+    if (!(status >= 200 && status < 300)) {
+      return '';
+    }
+
+    const headers = imgRes.getHeaders();
+    const contentType = String(headers['Content-Type'] || headers['content-type'] || '').toLowerCase();
+    if (!contentType.startsWith('image/')) {
+      return '';
+    }
+
+    const bytes = imgRes.getBlob().getBytes();
+    if (!bytes || !bytes.length) {
+      return '';
+    }
+
+    // Keep payload size bounded for HTML/script response performance.
+    if (bytes.length > 350000) {
+      return '';
+    }
+
+    const b64 = Utilities.base64Encode(bytes);
+    return 'data:' + contentType + ';base64,' + b64;
+  } catch (_err) {
+    return '';
+  }
+}
+
+function extractOgImageFromHtml_(html) {
+  const text = String(html || '');
+  if (!text) {
+    return '';
+  }
+
+  const patterns = [
+    /<meta[^>]+(?:property|name)=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["'][^>]*>/i,
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+    if (match && match[1]) {
+      const raw = decodeHtmlEntities_(String(match[1]).trim());
+      return normalizeImageUrl_(raw);
+    }
+  }
+
+  return '';
+}
+
+function extractFinnImageUrlFromHtml_(html) {
+  const text = String(html || '');
+  if (!text) {
+    return '';
+  }
+
+  const match = text.match(/https:\/\/images\.finncdn\.no[^"'\s>]+/i);
+  if (!match || !match[0]) {
+    return '';
+  }
+
+  return normalizeImageUrl_(decodeHtmlEntities_(match[0]));
+}
+
+function normalizeImageUrl_(url) {
+  const str = String(url || '').trim();
+  if (!str) {
+    return '';
+  }
+
+  const normalized = str
+    .replace(/\\\//g, '/')
+    .replace(/\\u0026/gi, '&')
+    .replace(/&amp;/g, '&');
+
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  return '';
+}
+
+function decodeHtmlEntities_(text) {
+  return String(text || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
 }

@@ -6,6 +6,7 @@ import sys
 import os
 from datetime import datetime
 import argparse
+import subprocess
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,6 +17,61 @@ try:
 except ImportError:
     from runners.run_eiendom_db import run_eiendom_scrape
     from sync.helper_sync_to_sheets import sync_eiendom_to_sheets
+
+
+def run_fill_missing_coordinates() -> None:
+    """Run coordinate fill as part of full workflow.
+
+    Uses env vars when provided:
+      - COORDS_LIMIT (default: 0 = all)
+      - COORDS_RPM (default: 60)
+      - COORDS_INCLUDE_INACTIVE (1/yes/true to include inactive)
+    """
+    limit = (os.getenv("COORDS_LIMIT") or "0").strip() or "0"
+    rpm = (os.getenv("COORDS_RPM") or "60").strip() or "60"
+    include_inactive = (os.getenv("COORDS_INCLUDE_INACTIVE") or "0").strip().lower() in {"1", "yes", "true"}
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "main.tools.fill_missing_coordinates",
+        "--limit",
+        limit,
+        "--rpm",
+        rpm,
+    ]
+    if include_inactive:
+        cmd.append("--include-inactive")
+
+    confirm_setting = (os.getenv("COORDS_CONFIRM") or "1").strip().lower()
+    require_confirm = confirm_setting not in {"0", "no", "false"}
+
+    if require_confirm:
+        prompt = (
+            "Coordinate fill uses Google Geocoding API (billable). "
+            "Proceed now? [y/N]: "
+        )
+
+        if sys.stdin.isatty():
+            answer = input(prompt).strip().lower()
+            if answer not in {"y", "yes"}:
+                print("Coordinate fill skipped by user.")
+                return
+        else:
+            print("Coordinate fill confirmation required, but no interactive terminal detected. Skipping.")
+            return
+
+    print(f"Running coordinate fill: {' '.join(cmd)}")
+    result = subprocess.run(cmd, check=False)
+
+    # fill_missing_coordinates returns 2 when some rows fail to geocode.
+    # Treat that as non-fatal so scrape/sync still complete with partial progress.
+    if result.returncode in (0, 2):
+        if result.returncode == 2:
+            print("Coordinate fill completed with some unresolved rows; continuing workflow.")
+        return
+
+    raise RuntimeError(f"Coordinate fill failed with exit code {result.returncode}")
 
 
 def run_scheduled_task(task_name: str, sync_sheets: bool = True):
@@ -30,10 +86,14 @@ def run_scheduled_task(task_name: str, sync_sheets: bool = True):
             # Run the scraper
             print("Step 1: Scraping property listings...")
             run_eiendom_scrape()
+
+            # Fill missing coordinates for listings.
+            print("\nStep 2: Filling missing coordinates...")
+            run_fill_missing_coordinates()
             
             # Sync to Google Sheets if requested
             if sync_sheets:
-                print("\nStep 2: Syncing to Google Sheets...")
+                print("\nStep 3: Syncing to Google Sheets...")
                 sync_eiendom_to_sheets()
             
             print(f"\n✓ Task '{task_name}' completed successfully")

@@ -72,7 +72,7 @@ def refresh_all_listings(db_path: str = None, delay: float = 0.2, limit: int = N
     # Initialize database
     db = PropertyDatabase(db_path)
     
-    # Get listings for refresh (all or only search_hit=0)
+    # Get listings for refresh (all or only stale=0)
     df = db.get_eiendom_for_status_refresh(only_inactive=only_inactive)
     
     if df.empty:
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Refresh listings from FINN.no')
     parser.add_argument('--limit', type=int, help='Limit number of listings to refresh (for testing)')
     parser.add_argument('--delay', type=float, default=0.2, help='Delay between requests in seconds (default: 0.2)')
-    parser.add_argument('--only-inactive', action='store_true', help='Only refresh listings with search_hit=0')
+    parser.add_argument('--only-inactive', action='store_true', help='Only refresh listings with stale=0')
     
     args = parser.parse_args()
     

@@ -43,7 +43,7 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
     """Exclude rows that should be hidden in sheets for now.
 
     Hidden rules:
-    - search_hit != 1
+    - stale != 1
     - Tilgjengelighet in {Solgt, Inaktiv} (case-insensitive)
     """
     if df.empty:
@@ -57,11 +57,11 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
         return out
 
     status_df['Finnkode'] = status_df['Finnkode'].astype(str).str.strip()
-    search_hit_lookup = status_df.set_index('Finnkode')['search_hit'].to_dict()
+    stale_lookup = status_df.set_index('Finnkode')['stale'].to_dict()
     tilgjengelighet_lookup = status_df.set_index('Finnkode')['Tilgjengelighet'].to_dict()
 
-    out['_sync_search_hit'] = pd.to_numeric(
-        out['Finnkode'].map(search_hit_lookup), errors='coerce'
+    out['_sync_stale'] = pd.to_numeric(
+        out['Finnkode'].map(stale_lookup), errors='coerce'
     ).fillna(1).astype(int)
 
     out['_sync_tilg'] = out['Finnkode'].map(tilgjengelighet_lookup)
@@ -76,14 +76,14 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
         .str.lower()
     )
 
-    visible_mask = (out['_sync_search_hit'] == 1) & (~normalized_status.isin(HIDDEN_TILGJENGELIGHET_STATUSES))
+    visible_mask = (out['_sync_stale'] == 1) & (~normalized_status.isin(HIDDEN_TILGJENGELIGHET_STATUSES))
 
     excluded = int((~visible_mask).sum())
     if excluded > 0:
-        print(f"Excluded {excluded} rows from sheet sync (search_hit=false or Tilgjengelighet=Solgt/Inaktiv)")
+        print(f"Excluded {excluded} rows from sheet sync (stale=false or Tilgjengelighet=Solgt/Inaktiv)")
 
     out = out.loc[visible_mask].copy()
-    out.drop(columns=['_sync_search_hit', '_sync_tilg'], inplace=True, errors='ignore')
+    out.drop(columns=['_sync_stale', '_sync_tilg'], inplace=True, errors='ignore')
     return out
 
 

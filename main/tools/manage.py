@@ -80,7 +80,7 @@ def cmd_sync(args):
 
 
 def cmd_run(args):
-    """Run full workflow (scrape + sync)."""
+    """Run full workflow (scrape + coords + sync)."""
     print(f"\n{'='*60}")
     print(f"Running full workflow for {args.type}")
     print(f"{'='*60}\n")
@@ -179,7 +179,7 @@ Examples:
   %(prog)s stats                    # Show database statistics
   %(prog)s scrape eiendom           # Run eiendom scraper
   %(prog)s sync eiendom             # Sync new listings to Google Sheets
-  %(prog)s run eiendom              # Run full workflow (scrape + sync)
+    %(prog)s run eiendom              # Run full workflow (scrape + coords + sync)
   %(prog)s export eiendom           # Export database to CSV
   %(prog)s backup                   # Create database backup
   %(prog)s dashboard                # Start web dashboard
@@ -212,7 +212,7 @@ Examples:
     parser_sync.set_defaults(func=cmd_sync)
     
     # Run command (full workflow)
-    parser_run = subparsers.add_parser('run', help='Run full workflow (scrape + sync)')
+    parser_run = subparsers.add_parser('run', help='Run full workflow (scrape + coords + sync)')
     parser_run.add_argument('type', choices=['eiendom', 'rental', 'jobs', 'all'],
                            help='Type of workflow to run')
     parser_run.add_argument('--no-sync', action='store_true',

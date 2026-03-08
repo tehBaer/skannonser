@@ -25,7 +25,7 @@ def main() -> int:
     df = db.get_eiendom_missing_coordinates()
 
     total = len(df)
-    active_count = int(df["search_hit"].fillna(0).astype(int).sum()) if not df.empty else 0
+    active_count = int(df["stale"].fillna(0).astype(int).sum()) if not df.empty else 0
 
     print("=" * 72)
     print("Missing Coordinates Report")
