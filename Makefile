@@ -9,7 +9,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help gha sheet travel brj mvv full refresh refresh-inactive artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix map-guide map-push map-deploy coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url
+.PHONY: help gha sheets travel brj mvv full refresh refresh-inactive refresh-stale-open artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix map-guide map-push map-deploy coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync
 
 help:
 	@echo "Available targets:"
@@ -23,15 +23,17 @@ help:
 	@echo "  make travel   - Fill missing travel-time fields only (manual)"
 	@echo "  make brj      - Fill missing BRJ transit travel fields only"
 	@echo "  make mvv      - Fill missing MVV transit travel fields only"
-	@echo "  make sheet    - Manually sync database to Google Sheets"
+	@echo "  make sheets   - Manually sync database to Google Sheets"
 
 	@echo "  make refresh  - Re-download listing pages and refresh statuses"
-	@echo "  make refresh-inactive - Re-download only listings with search_hit=0"
+	@echo "  make refresh-inactive - Re-download only listings with stale=0"
+	@echo "  make refresh-stale-open - Re-download stale=0 listings except Tilgjengelighet=Solgt/Inaktiv"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
 	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
 	@echo "  make map-guide - Open setup guide for interactive map"
 	@echo "  make polygon-edit - Open visual editor for FINN polygon coordinates"
 	@echo "  make finn-url - Print generated FINN search URL from current polygon points"
+	@echo "  make polygon-sync - Sync finn_polygon_points to 'Finn Polygon Coords' sheet"
 	@echo "  make map-push  - Push Apps Script map files via clasp"
 	@echo "  make map-deploy - Deploy Apps Script web app via clasp"
 	@echo "  make artifacts-pull             - Download artifacts, then delete remote copies"
@@ -41,7 +43,7 @@ help:
 gha:
 	$(PYTHON) main/tools/run_eiendom_github.py
 
-sheet:
+sheets:
 	$(PYTHON) main/tools/manual_sheet_update.py
 
 travel:
@@ -62,6 +64,9 @@ refresh:
 refresh-inactive:
 	$(PYTHON) main/sync/refresh_listings.py --only-inactive
 
+refresh-stale-open:
+	$(PYTHON) main/sync/refresh_listings.py --only-inactive --exclude-status Solgt --exclude-status Inaktiv
+
 map-guide:
 	@echo "See docs/INTERACTIVE_MAP_SETUP.md"
 
@@ -70,6 +75,9 @@ polygon-edit:
 
 finn-url:
 	$(PYTHON) main/tools/finn_polygon_editor.py --print-url-only
+
+polygon-sync:
+	$(PYTHON) main/tools/sync_finn_polygon_sheet.py
 
 map-push:
 	@cd apps_script/map && clasp push

@@ -76,11 +76,18 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
         .str.lower()
     )
 
-    visible_mask = (out['_sync_stale'] == 1) & (~normalized_status.isin(HIDDEN_TILGJENGELIGHET_STATUSES))
+    stale_hidden_mask = out['_sync_stale'] != 1
+    status_hidden_mask = normalized_status.isin(HIDDEN_TILGJENGELIGHET_STATUSES)
+    visible_mask = (~stale_hidden_mask) & (~status_hidden_mask)
 
     excluded = int((~visible_mask).sum())
     if excluded > 0:
-        print(f"Excluded {excluded} rows from sheet sync (stale=false or Tilgjengelighet=Solgt/Inaktiv)")
+        print(
+            "Excluded "
+            f"{excluded} rows from Eie sync "
+            f"(stale=0: {int(stale_hidden_mask.sum())}, "
+            f"Tilgjengelighet=Solgt/Inaktiv: {int(status_hidden_mask.sum())})"
+        )
 
     out = out.loc[visible_mask].copy()
     out.drop(columns=['_sync_stale', '_sync_tilg'], inplace=True, errors='ignore')
@@ -239,6 +246,82 @@ def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -
     return [col.strip() for col in updated_header]
 
 
+def ensure_sheet_exists(service, sheet_name: str) -> None:
+    """Create sheet tab when missing."""
+    spreadsheet = service.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID,
+        fields="sheets(properties(title))"
+    ).execute()
+
+    existing_titles = {
+        s.get("properties", {}).get("title", "")
+        for s in spreadsheet.get("sheets", [])
+    }
+    if sheet_name in existing_titles:
+        return
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={
+            "requests": [
+                {
+                    "addSheet": {
+                        "properties": {
+                            "title": sheet_name,
+                        }
+                    }
+                }
+            ]
+        },
+    ).execute()
+    print(f"✓ Created sheet tab: {sheet_name}")
+
+
+def rename_sheet_if_exists(service, old_name: str, new_name: str) -> bool:
+    """Rename a sheet tab when old exists and new does not."""
+    if not old_name or not new_name or old_name == new_name:
+        return False
+
+    spreadsheet = service.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID,
+        fields="sheets(properties(sheetId,title))"
+    ).execute()
+
+    sheets = spreadsheet.get("sheets", [])
+    by_title = {
+        s.get("properties", {}).get("title", ""): s.get("properties", {})
+        for s in sheets
+    }
+
+    if new_name in by_title or old_name not in by_title:
+        return False
+
+    old_props = by_title[old_name]
+    sheet_id = old_props.get("sheetId")
+    if sheet_id is None:
+        return False
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={
+            "requests": [
+                {
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": sheet_id,
+                            "title": new_name,
+                        },
+                        "fields": "title",
+                    }
+                }
+            ]
+        },
+    ).execute()
+
+    print(f"✓ Renamed sheet tab: {old_name} -> {new_name}")
+    return True
+
+
 def _column_number_to_letter(col_num: int) -> str:
     """Convert 1-based column number to Excel/Sheets column letters."""
     result = ""
@@ -337,6 +420,7 @@ def sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):
     # Get credentials and service
     try:
         service = get_sheets_service()
+        ensure_sheet_exists(service, sheet_name)
     except Exception as e:
         print(f"Error connecting to Google Sheets: {e}")
         return False
@@ -437,6 +521,74 @@ def sync_unlisted_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie(
     print("\n⚠️  Note: Unlisted/inactive listings are now included in the main 'Eie' sheet.")
     print("This function is no longer needed.")
     return True
+
+
+def sync_stale_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Sold"):
+    """Full-sync sold/inactive stale listings to dedicated sheet tab."""
+    print(f"\n{'='*60}")
+    print("Syncing sold/inactive eiendom listings to Google Sheets")
+    print(f"Sheet: {sheet_name}")
+    print(f"{'='*60}\n")
+
+    db = PropertyDatabase(db_path)
+
+    try:
+        service = get_sheets_service()
+        if sheet_name == "Sold":
+            rename_sheet_if_exists(service, "Stale", "Sold")
+        ensure_sheet_exists(service, sheet_name)
+    except Exception as e:
+        print(f"Error connecting to Google Sheets: {e}")
+        return False
+
+    df = db.get_stale_eiendom_for_sheets()
+
+    if df.empty:
+        print("No sold/inactive stale listings found. Clearing Sold sheet.")
+        try:
+            service.spreadsheets().values().clear(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{sheet_name}!A1:ZZ10000"
+            ).execute()
+            service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{sheet_name}!A1",
+                valueInputOption="RAW",
+                body={"values": [["Finnkode"]]}
+            ).execute()
+            return True
+        except HttpError as e:
+            print(f"Error clearing Sold sheet: {e}")
+            return False
+
+    df['Finnkode'] = df['Finnkode'].apply(_normalize_finnkode)
+    df = df[df['Finnkode'] != ''].drop_duplicates(subset=['Finnkode'], keep='first')
+
+    df = filter_hidden_sheet_columns(df)
+    df = dedupe_and_canonicalize_dataframe_columns(df)
+    df = sanitize_for_sheets(df)
+
+    all_rows = [df.columns.tolist()] + df.values.tolist()
+
+    try:
+        service.spreadsheets().values().clear(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!A1:ZZ10000"
+        ).execute()
+
+        result = service.spreadsheets().values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!A1",
+            valueInputOption="USER_ENTERED",
+            body={"values": all_rows}
+        ).execute()
+
+        updated_cells = result.get('updatedCells', 0)
+        print(f"✓ Synced {len(df)} sold/inactive stale listings to '{sheet_name}' ({updated_cells} cells updated)")
+        return True
+    except HttpError as e:
+        print(f"Error syncing Sold sheet: {e}")
+        return False
 
 
 def full_sync_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie"):

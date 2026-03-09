@@ -39,11 +39,24 @@ def _get_row_coords(row, lat_col: str, lng_col: str):
     return lat, lng
 
 
-def _row_has_all_travel_values(row, columns: list[str]) -> bool:
-    return all(pd.notna(row.get(col)) for col in columns)
+def _is_valid_travel_value(value, max_travel_minutes: float) -> bool:
+    parsed = _to_float_or_none(value)
+    if parsed is None:
+        return False
+    return 1 <= parsed <= max_travel_minutes
 
 
-def _build_travel_donor_cache(df: DataFrame, columns: list[str], lat_col: str, lng_col: str):
+def _row_has_all_travel_values(row, columns: list[str], max_travel_minutes: float) -> bool:
+    return all(_is_valid_travel_value(row.get(col), max_travel_minutes) for col in columns)
+
+
+def _build_travel_donor_cache(
+    df: DataFrame,
+    columns: list[str],
+    lat_col: str,
+    lng_col: str,
+    max_travel_minutes: float,
+):
     """Build a list of donor rows (lat, lng, finnkode) with complete travel data."""
     cache = []
     if not lat_col or not lng_col or 'Finnkode' not in df.columns:
@@ -55,7 +68,7 @@ def _build_travel_donor_cache(df: DataFrame, columns: list[str], lat_col: str, l
             continue
         if str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
             continue
-        if not _row_has_all_travel_values(row, columns):
+        if not _row_has_all_travel_values(row, columns, max_travel_minutes):
             continue
         finnkode = str(row.get('Finnkode', '')).strip()
         if not finnkode:
@@ -207,17 +220,21 @@ def post_process_eiendom(
 
     # Optional filters/config for API calls and sheets export
     try:
-        from main.config.filters import MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS
+        from main.config.filters import MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS, MAX_TRAVEL_MINUTES
     except ImportError:
         try:
-            from config.filters import MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS
+            from config.filters import MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS, MAX_TRAVEL_MINUTES
         except ImportError:
             MAX_PRICE = None
             TRAVEL_REUSE_WITHIN_METERS = 0
+            MAX_TRAVEL_MINUTES = 360
 
     if TRAVEL_REUSE_WITHIN_METERS is None:
         TRAVEL_REUSE_WITHIN_METERS = 0
+    if MAX_TRAVEL_MINUTES is None:
+        MAX_TRAVEL_MINUTES = 360
     travel_reuse_within_meters = max(float(TRAVEL_REUSE_WITHIN_METERS), 0.0)
+    max_travel_minutes = max(float(MAX_TRAVEL_MINUTES), 1.0)
 
     # Load existing commute data from database if available
     if db is not None:
@@ -360,8 +377,16 @@ def post_process_eiendom(
     lat_col = 'LAT' if 'LAT' in df.columns else ('lat' if 'lat' in df.columns else None)
     lng_col = 'LNG' if 'LNG' in df.columns else ('lng' if 'lng' in df.columns else None)
 
-    donor_cache_brj = _build_travel_donor_cache(df, brj_travel_columns, lat_col, lng_col)
-    donor_cache_mvv = _build_travel_donor_cache(df, mvv_travel_columns, lat_col, lng_col)
+    donor_cache_brj = _build_travel_donor_cache(df, brj_travel_columns, lat_col, lng_col, max_travel_minutes)
+    donor_cache_mvv = _build_travel_donor_cache(df, mvv_travel_columns, lat_col, lng_col, max_travel_minutes)
+
+    # Debugging: show donor cache sizes to help diagnose missing donor assignments
+    try:
+        print(f"Debug: donor_cache_brj size: {len(donor_cache_brj)}; sample: {[c[2] for c in donor_cache_brj[:5]]}")
+        print(f"Debug: donor_cache_mvv size: {len(donor_cache_mvv)}; sample: {[c[2] for c in donor_cache_mvv[:5]]}")
+    except Exception:
+        # Keep debug prints best-effort and non-fatal
+        pass
 
     if travel_reuse_within_meters > 0:
         if lat_col and lng_col:
@@ -461,7 +486,7 @@ def post_process_eiendom(
                 row_now = df.loc[row_idx]
                 if str(row_now.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
                     return
-                if not _row_has_all_travel_values(row_now, required_columns):
+                if not _row_has_all_travel_values(row_now, required_columns, max_travel_minutes):
                     return
                 finnkode = str(row_now.get('Finnkode', '') or '').strip()
                 if not finnkode:
@@ -498,14 +523,14 @@ def post_process_eiendom(
                             try:
                                 print(f"   📍 Calculating public transit time...", end='', flush=True)
                                 minutes = transit_commute_calculator.calculate(address, postnummer)
-                                if minutes is not None:
+                                if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                     df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
                                     calculated_transit += 1
                                     print(f" ✓ {minutes} min")
                                     if delay_between_requests > 0:
                                         time.sleep(delay_between_requests)
                                 else:
-                                    print(f" ✗ Failed (returned None)")
+                                    print(f" ✗ Rejected/failed value ({minutes})")
                             except Exception as e:
                                 print(f" ✗ Error: {str(e)}")
 
@@ -526,12 +551,14 @@ def post_process_eiendom(
                                     origin_override=work_addr_norway,
                                     destination_override=destination
                                 )
-                                if minutes is not None:
+                                if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                     df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
                                     calculated_transit_return += 1
                                     print(f" ✓ {minutes} min")
+                                    if delay_between_requests > 0:
+                                        time.sleep(delay_between_requests)
                                 else:
-                                    print(f" ✗ Failed (returned None)")
+                                    print(f" ✗ Rejected/failed value ({minutes})")
                             except Exception as e:
                                 print(f" ✗ Error: {str(e)}")
 
@@ -596,12 +623,14 @@ def post_process_eiendom(
                                 try:
                                     print(f"   📍 Calculating public transit to Lambertseter svømmeklubb...", end='', flush=True)
                                     minutes = transit_commute_calculator_mvv.calculate(address, postnummer)
-                                    if minutes is not None:
+                                    if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                         df.at[idx, 'PENDL MORN MVV'] = int(minutes)
                                         calculated_transit_mvv += 1
                                         print(f" ✓ {minutes} min")
+                                        if delay_between_requests > 0:
+                                            time.sleep(delay_between_requests)
                                     else:
-                                        print(f" ✗ Failed (returned None)")
+                                        print(f" ✗ Rejected/failed value ({minutes})")
                                 except Exception as e:
                                     print(f" ✗ Error: {str(e)}")
 
@@ -621,12 +650,14 @@ def post_process_eiendom(
                                         origin_override=mvv_address,
                                         destination_override=destination_mvv
                                     )
-                                    if minutes is not None:
+                                    if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                         df.at[idx, 'PENDL DAG MVV'] = int(minutes)
                                         calculated_transit_return_mvv += 1
                                         print(f" ✓ {minutes} min")
+                                        if delay_between_requests > 0:
+                                            time.sleep(delay_between_requests)
                                     else:
-                                        print(f" ✗ Failed (returned None)")
+                                        print(f" ✗ Rejected/failed value ({minutes})")
                                 except Exception as e:
                                     print(f" ✗ Error: {str(e)}")
 

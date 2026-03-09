@@ -19,6 +19,43 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
 
+def _get_max_travel_minutes() -> int:
+    default_value = 360
+    try:
+        from main.config.filters import MAX_TRAVEL_MINUTES
+        return int(MAX_TRAVEL_MINUTES)
+    except Exception:
+        try:
+            from config.filters import MAX_TRAVEL_MINUTES
+            return int(MAX_TRAVEL_MINUTES)
+        except Exception:
+            return default_value
+
+
+def _parse_duration_minutes(duration_value: Any) -> Optional[int]:
+    if duration_value is None:
+        return None
+    text = str(duration_value).strip().lower()
+    if not text:
+        return None
+    if text.endswith('s'):
+        text = text[:-1]
+    try:
+        seconds = float(text)
+        if seconds <= 0:
+            return None
+        return int(seconds / 60)
+    except Exception:
+        return None
+
+
+def _is_reasonable_travel_minutes(minutes: Optional[int]) -> bool:
+    if minutes is None:
+        return False
+    max_minutes = _get_max_travel_minutes()
+    return 1 <= int(minutes) <= max_minutes
+
+
 def _next_monday_iso(hour: int, minute: int = 0) -> str:
     """Return ISO timestamp (UTC-formatted) for next Monday at given hour/minute."""
     now = datetime.now()
@@ -241,10 +278,10 @@ class CommutingTimeToWorkAddress(LocationFeature):
             if "routes" in data and data["routes"]:
                 route = data["routes"][0]
                 if "duration" in route:
-                    duration_str = route["duration"]
-                    # Parse duration like "2700s" to seconds
-                    duration_seconds = int(duration_str.rstrip('s'))
-                    minutes = int(duration_seconds / 60)
+                    minutes = _parse_duration_minutes(route["duration"])
+                    if not _is_reasonable_travel_minutes(minutes):
+                        print(f"\n      ⚠️  Rejected unrealistic DRIVE duration: {route.get('duration')}")
+                        return None
                     return minutes
                 return None
             else:
@@ -354,10 +391,10 @@ class PublicTransitCommuteTime(LocationFeature):
             if "routes" in data and data["routes"]:
                 route = data["routes"][0]
                 if "duration" in route:
-                    duration_str = route["duration"]
-                    # Parse duration like "2700s" to seconds
-                    duration_seconds = int(duration_str.rstrip('s'))
-                    minutes = int(duration_seconds / 60)
+                    minutes = _parse_duration_minutes(route["duration"])
+                    if not _is_reasonable_travel_minutes(minutes):
+                        print(f"\n      ⚠️  Rejected unrealistic TRANSIT duration: {route.get('duration')}")
+                        return None
                     return minutes
                 return None
             else:

@@ -5,7 +5,7 @@ Checks for differences and updates cells that have changed.
 import sys
 import os
 import pandas as pd
-from typing import Dict
+from typing import Dict, Set
 import re
 
 # Add parent directory to path for imports
@@ -118,6 +118,110 @@ def get_sheet_data_with_row_numbers(service, sheet_name: str) -> Dict:
         return {}
 
 
+def normalize_finnkode_for_compare(value) -> str:
+    """Normalize Finnkode values from Sheets/DB for stable comparison."""
+    if value is None:
+        return ""
+
+    finnkode = str(value).strip()
+    if not finnkode:
+        return ""
+
+    # If it's a HYPERLINK formula, extract display text.
+    if 'HYPERLINK' in finnkode.upper():
+        parts = finnkode.split('"')
+        if len(parts) >= 4:
+            finnkode = parts[3].strip()
+
+    try:
+        as_float = float(finnkode)
+        if as_float.is_integer():
+            return str(int(as_float))
+    except (ValueError, TypeError):
+        pass
+
+    return finnkode
+
+
+def get_sheet_id(service, sheet_name: str):
+    """Get numeric Google Sheets sheetId for a tab name."""
+    spreadsheet = service.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID,
+        fields="sheets(properties(sheetId,title))"
+    ).execute()
+
+    for sheet in spreadsheet.get("sheets", []):
+        props = sheet.get("properties", {})
+        if props.get("title") == sheet_name:
+            return props.get("sheetId")
+    return None
+
+
+def prune_non_visible_rows(service, sheet_name: str, visible_finnkodes: Set[str]) -> bool:
+    """Delete rows from sheet where Finnkode is not in current visible set."""
+    sheet_data = get_sheet_data_with_row_numbers(service, sheet_name)
+    if not sheet_data:
+        return True
+
+    header_row = sheet_data.get(1, [])
+    if not header_row:
+        return True
+
+    header_row_normalized = [canonicalize_header_name(col) for col in header_row]
+    if 'Finnkode' in header_row_normalized:
+        finnkode_col_idx = header_row_normalized.index('Finnkode')
+    else:
+        finnkode_col_idx = 0
+
+    rows_to_delete = []
+    for row_num, row_data in sheet_data.items():
+        if row_num == 1:
+            continue
+        if not row_data or len(row_data) <= finnkode_col_idx:
+            continue
+
+        finnkode = normalize_finnkode_for_compare(row_data[finnkode_col_idx])
+        if not finnkode:
+            continue
+
+        if finnkode not in visible_finnkodes:
+            rows_to_delete.append(row_num)
+
+    if not rows_to_delete:
+        print("No non-visible rows to remove from Eie")
+        return True
+
+    sheet_id = get_sheet_id(service, sheet_name)
+    if sheet_id is None:
+        print(f"Could not resolve sheetId for '{sheet_name}', skipping prune")
+        return False
+
+    # Delete bottom-up to avoid row index shifts.
+    requests = []
+    for row_num in sorted(rows_to_delete, reverse=True):
+        requests.append({
+            "deleteDimension": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": row_num - 1,
+                    "endIndex": row_num,
+                }
+            }
+        })
+
+    try:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"requests": requests}
+        ).execute()
+        print(f"✓ Removed {len(rows_to_delete)} non-visible rows from {sheet_name}")
+        return True
+    except HttpError as e:
+        print(f"Error pruning non-visible rows from {sheet_name}: {e}")
+        return False
+
+
 def requires_confirmation(old_val, new_val) -> bool:
     """Check if a change from old_val to new_val requires user confirmation."""
     # Consider value non-null if it's not empty/None after normalization
@@ -168,7 +272,8 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
 
     # Sanitize data
     df = sanitize_for_sheets(df)
-    df['Finnkode'] = df['Finnkode'].astype(str).str.strip()
+    df['Finnkode'] = df['Finnkode'].apply(normalize_finnkode_for_compare)
+    visible_finnkodes = set(df['Finnkode'].tolist())
     
     # Ensure headers contain any new columns
     ensure_sheet_headers(service, sheet_name, list(df.columns))
@@ -410,7 +515,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     
     if not updates_list:
         print("\nNo updates needed - all data is current")
-        return True
+        return prune_non_visible_rows(service, sheet_name, visible_finnkodes)
     
     # Apply updates using batch update
     try:
@@ -424,8 +529,8 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         
         total_updated = result.get('totalUpdatedCells', 0)
         print(f"\n✓ Successfully updated {updated_count} rows ({total_updated} cells)")
-        
-        return True
+
+        return prune_non_visible_rows(service, sheet_name, visible_finnkodes)
         
     except HttpError as e:
         print(f"Error updating sheet: {e}")

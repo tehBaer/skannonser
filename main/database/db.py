@@ -10,6 +10,57 @@ import os
 from .overrides import PropertyOverrides
 
 
+def _to_float_or_none(value) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _get_coord_bounds() -> tuple[float, float, float, float]:
+    lat_min, lat_max, lng_min, lng_max = 57.0, 72.0, 4.0, 32.0
+    try:
+        from main.config.filters import COORD_LAT_MIN, COORD_LAT_MAX, COORD_LNG_MIN, COORD_LNG_MAX
+        lat_min = float(COORD_LAT_MIN)
+        lat_max = float(COORD_LAT_MAX)
+        lng_min = float(COORD_LNG_MIN)
+        lng_max = float(COORD_LNG_MAX)
+    except Exception:
+        try:
+            from config.filters import COORD_LAT_MIN, COORD_LAT_MAX, COORD_LNG_MIN, COORD_LNG_MAX
+            lat_min = float(COORD_LAT_MIN)
+            lat_max = float(COORD_LAT_MAX)
+            lng_min = float(COORD_LNG_MIN)
+            lng_max = float(COORD_LNG_MAX)
+        except Exception:
+            pass
+    return lat_min, lat_max, lng_min, lng_max
+
+
+def _is_in_bounds(lat: float, lng: float, lat_min: float, lat_max: float, lng_min: float, lng_max: float) -> bool:
+    return lat_min <= lat <= lat_max and lng_min <= lng <= lng_max
+
+
+def _normalize_coordinates(lat: Any, lng: Any) -> tuple[Optional[float], Optional[float], bool]:
+    """Return (lat, lng, swapped) when valid; otherwise (None, None, False)."""
+    lat_v = _to_float_or_none(lat)
+    lng_v = _to_float_or_none(lng)
+    if lat_v is None or lng_v is None:
+        return None, None, False
+
+    lat_min, lat_max, lng_min, lng_max = _get_coord_bounds()
+    if _is_in_bounds(lat_v, lng_v, lat_min, lat_max, lng_min, lng_max):
+        return lat_v, lng_v, False
+
+    # Common failure mode: lat/lng swapped.
+    if _is_in_bounds(lng_v, lat_v, lat_min, lat_max, lng_min, lng_max):
+        return lng_v, lat_v, True
+
+    return None, None, False
+
+
 class PropertyDatabase:
     """Handles all database operations for property listings."""
     
@@ -477,14 +528,15 @@ class PropertyDatabase:
         """Get property listings formatted for Google Sheets export (includes all listings: active, unlisted/inactive, and sold)."""
         conn = self.get_connection()
 
-        # Optional price filter
+        # Optional filters
         try:
-            from main.config.filters import MAX_PRICE
+            from main.config.filters import MAX_PRICE, MIN_BRA_I
         except ImportError:
             try:
-                from config.filters import MAX_PRICE
+                from config.filters import MAX_PRICE, MIN_BRA_I
             except ImportError:
                 MAX_PRICE = None
+                MIN_BRA_I = None
         
         # Get all listings regardless of status
         # Uses cleaned addresses from eiendom_processed table when available
@@ -492,6 +544,7 @@ class PropertyDatabase:
             SELECT 
                 e.finnkode as "Finnkode",
                 e.tilgjengelighet as "Tilgjengelighet",
+                e.stale as "stale",
                 COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
                 e.postnummer as "Postnummer",
                 e.pris as "Pris",
@@ -536,6 +589,9 @@ class PropertyDatabase:
         if MAX_PRICE is not None:
             query += " AND e.pris <= ?"
             params.append(MAX_PRICE)
+        if MIN_BRA_I is not None:
+            query += " AND CAST(e.info_usable_i_area AS REAL) >= ?"
+            params.append(MIN_BRA_I)
 
         query += " ORDER BY e.stale DESC, e.scraped_at DESC"
 
@@ -557,6 +613,9 @@ class PropertyDatabase:
         Args:
             only_inactive: If True, only include listings with stale = 0.
         """
+        if only_inactive:
+            return self.get_stale_eiendom_for_status_refresh(require_url=True)
+
         conn = self.get_connection()
         query = '''
             SELECT
@@ -580,18 +639,116 @@ class PropertyDatabase:
         conn.close()
         return df
 
+    def get_stale_eiendom_for_status_refresh(self, require_url: bool = True) -> pd.DataFrame:
+        """Get stale listings (stale=0) for FINN status refresh checks.
+
+        Args:
+            require_url: If True, only include rows with a non-empty URL.
+        """
+        conn = self.get_connection()
+        query = '''
+            SELECT
+                e.finnkode as "Finnkode",
+                e.url as "URL",
+                e.tilgjengelighet as "Tilgjengelighet",
+                COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
+                e.stale as "stale"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            WHERE e.stale = 0
+        '''
+
+        if require_url:
+            query += " AND e.url IS NOT NULL AND TRIM(e.url) != ''"
+
+        query += " ORDER BY e.scraped_at DESC"
+
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+
+    def get_stale_eiendom_for_sheets(self) -> pd.DataFrame:
+        """Get sold/inactive stale listings formatted for Google Sheets export.
+
+        Scope is intentionally strict for the dedicated Sold tab:
+        - stale = 0
+        - Tilgjengelighet in {Solgt, Inaktiv} (case-insensitive)
+
+        Uses the same visible columns as get_eiendom_for_sheets(), but without
+        optional MAX_PRICE/MIN_BRA_I export filters so sold scope stays canonical.
+        """
+        conn = self.get_connection()
+
+        query = '''
+            SELECT
+                e.finnkode as "Finnkode",
+                e.tilgjengelighet as "Tilgjengelighet",
+                e.stale as "stale",
+                COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
+                e.postnummer as "Postnummer",
+                e.pris as "Pris",
+                e.url as "URL",
+                e.image_url as "IMAGE_URL",
+                e.image_hosted_url as "IMAGE_HOSTED_URL",
+                e.info_usable_area as "Bruksareal",
+                e.info_usable_i_area as "Internt bruksareal (BRA-i)",
+                e.info_primary_area as "Primærrom",
+                e.info_gross_area as "Bruttoareal",
+                e.info_usable_e_area as "Eksternt bruksareal (BRA-e)",
+                e.info_usable_b_area as "Innglasset balkong (BRA-b)",
+                e.info_open_area as "Balkong/Terrasse (TBA)",
+                e.info_plot_area as "Tomteareal",
+                e.info_plot_ownership as "Eierskap, tomt",
+                e.info_property_type as "Boligtype",
+                e.info_construction_year as "Byggeår",
+                ep.lat as "LAT",
+                ep.lng as "LNG",
+                e.pris_kvm as "PRIS KVM",
+                COALESCE(ep.pendl_morn_brj, ep_src.pendl_morn_brj) as "PENDL MORN BRJ",
+                COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
+                COALESCE(ep.pendl_dag_brj, ep_src.pendl_dag_brj) as "PENDL DAG BRJ",
+                COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
+                COALESCE(ep.pendl_morn_mvv, ep_src.pendl_morn_mvv) as "PENDL MORN MVV",
+                COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
+                COALESCE(ep.pendl_dag_mvv, ep_src.pendl_dag_mvv) as "PENDL DAG MVV",
+                COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
+                COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
+                COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
+                COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
+                COALESCE(ep.bil_dag_cntr, ep_src.bil_dag_cntr) as "BIL DAG CNTR",
+                ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE",
+                ep.google_maps_url as "GOOGLE_MAPS_URL"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
+                        WHERE e.stale = 0
+                            AND LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) IN ('solgt', 'inaktiv')
+            ORDER BY e.scraped_at DESC
+        '''
+
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+
+        numeric_columns = ['Pris', 'PRIS KVM']
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = df[col].fillna(0).astype(int)
+
+        return df
+
     def get_unlisted_eiendom_for_sheets(self) -> pd.DataFrame:
         """Get unlisted property listings formatted for Google Sheets export."""
         conn = self.get_connection()
 
-        # Optional price filter
+        # Optional filters
         try:
-            from main.config.filters import MAX_PRICE
+            from main.config.filters import MAX_PRICE, MIN_BRA_I
         except ImportError:
             try:
-                from config.filters import MAX_PRICE
+                from config.filters import MAX_PRICE, MIN_BRA_I
             except ImportError:
                 MAX_PRICE = None
+                MIN_BRA_I = None
         
         # Get unlisted listings (not in search anymore, but not explicitly sold)
         query = '''
@@ -641,6 +798,9 @@ class PropertyDatabase:
         if MAX_PRICE is not None:
             query += " AND e.pris <= ?"
             params.append(MAX_PRICE)
+        if MIN_BRA_I is not None:
+            query += " AND CAST(e.info_usable_i_area AS REAL) >= ?"
+            params.append(MIN_BRA_I)
 
         query += " ORDER BY e.scraped_at DESC"
 
@@ -684,6 +844,13 @@ class PropertyDatabase:
         if not finnkode:
             return False
 
+        lat_norm, lng_norm, swapped = _normalize_coordinates(lat, lng)
+        if lat_norm is None or lng_norm is None:
+            print(f"Skipping invalid coordinates for #{finnkode}: lat={lat}, lng={lng}")
+            return False
+        if swapped:
+            print(f"Swapped latitude/longitude for #{finnkode}: lat={lat_norm}, lng={lng_norm}")
+
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -697,7 +864,7 @@ class PropertyDatabase:
                 SET lat = ?, lng = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
                 ''',
-                (lat, lng, str(finnkode)),
+                (lat_norm, lng_norm, str(finnkode)),
             )
         else:
             cursor.execute(
@@ -705,7 +872,7 @@ class PropertyDatabase:
                 INSERT INTO eiendom_processed (finnkode, lat, lng)
                 VALUES (?, ?, ?)
                 ''',
-                (str(finnkode), lat, lng),
+                (str(finnkode), lat_norm, lng_norm),
             )
 
         changed = cursor.rowcount > 0
@@ -738,6 +905,13 @@ class PropertyDatabase:
         """Insert or update processed location data for a property."""
         conn = self.get_connection()
         cursor = conn.cursor()
+
+        lat_norm, lng_norm, swapped = _normalize_coordinates(lat, lng)
+        if lat is not None or lng is not None:
+            if lat_norm is None or lng_norm is None:
+                print(f"Ignoring invalid coordinates for #{finnkode}: lat={lat}, lng={lng}")
+            elif swapped:
+                print(f"Swapped latitude/longitude for #{finnkode}: lat={lat_norm}, lng={lng_norm}")
         
         adresse_cleaned = self._clean_address(adresse)
         google_maps_url = self._generate_google_maps_url(adresse_cleaned, postnummer)
@@ -761,7 +935,7 @@ class PropertyDatabase:
                     travel_copy_from_finnkode = ?,
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, lat, lng, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+            ''', (adresse_cleaned, lat_norm, lng_norm, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                                     pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
                                     pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                     travel_copy_from_finnkode,
@@ -774,7 +948,7 @@ class PropertyDatabase:
                                  pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                  travel_copy_from_finnkode, google_maps_url)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, lat, lng, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
+            ''', (finnkode, adresse_cleaned, lat_norm, lng_norm, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
                                     pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
                                     pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                     travel_copy_from_finnkode, google_maps_url))

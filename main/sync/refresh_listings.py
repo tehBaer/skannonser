@@ -6,7 +6,7 @@ Run update_rows_in_sheet.py afterwards to sync changes to sheets.
 import sys
 import os
 import time
-from typing import Dict
+from typing import Dict, Iterable, Optional, Set
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,14 +56,26 @@ def refresh_listing(finnkode: str, url: str, project_name: str = "data/eiendom")
         }
 
 
-def refresh_all_listings(db_path: str = None, delay: float = 0.2, limit: int = None, only_inactive: bool = False):
+def _normalize_status(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def refresh_all_listings(
+    db_path: str = None,
+    delay: float = 0.2,
+    limit: int = None,
+    only_inactive: bool = False,
+    exclude_statuses: Optional[Iterable[str]] = None,
+):
     """
     Re-download all listings that would appear in Google Sheets.
-    
+
     Args:
         db_path: Optional path to database file
         delay: Delay between requests in seconds (default: 0.2)
         limit: Optional limit on number of listings to refresh (for testing)
+        only_inactive: If True, only include listings with stale=0
+        exclude_statuses: Optional status values to skip (case-insensitive)
     """
     print(f"\n{'='*60}")
     print(f"Refreshing listings from FINN.no")
@@ -74,6 +86,19 @@ def refresh_all_listings(db_path: str = None, delay: float = 0.2, limit: int = N
     
     # Get listings for refresh (all or only stale=0)
     df = db.get_eiendom_for_status_refresh(only_inactive=only_inactive)
+
+    normalized_excludes: Set[str] = {
+        _normalize_status(status) for status in (exclude_statuses or []) if _normalize_status(status)
+    }
+    if normalized_excludes and not df.empty and 'Tilgjengelighet' in df.columns:
+        normalized_status = df['Tilgjengelighet'].map(_normalize_status)
+        before = len(df)
+        df = df[~normalized_status.isin(normalized_excludes)]
+        skipped = before - len(df)
+        print(
+            "Skipping listings with status in "
+            f"{sorted(normalized_excludes)}: {skipped} skipped"
+        )
     
     if df.empty:
         print("No listings to refresh")
@@ -171,7 +196,18 @@ if __name__ == "__main__":
     parser.add_argument('--limit', type=int, help='Limit number of listings to refresh (for testing)')
     parser.add_argument('--delay', type=float, default=0.2, help='Delay between requests in seconds (default: 0.2)')
     parser.add_argument('--only-inactive', action='store_true', help='Only refresh listings with stale=0')
+    parser.add_argument(
+        '--exclude-status',
+        action='append',
+        default=[],
+        help='Skip listings where Tilgjengelighet matches this value (case-insensitive). Can be repeated.'
+    )
     
     args = parser.parse_args()
     
-    refresh_all_listings(limit=args.limit, delay=args.delay, only_inactive=args.only_inactive)
+    refresh_all_listings(
+        limit=args.limit,
+        delay=args.delay,
+        only_inactive=args.only_inactive,
+        exclude_statuses=args.exclude_status,
+    )

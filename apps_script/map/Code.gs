@@ -6,6 +6,7 @@
  */
 
 const DEFAULT_LISTINGS_SHEET = 'Eie';
+const DEFAULT_SOLD_SHEET = 'Sold';
 const DEFAULT_STATIONS_SHEET = 'Stations';
 const DEFAULT_FINN_POLYGON_SHEET = 'Finn Polygon Coords';
 const SEARCH_POLYGON_BUFFER_KM = 2;
@@ -70,6 +71,7 @@ function getBootstrapData_() {
   return {
     mapApiKey: props.getProperty('MAPS_API_KEY') || '',
     defaultListingsSheet: props.getProperty('LISTINGS_SHEET') || DEFAULT_LISTINGS_SHEET,
+    defaultSoldSheet: props.getProperty('SOLD_SHEET') || DEFAULT_SOLD_SHEET,
     defaultStationsSheet: props.getProperty('STATIONS_SHEET') || DEFAULT_STATIONS_SHEET,
   };
 }
@@ -84,6 +86,13 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
 
   const listingSheet = ss.getSheetByName(listingsSheetName || DEFAULT_LISTINGS_SHEET);
   const stationSheet = ss.getSheetByName(stationsSheetName || DEFAULT_STATIONS_SHEET);
+  const includeSold = Boolean(options && options.includeSold === true);
+  const soldSheetName = String(
+    (options && options.soldSheetName) ||
+    PropertiesService.getScriptProperties().getProperty('SOLD_SHEET') ||
+    DEFAULT_SOLD_SHEET
+  ).trim() || DEFAULT_SOLD_SHEET;
+  const soldSheet = includeSold ? ss.getSheetByName(soldSheetName) : null;
 
   if (!listingSheet) {
     throw new Error('Listings sheet not found: ' + (listingsSheetName || DEFAULT_LISTINGS_SHEET));
@@ -93,6 +102,37 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
   const searchPolygon = getFinnSearchPolygon_();
   const searchBounds = getSearchBoundsFromPolygon_(searchPolygon, SEARCH_POLYGON_BUFFER_KM);
   const listingResult = getVisibleListings_(listingSheet, respectSheetFilters, searchBounds, searchPolygon);
+  let soldResult = null;
+  if (includeSold && soldSheet) {
+    soldResult = getVisibleListings_(soldSheet, respectSheetFilters, searchBounds, searchPolygon);
+  }
+
+  const combinedRows = [];
+  const seenFinnkode = {};
+  const pushUniqueByFinnkode = function(rows, sourceSheet) {
+    const items = Array.isArray(rows) ? rows : [];
+    for (let i = 0; i < items.length; i++) {
+      const row = items[i] || {};
+      const key = String(row.Finnkode || '').trim();
+      const rowWithSource = Object.assign({}, row, {
+        sheetSource: sourceSheet || 'unknown',
+      });
+      if (!key) {
+        combinedRows.push(rowWithSource);
+        continue;
+      }
+      if (seenFinnkode[key]) {
+        continue;
+      }
+      seenFinnkode[key] = true;
+      combinedRows.push(rowWithSource);
+    }
+  };
+
+  pushUniqueByFinnkode(listingResult.rows, 'primary');
+  if (soldResult) {
+    pushUniqueByFinnkode(soldResult.rows, 'sold');
+  }
   const tAfterListings = Date.now();
 
   const stations = stationSheet ? getStations_(stationSheet) : [];
@@ -107,24 +147,28 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
 
   return {
     generatedAt: new Date().toISOString(),
-    listings: listingResult.rows,
+    listings: combinedRows,
     stations: stations,
     diagnostics: {
       spreadsheetName: ss.getName(),
       listingsSheet: listingSheet.getName(),
+      includeSold: includeSold,
+      soldSheet: soldSheet ? soldSheet.getName() : soldSheetName,
+      soldSheetFound: Boolean(soldSheet),
+      soldRowsVisible: soldResult ? soldResult.rows.length : 0,
       stationsSheet: stationSheet ? stationSheet.getName() : '',
-      totalDataRows: listingResult.meta.totalDataRows,
-      scannedRows: listingResult.meta.scannedRows,
-      scanLimited: listingResult.meta.scanLimited,
-      visibleRows: listingResult.meta.visibleRows,
-      hiddenByFilter: listingResult.meta.hiddenByFilter,
-      hiddenByUser: listingResult.meta.hiddenByUser,
+      totalDataRows: listingResult.meta.totalDataRows + (soldResult ? soldResult.meta.totalDataRows : 0),
+      scannedRows: listingResult.meta.scannedRows + (soldResult ? soldResult.meta.scannedRows : 0),
+      scanLimited: Boolean(listingResult.meta.scanLimited || (soldResult && soldResult.meta.scanLimited)),
+      visibleRows: combinedRows.length,
+      hiddenByFilter: listingResult.meta.hiddenByFilter + (soldResult ? soldResult.meta.hiddenByFilter : 0),
+      hiddenByUser: listingResult.meta.hiddenByUser + (soldResult ? soldResult.meta.hiddenByUser : 0),
       strictVisibilityChecksApplied: listingResult.meta.strictVisibilityChecksApplied,
-      skippedEmptyRows: listingResult.meta.skippedEmptyRows,
-      missingLatLngVisibleRows: listingResult.meta.missingLatLngVisibleRows,
-      excludedOutsideNorway: listingResult.meta.excludedOutsideNorway,
-      outsideNorwaySamples: listingResult.meta.outsideNorwaySamples,
-      outsideNorwayRows: listingResult.meta.outsideNorwayRows,
+      skippedEmptyRows: listingResult.meta.skippedEmptyRows + (soldResult ? soldResult.meta.skippedEmptyRows : 0),
+      missingLatLngVisibleRows: listingResult.meta.missingLatLngVisibleRows + (soldResult ? soldResult.meta.missingLatLngVisibleRows : 0),
+      excludedOutsideNorway: listingResult.meta.excludedOutsideNorway + (soldResult ? soldResult.meta.excludedOutsideNorway : 0),
+      outsideNorwaySamples: listingResult.meta.outsideNorwaySamples.concat(soldResult ? soldResult.meta.outsideNorwaySamples : []).slice(0, 5),
+      outsideNorwayRows: listingResult.meta.outsideNorwayRows.concat(soldResult ? soldResult.meta.outsideNorwayRows : []),
       searchBounds: listingResult.meta.searchBounds,
       searchPolygon: searchPolygon,
       timingsMs: timingsMs,

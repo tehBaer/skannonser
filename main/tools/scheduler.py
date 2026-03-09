@@ -13,12 +13,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from main.runners.run_eiendom_db import run_eiendom_scrape
-    from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets
+    from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets, sync_stale_eiendom_to_sheets
     from main.database.db import PropertyDatabase
+    from main.tools.sync_finn_polygon_sheet import sync_polygon_to_sheet
 except ImportError:
     from runners.run_eiendom_db import run_eiendom_scrape
-    from sync.helper_sync_to_sheets import sync_eiendom_to_sheets
+    from sync.helper_sync_to_sheets import sync_eiendom_to_sheets, sync_stale_eiendom_to_sheets
     from database.db import PropertyDatabase
+    from tools.sync_finn_polygon_sheet import sync_polygon_to_sheet
 
 
 def _estimate_coordinate_fill_candidates(limit: int, include_inactive: bool) -> int:
@@ -130,6 +132,8 @@ def run_scheduled_task(task_name: str, sync_sheets: bool = True):
             if sync_sheets:
                 print("\nStep 3: Syncing to Google Sheets...")
                 sync_eiendom_to_sheets()
+                sync_stale_eiendom_to_sheets()
+                sync_polygon_to_sheet(sheet_name="Finn Polygon Coords", source_file=os.path.join("main", "runners", "run_eiendom_db.py"))
             
             print(f"\n✓ Task '{task_name}' completed successfully")
             

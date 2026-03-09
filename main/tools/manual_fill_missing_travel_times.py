@@ -138,6 +138,10 @@ def main() -> int:
     db = PropertyDatabase()
 
     df = db.get_eiendom_for_sheets()
+    # Only consider non-stale (active) listings for travel-time API requests
+    if 'stale' in df.columns:
+        active_mask = pd.to_numeric(df['stale'], errors='coerce').fillna(1).astype(int) == 1
+        df = df.loc[active_mask].copy()
     if df.empty:
         print("No eiendom listings found in database.")
         return 0
