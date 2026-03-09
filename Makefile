@@ -53,6 +53,9 @@ mvv:
 	$(PYTHON) main/tools/manual_fill_missing_travel_times.py --target mvv
 
 full:
+	# Run DNB pipeline (filter, load) and resync DNB sheet, then run full eiendom pipeline
+	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py || true
+	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py || true
 	COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/tools/manage.py run eiendom
 
 refresh:
