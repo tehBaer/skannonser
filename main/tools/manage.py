@@ -19,12 +19,10 @@ try:
     from main.database.db import PropertyDatabase
     from main.runners.run_eiendom_db import run_eiendom_scrape
     from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets, full_sync_eiendom_to_sheets
-    from main.tools.scheduler import run_scheduled_task
 except ImportError:
     from database.db import PropertyDatabase
     from runners.run_eiendom_db import run_eiendom_scrape
     from sync.helper_sync_to_sheets import sync_eiendom_to_sheets, full_sync_eiendom_to_sheets
-    from scheduler import run_scheduled_task
 
 
 def cmd_stats(args):
@@ -85,7 +83,16 @@ def cmd_run(args):
     print(f"Running full workflow for {args.type}")
     print(f"{'='*60}\n")
     
-    return run_scheduled_task(args.type, sync_sheets=not args.no_sync)
+    if args.type == 'eiendom':
+        # Run scraping and DB update
+        run_eiendom_scrape(args.db)
+        # Optionally sync to Sheets
+        if not args.no_sync:
+            return 0 if sync_eiendom_to_sheets(args.db) else 1
+        return 0
+    else:
+        print(f"Workflow for '{args.type}' not yet implemented")
+        return 1
 
 
 def cmd_export(args):

@@ -1,15 +1,15 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,$(shell command -v python3 || command -v python))
 REPO ?=
-ARTIFACT_PREFIX ?= html-delta-
-ARTIFACT_DEST ?= artifacts/github
-ARTIFACT_MANIFEST ?= artifacts/github/download_manifest.json
-ARTIFACT_OLDER_DAYS ?= 7
+COORDS_LIMIT ?= 100
+COORDS_RPM ?= 120
+COORDS_INCLUDE_INACTIVE ?= 0
+COORDS_CONFIRM ?= 1
 COORDS_LIMIT ?= 100
 COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help gha sheets travel brj mvv full refresh refresh-inactive refresh-stale-open artifacts-pull artifacts-cleanup-manifest artifacts-cleanup-prefix map-guide map-push map-deploy coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync
+.PHONY: help sheets travel brj mvv full refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync
 
 help:
 	@echo "Available targets:"
@@ -26,8 +26,8 @@ help:
 	@echo "  make sheets   - Manually sync database to Google Sheets"
 
 	@echo "  make refresh  - Re-download listing pages and refresh statuses"
-	@echo "  make refresh-inactive - Re-download only listings with stale=0"
-	@echo "  make refresh-stale-open - Re-download stale=0 listings except Tilgjengelighet=Solgt/Inaktiv"
+	@echo "  make refresh-inactive - Re-download only listings with active=0"
+	@echo "  make refresh-stale-open - Re-download active=0 listings except Tilgjengelighet=Solgt/Inaktiv"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
 	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
 	@echo "  make map-guide - Open setup guide for interactive map"
@@ -36,12 +36,9 @@ help:
 	@echo "  make polygon-sync - Sync finn_polygon_points to 'Finn Polygon Coords' sheet"
 	@echo "  make map-push  - Push Apps Script map files via clasp"
 	@echo "  make map-deploy - Deploy Apps Script web app via clasp"
-	@echo "  make artifacts-pull             - Download artifacts, then delete remote copies"
-	@echo "  make artifacts-cleanup-manifest - Delete artifacts listed as downloaded in manifest"
-	@echo "  make artifacts-cleanup-prefix   - Delete artifacts by prefix/age"
+  
 
-gha:
-	$(PYTHON) main/tools/run_eiendom_github.py
+
 
 sheets:
 	$(PYTHON) main/tools/manual_sheet_update.py
@@ -97,14 +94,4 @@ coords-import-sheet:
 addr-overrides:
 	$(PYTHON) main/tools/address_overrides.py --help
 
-artifacts-pull:
-	@if [ -z "$(REPO)" ]; then echo "Set REPO=owner/repo"; exit 1; fi
-	$(PYTHON) main/tools/github_artifacts.py --repo "$(REPO)" pull --prefix "$(ARTIFACT_PREFIX)" --dest "$(ARTIFACT_DEST)" --manifest "$(ARTIFACT_MANIFEST)" --delete-after-download
 
-artifacts-cleanup-manifest:
-	@if [ -z "$(REPO)" ]; then echo "Set REPO=owner/repo"; exit 1; fi
-	$(PYTHON) main/tools/github_artifacts.py --repo "$(REPO)" cleanup-manifest --manifest "$(ARTIFACT_MANIFEST)" --prefix "$(ARTIFACT_PREFIX)"
-
-artifacts-cleanup-prefix:
-	@if [ -z "$(REPO)" ]; then echo "Set REPO=owner/repo"; exit 1; fi
-	$(PYTHON) main/tools/github_artifacts.py --repo "$(REPO)" cleanup-prefix --prefix "$(ARTIFACT_PREFIX)" --older-than-days "$(ARTIFACT_OLDER_DAYS)"

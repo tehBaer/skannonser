@@ -172,7 +172,7 @@ def main() -> int:
     parser.add_argument("--auth-mode", default="auto", choices=["auto", "service-account", "oauth"], help="Drive auth mode")
     parser.add_argument("--max-dim", type=int, default=640, help="Max width/height in pixels for uploaded thumbnails")
     parser.add_argument("--jpeg-quality", type=int, default=82, help="JPEG quality for uploaded thumbnails")
-    parser.add_argument("--include-inactive", action="store_true", help="Also process listings with stale != 1")
+    parser.add_argument("--include-inactive", action="store_true", help="Also process listings with active != 1")
     parser.add_argument("--verbose", action="store_true", help="Print per-row failures")
     args = parser.parse_args()
 
@@ -182,7 +182,7 @@ def main() -> int:
 
     where = "TRIM(COALESCE(image_url, '')) != ''"
     if not args.include_inactive:
-        where += " AND COALESCE(stale, 1) = 1"
+        where += " AND COALESCE(active, 1) = 1"
     if not args.overwrite:
         where += " AND TRIM(COALESCE(image_hosted_url, '')) = ''"
 

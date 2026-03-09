@@ -257,6 +257,31 @@ class PropertyDatabase:
         
         conn.commit()
         conn.close()
+
+        # Create dnbeiendom table to store DNB Eiendom listings separately
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS dnbeiendom (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dnb_id TEXT,
+                url TEXT UNIQUE,
+                adresse TEXT,
+                postnummer TEXT,
+                pris INTEGER,
+                lat REAL,
+                lng REAL,
+                duplicate_of_finnkode TEXT,
+                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                active BOOLEAN DEFAULT 1,
+                exported_to_sheets BOOLEAN DEFAULT 0
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dnbeiendom_active ON dnbeiendom(active)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dnbeiendom_exported ON dnbeiendom(exported_to_sheets)')
+        conn.commit()
+        conn.close()
     
     def get_connection(self):
         """Get a database connection."""
@@ -1135,6 +1160,133 @@ class PropertyDatabase:
             'unlisted': unlisted,
             'not_exported': not_exported
         }
+
+    # ----------------------------- DNB Eiendom helpers -----------------------------
+    def insert_or_update_dnbeiendom(self, df: pd.DataFrame):
+        """Insert or update DNB Eiendom rows into dnbeiendom table.
+
+        Expects df to contain at least a `url` (or `URL`) column. Will also
+        read `MatchedFinn_Finnkode` or `duplicate_of_finnkode` when present
+        and persist it to `duplicate_of_finnkode` column.
+        """
+        inserted = 0
+        updated = 0
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        for _, row in df.iterrows():
+            url = (row.get('URL') or row.get('url') or '').strip() if row.get('URL') is not None or row.get('url') is not None else ''
+            dnb_id = (row.get('Id') or row.get('dnb_id') or '').strip() if row.get('Id') is not None or row.get('dnb_id') is not None else ''
+            adresse = row.get('Adresse') or row.get('adresse') or row.get('StreetAddress') or ''
+            postnummer = row.get('Postnummer') or row.get('postnummer') or row.get('PostalCode') or ''
+            pris = self._to_int(row.get('Pris') or row.get('pris') or row.get('Price'))
+            lat = _to_float_or_none(row.get('LAT') or row.get('lat') or row.get('Latitude'))
+            lng = _to_float_or_none(row.get('LNG') or row.get('lng') or row.get('Longitude'))
+            # Safely coerce duplicate finnkode value to string if present
+            dup_raw = None
+            if 'MatchedFinn_Finnkode' in row.index:
+                dup_raw = row.get('MatchedFinn_Finnkode')
+            if dup_raw is None or (isinstance(dup_raw, float) and pd.isna(dup_raw)):
+                dup_raw = row.get('duplicate_of_finnkode') if 'duplicate_of_finnkode' in row.index else dup_raw
+            if dup_raw is None or (isinstance(dup_raw, float) and pd.isna(dup_raw)):
+                duplicate = ''
+            else:
+                duplicate = str(dup_raw).strip()
+
+            if not url and not dnb_id:
+                # skip rows without an identifier
+                continue
+
+            # Try to find existing by URL first, else by dnb_id when URL missing
+            existing = None
+            if url:
+                cursor.execute('SELECT id FROM dnbeiendom WHERE url = ?', (url,))
+                existing = cursor.fetchone()
+            if existing is None and dnb_id:
+                cursor.execute('SELECT id FROM dnbeiendom WHERE dnb_id = ?', (dnb_id,))
+                existing = cursor.fetchone()
+
+            if existing:
+                cursor.execute('''
+                    UPDATE dnbeiendom
+                    SET dnb_id = COALESCE(?, dnb_id), adresse = ?, postnummer = ?, pris = ?,
+                        lat = COALESCE(?, lat), lng = COALESCE(?, lng),
+                        duplicate_of_finnkode = COALESCE(?, duplicate_of_finnkode),
+                        active = 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (dnb_id or None, adresse, postnummer, pris, lat, lng, duplicate or None, existing[0]))
+                updated += 1
+            else:
+                cursor.execute('''
+                    INSERT INTO dnbeiendom (dnb_id, url, adresse, postnummer, pris, lat, lng, duplicate_of_finnkode)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (dnb_id or None, url or None, adresse, postnummer, pris, lat, lng, duplicate or None))
+                inserted += 1
+
+        conn.commit()
+        conn.close()
+        print(f"Database updated (dnbeiendom): {inserted} inserted, {updated} updated")
+        return inserted, updated
+
+    def get_new_dnbeiendom_for_export(self) -> pd.DataFrame:
+        """Return dnbeiendom rows eligible for export to Sheets (active && not exported)."""
+        conn = self.get_connection()
+        df = pd.read_sql_query('SELECT * FROM dnbeiendom WHERE active = 1 AND exported_to_sheets = 0 ORDER BY scraped_at DESC', conn)
+        conn.close()
+        return df
+
+    def mark_dnbeiendom_as_exported(self, urls: List[str]) -> int:
+        """Mark given DNB URLs as exported in dnbeiendom table."""
+        if not urls:
+            return 0
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        placeholders = ','.join('?' * len(urls))
+        cursor.execute(f"UPDATE dnbeiendom SET exported_to_sheets = 1, updated_at = CURRENT_TIMESTAMP WHERE url IN ({placeholders})", urls)
+        marked = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return marked
+
+    def ingest_dnbeiendom_to_eiendom(self, prefix: str = 'DNB', skip_mapped: bool = True):
+        """Ingest dnbeiendom rows into `eiendom` table.
+
+        - When `skip_mapped` is True, rows with a non-empty `duplicate_of_finnkode`
+          will be skipped (prefer FINN).
+        - Uses `dnb_id` if present, otherwise generates a synthetic Finnkode like `DNB-<id>`.
+        Returns (inserted, updated) counts from `insert_or_update_eiendom`.
+        """
+        conn = self.get_connection()
+        if skip_mapped:
+            df = pd.read_sql_query("SELECT * FROM dnbeiendom WHERE active = 1 AND (duplicate_of_finnkode IS NULL OR duplicate_of_finnkode = '') ORDER BY scraped_at DESC", conn)
+        else:
+            df = pd.read_sql_query("SELECT * FROM dnbeiendom WHERE active = 1 ORDER BY scraped_at DESC", conn)
+        conn.close()
+
+        if df.empty:
+            print("No dnbeiendom rows to ingest into eiendom")
+            return 0, 0
+
+        # Build DataFrame compatible with insert_or_update_eiendom
+        out = pd.DataFrame()
+        # Use existing dnb_id when available, otherwise generate synthetic finnkode
+        def make_finnkode(r):
+            if r.get('dnb_id'):
+                return str(r.get('dnb_id'))
+            return f"{prefix}-{int(r.get('id'))}"
+
+        out['Finnkode'] = df.apply(make_finnkode, axis=1)
+        out['Tilgjengelighet'] = ''
+        out['Adresse'] = df.get('adresse', '')
+        out['Postnummer'] = df.get('postnummer', '')
+        out['Pris'] = df.get('pris', '')
+        out['URL'] = df.get('url', '')
+        out['IMAGE_URL'] = ''
+        out['IMAGE_HOSTED_URL'] = ''
+
+        inserted, updated = self.insert_or_update_eiendom(out)
+        print(f"Ingested dnbeiendom -> eiendom: {inserted} inserted, {updated} updated")
+        return inserted, updated
 
 
 # Convenience function for backwards compatibility

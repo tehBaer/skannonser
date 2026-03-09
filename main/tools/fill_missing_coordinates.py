@@ -192,7 +192,7 @@ def main() -> int:
             .str.lower()
         )
         df = df[
-            (df["stale"].fillna(0).astype(int) == 1)
+            (df["active"].fillna(0).astype(int) == 1)
             & (~status_normalized.isin(visible_statuses))
         ]
 

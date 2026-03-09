@@ -43,7 +43,7 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
     """Exclude rows that should be hidden in sheets for now.
 
     Hidden rules:
-    - stale != 1
+    - active != 1
     - Tilgjengelighet in {Solgt, Inaktiv} (case-insensitive)
     """
     if df.empty:
@@ -57,11 +57,11 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
         return out
 
     status_df['Finnkode'] = status_df['Finnkode'].astype(str).str.strip()
-    stale_lookup = status_df.set_index('Finnkode')['stale'].to_dict()
+    active_lookup = status_df.set_index('Finnkode')['active'].to_dict()
     tilgjengelighet_lookup = status_df.set_index('Finnkode')['Tilgjengelighet'].to_dict()
 
-    out['_sync_stale'] = pd.to_numeric(
-        out['Finnkode'].map(stale_lookup), errors='coerce'
+    out['_sync_active'] = pd.to_numeric(
+        out['Finnkode'].map(active_lookup), errors='coerce'
     ).fillna(1).astype(int)
 
     out['_sync_tilg'] = out['Finnkode'].map(tilgjengelighet_lookup)
@@ -76,21 +76,22 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
         .str.lower()
     )
 
-    stale_hidden_mask = out['_sync_stale'] != 1
+    active_mask = out['_sync_active'] == 1
     status_hidden_mask = normalized_status.isin(HIDDEN_TILGJENGELIGHET_STATUSES)
-    visible_mask = (~stale_hidden_mask) & (~status_hidden_mask)
+    visible_mask = active_mask & (~status_hidden_mask)
 
     excluded = int((~visible_mask).sum())
     if excluded > 0:
+        active_hidden = int((~active_mask).sum())
         print(
             "Excluded "
             f"{excluded} rows from Eie sync "
-            f"(stale=0: {int(stale_hidden_mask.sum())}, "
+            f"(active=0: {active_hidden}, "
             f"Tilgjengelighet=Solgt/Inaktiv: {int(status_hidden_mask.sum())})"
         )
 
     out = out.loc[visible_mask].copy()
-    out.drop(columns=['_sync_stale', '_sync_tilg'], inplace=True, errors='ignore')
+    out.drop(columns=['_sync_active', '_sync_tilg'], inplace=True, errors='ignore')
     return out
 
 
@@ -524,7 +525,7 @@ def sync_unlisted_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Eie(
 
 
 def sync_stale_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Sold"):
-    """Full-sync sold/inactive stale listings to dedicated sheet tab."""
+    """Full-sync sold/inactive listings to dedicated sheet tab."""
     print(f"\n{'='*60}")
     print("Syncing sold/inactive eiendom listings to Google Sheets")
     print(f"Sheet: {sheet_name}")
@@ -541,10 +542,88 @@ def sync_stale_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Sold"):
         print(f"Error connecting to Google Sheets: {e}")
         return False
 
+
+    def sync_dnbeiendom_to_sheets(db_path: str = None, sheet_name: str = "DNB"):
+        """
+        Sync DNB-only listings (those without a mapped FINN duplicate) to a separate sheet.
+        This keeps FINN as canonical while still preserving DNB-only listings in Sheets.
+        """
+        print(f"\n{'='*60}")
+        print(f"Syncing DNB-only listings to Google Sheets")
+        print(f"Sheet: {sheet_name}")
+        print(f"{'='*60}\n")
+
+        db = PropertyDatabase(db_path)
+
+        try:
+            service = get_sheets_service()
+            ensure_sheet_exists(service, sheet_name)
+        except Exception as e:
+            print(f"Error connecting to Google Sheets: {e}")
+            return False
+
+        # Get new DNB rows to export
+        df = db.get_new_dnbeiendom_for_export()
+        if df.empty:
+            print("No new DNB listings to export")
+            return True
+
+        # Keep only DNB rows that are not mapped to a FINN listing
+        mask = df['duplicate_of_finnkode'].isnull() | (df['duplicate_of_finnkode'] == '')
+        df = df.loc[mask].copy()
+        if df.empty:
+            print("No DNB-only listings to export (all mapped to FINN)")
+            return True
+
+        # Map dnbeiendom columns to export-friendly column names
+        # Minimal mapping: Adresse, Postnummer, Pris, URL, LAT, LNG
+        export_df = pd.DataFrame()
+        export_df['Adresse'] = df.get('adresse', '')
+        export_df['Postnummer'] = df.get('postnummer', '')
+        export_df['Pris'] = df.get('pris', '')
+        export_df['URL'] = df.get('url', '')
+        export_df['LAT'] = df.get('lat', '')
+        export_df['LNG'] = df.get('lng', '')
+
+        # Prepare and sanitize
+        export_df = dedupe_and_canonicalize_dataframe_columns(export_df)
+        export_df = sanitize_for_sheets(export_df)
+
+        # Ensure headers and append rows
+        desired_columns = list(export_df.columns)
+        header_row = ensure_sheet_headers(service, sheet_name, desired_columns)
+        new_rows = [[row.get(col, '') for col in header_row] for _, row in export_df.iterrows()]
+
+        try:
+            # Append
+            body = {"values": new_rows}
+            range_start = f"{sheet_name}!A1"
+            result = service.spreadsheets().values().append(
+                spreadsheetId=SPREADSHEET_ID,
+                range=range_start,
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body=body
+            ).execute()
+
+            updates = result.get('updates', {})
+            updated_rows = updates.get('updatedRows', 0)
+            print(f"✓ Added {updated_rows} DNB listings to sheet '{sheet_name}'")
+
+            # Mark exported by URL
+            urls = df['url'].fillna('').astype(str).tolist()
+            marked = db.mark_dnbeiendom_as_exported(urls)
+            print(f"✓ Marked {marked} DNB listings as exported in DB")
+            return True
+
+        except HttpError as e:
+            print(f"Error appending DNB listings to sheet: {e}")
+            return False
+
     df = db.get_stale_eiendom_for_sheets()
 
     if df.empty:
-        print("No sold/inactive stale listings found. Clearing Sold sheet.")
+        print("No sold/inactive listings found. Clearing Sold sheet.")
         try:
             service.spreadsheets().values().clear(
                 spreadsheetId=SPREADSHEET_ID,
@@ -584,7 +663,7 @@ def sync_stale_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Sold"):
         ).execute()
 
         updated_cells = result.get('updatedCells', 0)
-        print(f"✓ Synced {len(df)} sold/inactive stale listings to '{sheet_name}' ({updated_cells} cells updated)")
+        print(f"✓ Synced {len(df)} sold/inactive listings to '{sheet_name}' ({updated_cells} cells updated)")
         return True
     except HttpError as e:
         print(f"Error syncing Sold sheet: {e}")
