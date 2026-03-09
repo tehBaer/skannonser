@@ -14,9 +14,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from main.runners.run_eiendom_db import run_eiendom_scrape
     from main.sync.helper_sync_to_sheets import sync_eiendom_to_sheets
+    from main.database.db import PropertyDatabase
 except ImportError:
     from runners.run_eiendom_db import run_eiendom_scrape
     from sync.helper_sync_to_sheets import sync_eiendom_to_sheets
+    from database.db import PropertyDatabase
+
+
+def _estimate_coordinate_fill_candidates(limit: int, include_inactive: bool) -> int:
+    """Estimate how many listings will be passed to fill_missing_coordinates."""
+    db = PropertyDatabase()
+    df = db.get_eiendom_missing_coordinates()
+
+    if not include_inactive and not df.empty:
+        visible_statuses = {"solgt", "inaktiv"}
+        status_normalized = (
+            df["Tilgjengelighet"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        df = df[
+            (df["stale"].fillna(0).astype(int) == 1)
+            & (~status_normalized.isin(visible_statuses))
+        ]
+
+    if limit > 0:
+        df = df.head(limit)
+
+    return len(df)
 
 
 def run_fill_missing_coordinates() -> None:
@@ -29,6 +56,7 @@ def run_fill_missing_coordinates() -> None:
     """
     limit = (os.getenv("COORDS_LIMIT") or "0").strip() or "0"
     rpm = (os.getenv("COORDS_RPM") or "60").strip() or "60"
+    limit_int = int(limit) if str(limit).strip() else 0
     include_inactive = (os.getenv("COORDS_INCLUDE_INACTIVE") or "0").strip().lower() in {"1", "yes", "true"}
 
     cmd = [
@@ -47,6 +75,13 @@ def run_fill_missing_coordinates() -> None:
     require_confirm = confirm_setting not in {"0", "no", "false"}
 
     if require_confirm:
+        candidate_count = _estimate_coordinate_fill_candidates(limit_int, include_inactive)
+        print(
+            "Geocode preflight: "
+            f"{candidate_count} candidate(s) "
+            f"(limit={limit_int if limit_int > 0 else 'all'}, include_inactive={include_inactive}, rpm={rpm})"
+        )
+
         prompt = (
             "Coordinate fill uses Google Geocoding API (billable). "
             "Proceed now? [y/N]: "
