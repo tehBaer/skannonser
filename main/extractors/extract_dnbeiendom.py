@@ -11,7 +11,13 @@ SEARCH_URL = (
     'estateStatus=project_false&'
     'locations=BUSKERUD_ae0fe87e-0ba2-46b7-9164-5ee26c4fc85b&'
     'locations=AKERSHUS_fe2e9e2c-620e-4190-9af0-a5baa93abc1f&'
-    'locations=OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c'
+    'locations=OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c&'
+    'estateTypes=Leilighet&'
+    'estateTypes=Enebolig&'
+    'estateTypes=Tomannsbolig&'
+    'estateTypes=Rekkehus&'
+    'estateTypes=Landbruk&'
+    'estateTypes=Sm%C3%A5bruk'
 )
 LISTING_PATH_PREFIX = '/bolig/'
 PROJECT_DIR = 'data/dnbeiendom'
@@ -101,7 +107,25 @@ def fetch_urls_from_search(search_url, project_dir, output_filename, max_pages=M
     headers = {
         'User-Agent': 'Mozilla/5.0 (compatible; dnbscraper/1.0; +https://dnbeiendom.no)'
     }
+    output_path = os.path.join(project_dir, output_filename)
+    existing_urls = set()
+    if os.path.exists(output_path):
+        try:
+            existing_df = pd.read_csv(output_path)
+            if 'URL' in existing_df.columns:
+                existing_urls = {
+                    str(url).strip()
+                    for url in existing_df['URL'].dropna().tolist()
+                    if str(url).strip()
+                }
+                print(f"Loaded {len(existing_urls)} existing URLs from {output_path}")
+        except Exception as e:
+            print(f"Warning: could not read existing URLs from {output_path}: {e}")
+
+    # Tracks all URLs found in this crawl run.
     all_urls = set()
+    # Tracks URLs seen across historical output + current run for true "new" counts.
+    seen_urls = set(existing_urls)
     consecutive_empty_pages = 0
     consecutive_no_new_pages = 0
 
@@ -111,10 +135,11 @@ def fetch_urls_from_search(search_url, project_dir, output_filename, max_pages=M
         response.raise_for_status()
 
         page_urls = _extract_listing_urls_from_html(response.text)
-        new_count = len(page_urls - all_urls)
+        new_count = len(page_urls - seen_urls)
+        seen_urls.update(page_urls)
         all_urls.update(page_urls)
 
-        print(f"Page {page}: found {len(page_urls)} listing links ({new_count} new) [cumulative: {len(all_urls)}]")
+        print(f"Page {page}: found {len(page_urls)} listing links ({new_count} new vs saved data) [cumulative: {len(all_urls)}]")
 
         if len(page_urls) == 0:
             consecutive_empty_pages += 1
@@ -141,7 +166,7 @@ def fetch_urls_from_search(search_url, project_dir, output_filename, max_pages=M
 
     os.makedirs(project_dir, exist_ok=True)
     df = pd.DataFrame(matched, columns=['URL'])
-    df.to_csv(os.path.join(project_dir, output_filename), index=False)
+    df.to_csv(output_path, index=False)
     print(f"Found {len(matched)} unique URLs from search results")
     print(f"Saved to {project_dir}/{output_filename}")
     return df

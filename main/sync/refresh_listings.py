@@ -125,12 +125,11 @@ def refresh_all_listings(
     os.makedirs("data/eiendom/html_extracted", exist_ok=True)
     
     # Process each listing
-    for index, row in df.iterrows():
+    for current_num, (_, row) in enumerate(df.iterrows(), start=1):
         finnkode = str(row['Finnkode']).strip()
         url = row['URL']
         old_status = row.get('Tilgjengelighet', '')
-        
-        current_num = index + 1
+
         print(f"[{current_num}/{total}] Refreshing {finnkode}...", end=" ")
         
         # Refresh the listing

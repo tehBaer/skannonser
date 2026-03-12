@@ -58,13 +58,7 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
 
     status_df['Finnkode'] = status_df['Finnkode'].astype(str).str.strip()
     # Support databases that still have legacy `stale` column or the new `active` column.
-    if 'active' in status_df.columns:
-        active_col = 'active'
-    elif 'stale' in status_df.columns:
-        # legacy column `stale` used 1 for active; reuse it as `active` semantics
-        active_col = 'stale'
-    else:
-        active_col = None
+    active_col = 'active' if 'active' in status_df.columns else None
 
     if active_col is not None:
         active_lookup = status_df.set_index('Finnkode')[active_col].to_dict()
@@ -74,7 +68,7 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
 
     tilgjengelighet_lookup = status_df.set_index('Finnkode')['Tilgjengelighet'].to_dict()
 
-    # Map active/stale lookup; default to 1 (active) when unknown.
+    # Map active lookup; default to 1 (active) when unknown.
     out['_sync_active'] = pd.to_numeric(
         out['Finnkode'].map(active_lookup), errors='coerce'
     ).fillna(1).astype(int)

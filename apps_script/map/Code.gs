@@ -324,7 +324,7 @@ function getVisibleListings_(sheet, respectSheetFilters, searchBounds, searchPol
 
     const obj = {};
     for (let c = 0; c < headers.length; c++) {
-      obj[headers[c]] = row[c];
+      obj[headers[c]] = sanitizeForClientValue_(row[c]);
     }
 
     const finnkode = normalizeFinnkode_(obj.Finnkode);
@@ -612,7 +612,7 @@ function getStations_(sheet) {
       LAT: lat,
       LNG: lng,
       RadiusM: radiusValue != null && radiusValue > 0 ? radiusValue : null,
-      Type: idxType >= 0 ? valueOrEmpty_(row[idxType]) : 'train',
+      Type: idxType >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxType])) : 'train',
     });
   }
 
@@ -640,6 +640,23 @@ function normalizeFinnkode_(value) {
   return str.replace(/\.0$/, '');
 }
 
+function sanitizeForClientValue_(value) {
+  if (value == null) {
+    return value;
+  }
+
+  // google.script.run responses can become null if they include Date objects.
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return value.toISOString();
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
+    return value;
+  }
+
+  return String(value);
+}
+
 function valueOrEmpty_(value) {
   return value == null ? '' : value;
 }
@@ -648,7 +665,19 @@ function toNumberOrNull_(value) {
   if (value === '' || value == null) {
     return null;
   }
-  const n = Number(value);
+
+  // Support localized numeric formats from Sheets, e.g. "59,819931".
+  let raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  raw = raw.replace(/\u00A0/g, '');
+  if (raw.indexOf(',') >= 0 && raw.indexOf('.') < 0) {
+    raw = raw.replace(',', '.');
+  }
+
+  const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 }
 

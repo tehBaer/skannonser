@@ -172,6 +172,16 @@ def main() -> int:
     parser.add_argument("--rpm", type=float, default=60.0, help="Request rate limit per minute (default: 60)")
     parser.add_argument("--include-inactive", action="store_true", help="Also geocode inactive listings")
     parser.add_argument("--dry-run", action="store_true", help="Print actions without writing to DB")
+    parser.add_argument(
+        "--count-only",
+        action="store_true",
+        help="Only print candidate count after filters; do not call API",
+    )
+    parser.add_argument(
+        "--allow-failures",
+        action="store_true",
+        help="Exit with status 0 even if some listings fail geocoding",
+    )
     args = parser.parse_args()
 
     api_key = resolve_api_key(args.api_key)
@@ -197,13 +207,7 @@ def main() -> int:
         else:
             status_normalized = pd.Series([""] * len(df), index=df.index)
 
-        if "active" in df.columns:
-            active_series = df["active"].fillna(0).astype(int)
-        else:
-            # If active is unavailable, treat rows as active rather than crashing.
-            active_series = pd.Series([1] * len(df), index=df.index)
-
-        df = df[(active_series == 1) & (~status_normalized.isin(visible_statuses))]
+        df = df[~status_normalized.isin(visible_statuses)]
 
     if args.limit > 0:
         df = df.head(args.limit)
@@ -214,6 +218,10 @@ def main() -> int:
     print("=" * 72)
     print(f"Candidates: {total}")
     print(f"Dry run: {args.dry_run}")
+
+    if args.count_only:
+        print("Count-only mode: no API requests will be sent.")
+        return 0
 
     if total == 0:
         print("Nothing to geocode.")
@@ -296,6 +304,10 @@ def main() -> int:
 
     if interrupted:
         return 130
+
+    if failed > 0 and args.allow_failures:
+        print("Completed with failures, but --allow-failures is set; returning success.")
+        return 0
 
     return 0 if failed == 0 else 2
 

@@ -106,7 +106,7 @@ class PropertyDatabase:
                 pris_kvm INTEGER,
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                stale BOOLEAN DEFAULT 1,
+                active BOOLEAN DEFAULT 1,
                 exported_to_sheets BOOLEAN DEFAULT 0
             )
         ''')
@@ -142,26 +142,39 @@ class PropertyDatabase:
         cursor.execute("PRAGMA table_info(eiendom)")
         existing_eiendom_columns = {row[1] for row in cursor.fetchall()}
 
-        # Normalize legacy activity/search columns to the canonical stale name.
-        if "stale" not in existing_eiendom_columns:
-            if "found_in_last_search" in existing_eiendom_columns:
+        # Normalize legacy activity columns to the canonical `active` name.
+        if "active" not in existing_eiendom_columns:
+            if "stale" in existing_eiendom_columns:
+                # stale used 1=active semantics, so values map directly.
                 try:
-                    cursor.execute("ALTER TABLE eiendom RENAME COLUMN found_in_last_search TO stale")
+                    cursor.execute("ALTER TABLE eiendom RENAME COLUMN stale TO active")
                 except sqlite3.OperationalError:
-                    cursor.execute("ALTER TABLE eiendom ADD COLUMN stale BOOLEAN DEFAULT 1")
-                    cursor.execute(
-                        "UPDATE eiendom SET stale = COALESCE(found_in_last_search, 1)"
-                    )
+                    cursor.execute("ALTER TABLE eiendom ADD COLUMN active BOOLEAN DEFAULT 1")
+                    cursor.execute("UPDATE eiendom SET active = COALESCE(stale, 1)")
+            elif "found_in_last_search" in existing_eiendom_columns:
+                try:
+                    cursor.execute("ALTER TABLE eiendom RENAME COLUMN found_in_last_search TO active")
+                except sqlite3.OperationalError:
+                    cursor.execute("ALTER TABLE eiendom ADD COLUMN active BOOLEAN DEFAULT 1")
+                    cursor.execute("UPDATE eiendom SET active = COALESCE(found_in_last_search, 1)")
             elif "is_active" in existing_eiendom_columns:
                 try:
-                    cursor.execute("ALTER TABLE eiendom RENAME COLUMN is_active TO stale")
+                    cursor.execute("ALTER TABLE eiendom RENAME COLUMN is_active TO active")
                 except sqlite3.OperationalError:
-                    cursor.execute("ALTER TABLE eiendom ADD COLUMN stale BOOLEAN DEFAULT 1")
-                    cursor.execute(
-                        "UPDATE eiendom SET stale = COALESCE(is_active, 1)"
-                    )
+                    cursor.execute("ALTER TABLE eiendom ADD COLUMN active BOOLEAN DEFAULT 1")
+                    cursor.execute("UPDATE eiendom SET active = COALESCE(is_active, 1)")
             else:
-                cursor.execute("ALTER TABLE eiendom ADD COLUMN stale BOOLEAN DEFAULT 1")
+                cursor.execute("ALTER TABLE eiendom ADD COLUMN active BOOLEAN DEFAULT 1")
+
+            cursor.execute("PRAGMA table_info(eiendom)")
+            existing_eiendom_columns = {row[1] for row in cursor.fetchall()}
+
+        # Drop the now-redundant `stale` column if still present alongside `active`.
+        if "stale" in existing_eiendom_columns:
+            try:
+                cursor.execute("ALTER TABLE eiendom DROP COLUMN stale")
+            except sqlite3.OperationalError:
+                pass  # SQLite < 3.35 — leave the zombie column, it is never written.
 
             cursor.execute("PRAGMA table_info(eiendom)")
             existing_eiendom_columns = {row[1] for row in cursor.fetchall()}
@@ -222,9 +235,9 @@ class PropertyDatabase:
 
         # Create indexes for better query performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_finnkode ON eiendom(finnkode)')
-        cursor.execute('DROP INDEX IF EXISTS idx_eiendom_active')
+        cursor.execute('DROP INDEX IF EXISTS idx_eiendom_stale')
         cursor.execute('DROP INDEX IF EXISTS idx_eiendom_found_in_last_search')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_stale ON eiendom(stale)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_active ON eiendom(active)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_exported ON eiendom(exported_to_sheets)')
         
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_eiendom_processed_finnkode ON eiendom_processed(finnkode)')
@@ -271,6 +284,7 @@ class PropertyDatabase:
                 pris INTEGER,
                 lat REAL,
                 lng REAL,
+                property_type TEXT,
                 duplicate_of_finnkode TEXT,
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -280,6 +294,11 @@ class PropertyDatabase:
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_dnbeiendom_active ON dnbeiendom(active)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_dnbeiendom_exported ON dnbeiendom(exported_to_sheets)')
+        # Migrate existing tables that lack property_type column.
+        try:
+            cursor.execute("ALTER TABLE dnbeiendom ADD COLUMN property_type TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists.
         conn.commit()
         conn.close()
     
@@ -392,7 +411,7 @@ class PropertyDatabase:
                                                 info_gross_area = ?, info_usable_e_area = ?, info_usable_b_area = ?,
                                                 info_open_area = ?, info_plot_area = ?, info_plot_ownership = ?, info_property_type = ?, info_construction_year = ?,
                         pris_kvm = ?,
-                        stale = 1,
+                        active = 1,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE finnkode = ?
                 ''', (data['tilgjengelighet'], data['adresse'], data['postnummer'],
@@ -464,14 +483,14 @@ class PropertyDatabase:
             placeholders = ','.join('?' * len(active_finnkodes))
             cursor.execute(f'''
                 UPDATE {table}
-                SET stale = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE finnkode NOT IN ({placeholders}) AND stale = 1
+                SET active = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE finnkode NOT IN ({placeholders}) AND active = 1
             ''', active_finnkodes)
         else:
             cursor.execute(f'''
                 UPDATE {table}
-                SET stale = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE stale = 1
+                SET active = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE active = 1
             ''')
         
         deactivated = cursor.rowcount
@@ -486,12 +505,12 @@ class PropertyDatabase:
         conn = self.get_connection()
         
         if as_dataframe:
-            df = pd.read_sql_query(f'SELECT * FROM {table} WHERE stale = 1 ORDER BY scraped_at DESC', conn)
+            df = pd.read_sql_query(f'SELECT * FROM {table} WHERE active = 1 ORDER BY scraped_at DESC', conn)
             conn.close()
             return df
         else:
             cursor = conn.cursor()
-            cursor.execute(f'SELECT * FROM {table} WHERE stale = 1 ORDER BY scraped_at DESC')
+            cursor.execute(f'SELECT * FROM {table} WHERE active = 1 ORDER BY scraped_at DESC')
             rows = cursor.fetchall()
             conn.close()
             return rows
@@ -502,7 +521,7 @@ class PropertyDatabase:
         
         df = pd.read_sql_query(f'''
             SELECT * FROM {table} 
-            WHERE stale = 1 AND exported_to_sheets = 0 
+            WHERE active = 1 AND exported_to_sheets = 0 
             ORDER BY scraped_at DESC
         ''', conn)
         conn.close()
@@ -535,7 +554,7 @@ class PropertyDatabase:
         Update tilgjengelighet (status) for a property listing.
 
         Note:
-            stale is managed by search/scrape matching logic
+            active is managed by search/scrape matching logic
             (insert_or_update_eiendom + mark_inactive), not by status refresh.
         
         Args:
@@ -574,7 +593,7 @@ class PropertyDatabase:
             SELECT 
                 e.finnkode as "Finnkode",
                 e.tilgjengelighet as "Tilgjengelighet",
-                e.stale as "stale",
+                e.active as "active",
                 COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
                 e.postnummer as "Postnummer",
                 e.pris as "Pris",
@@ -623,7 +642,7 @@ class PropertyDatabase:
             query += " AND CAST(e.info_usable_i_area AS REAL) >= ?"
             params.append(MIN_BRA_I)
 
-        query += " ORDER BY e.stale DESC, e.scraped_at DESC"
+        query += " ORDER BY e.active DESC, e.scraped_at DESC"
 
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
@@ -641,7 +660,7 @@ class PropertyDatabase:
         """Get listings for FINN status refresh checks.
 
         Args:
-            only_inactive: If True, only include listings with stale = 0.
+            only_inactive: If True, only include listings with active = 0.
         """
         if only_inactive:
             return self.get_stale_eiendom_for_status_refresh(require_url=True)
@@ -653,7 +672,7 @@ class PropertyDatabase:
                 e.url as "URL",
                 e.tilgjengelighet as "Tilgjengelighet",
                 COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
-                e.stale as "stale"
+                e.active as "active"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             WHERE e.url IS NOT NULL AND TRIM(e.url) != ''
@@ -661,16 +680,16 @@ class PropertyDatabase:
 
         params = []
         if only_inactive:
-            query += " AND e.stale = 0"
+            query += " AND e.active = 0"
 
-        query += " ORDER BY e.stale ASC, e.scraped_at DESC"
+        query += " ORDER BY e.active ASC, e.scraped_at DESC"
 
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         return df
 
     def get_stale_eiendom_for_status_refresh(self, require_url: bool = True) -> pd.DataFrame:
-        """Get stale listings (stale=0) for FINN status refresh checks.
+        """Get inactive listings (active=0) for FINN status refresh checks.
 
         Args:
             require_url: If True, only include rows with a non-empty URL.
@@ -682,10 +701,10 @@ class PropertyDatabase:
                 e.url as "URL",
                 e.tilgjengelighet as "Tilgjengelighet",
                 COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
-                e.stale as "stale"
+                e.active as "active"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
-            WHERE e.stale = 0
+            WHERE e.active = 0
         '''
 
         if require_url:
@@ -698,10 +717,10 @@ class PropertyDatabase:
         return df
 
     def get_stale_eiendom_for_sheets(self) -> pd.DataFrame:
-        """Get sold/inactive stale listings formatted for Google Sheets export.
+        """Get sold/inactive listings formatted for Google Sheets export.
 
         Scope is intentionally strict for the dedicated Sold tab:
-        - stale = 0
+        - active = 0
         - Tilgjengelighet in {Solgt, Inaktiv} (case-insensitive)
 
         Uses the same visible columns as get_eiendom_for_sheets(), but without
@@ -713,7 +732,7 @@ class PropertyDatabase:
             SELECT
                 e.finnkode as "Finnkode",
                 e.tilgjengelighet as "Tilgjengelighet",
-                e.stale as "stale",
+                e.active as "active",
                 COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
                 e.postnummer as "Postnummer",
                 e.pris as "Pris",
@@ -751,7 +770,7 @@ class PropertyDatabase:
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
-                        WHERE e.stale = 0
+            WHERE e.active = 0
                             AND LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) IN ('solgt', 'inaktiv')
             ORDER BY e.scraped_at DESC
         '''
@@ -821,7 +840,7 @@ class PropertyDatabase:
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
-            WHERE e.stale = 0 AND (e.tilgjengelighet IS NULL OR e.tilgjengelighet != 'Solgt')
+            WHERE e.active = 0 AND (e.tilgjengelighet IS NULL OR e.tilgjengelighet != 'Solgt')
         '''
 
         params = []
@@ -846,7 +865,7 @@ class PropertyDatabase:
         return df
 
     def get_eiendom_missing_coordinates(self) -> pd.DataFrame:
-        """Get listings that are missing lat/lng and are visible in Sheets (stale=0, not Solgt/Inaktiv)."""
+        """Get active listings that are missing lat/lng coordinates."""
         conn = self.get_connection()
 
         query = '''
@@ -855,14 +874,14 @@ class PropertyDatabase:
                 COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
                 e.postnummer as "Postnummer",
                 e.url as "URL",
-                e.stale as "stale",
+                e.active as "active",
                 e.tilgjengelighet as "Tilgjengelighet",
                 ep.lat as "LAT",
                 ep.lng as "LNG"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             WHERE (ep.lat IS NULL OR ep.lng IS NULL)
-              AND e.stale = 0
+              AND e.active = 1
               AND (e.tilgjengelighet IS NULL OR LOWER(e.tilgjengelighet) NOT IN ('solgt', 'inaktiv'))
             ORDER BY e.scraped_at DESC
         '''
@@ -1003,6 +1022,31 @@ class PropertyDatabase:
         
         conn.close()
         return df
+
+    def get_travel_donor_seed(self) -> pd.DataFrame:
+        """Return travel donor seed rows from processed table for cross-source reuse.
+
+        This is intentionally sourced from `eiendom_processed` (not joined to
+        `eiendom`) so synthetic finnkoder can also participate as donors.
+        """
+        conn = self.get_connection()
+        query = '''
+            SELECT
+                ep.finnkode as "Finnkode",
+                ep.lat as "LAT",
+                ep.lng as "LNG",
+                ep.pendl_morn_brj as "PENDL MORN BRJ",
+                ep.pendl_dag_brj as "PENDL DAG BRJ",
+                ep.pendl_morn_mvv as "PENDL MORN MVV",
+                ep.pendl_dag_mvv as "PENDL DAG MVV",
+                ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE"
+            FROM eiendom_processed ep
+            WHERE ep.finnkode IS NOT NULL AND TRIM(ep.finnkode) != ''
+            ORDER BY ep.updated_at DESC
+        '''
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
     
     def drop_and_recreate_processed_table(self):
         """Drop the old eiendom_processed table and recreate it with new schema."""
@@ -1041,8 +1085,7 @@ class PropertyDatabase:
         query = '''
             SELECT finnkode, adresse, postnummer, pendlevei 
             FROM eiendom 
-            WHERE stale = 1
-        '''
+            WHERE active = 1        '''
         df = pd.read_sql_query(query, conn)
         conn.close()
         
@@ -1150,13 +1193,13 @@ class PropertyDatabase:
         cursor.execute(f'SELECT COUNT(*) FROM {table}')
         total = cursor.fetchone()[0]
         
-        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE stale = 1')
+        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE active = 1')
         listed = cursor.fetchone()[0]
         
-        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE stale = 0 AND tilgjengelighet != \'Solgt\'')
+        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE active = 0 AND tilgjengelighet != \'Solgt\'')
         unlisted = cursor.fetchone()[0]
         
-        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE exported_to_sheets = 0 AND stale = 1')
+        cursor.execute(f'SELECT COUNT(*) FROM {table} WHERE exported_to_sheets = 0 AND active = 1')
         not_exported = cursor.fetchone()[0]
         
         conn.close()
@@ -1200,6 +1243,10 @@ class PropertyDatabase:
             else:
                 duplicate = str(dup_raw).strip()
 
+            # Property type (Boligtype)
+            prop_type_raw = row.get('PropertyType') or row.get('property_type') or row.get('Boligtype') or ''
+            property_type = str(prop_type_raw).strip() if prop_type_raw and not (isinstance(prop_type_raw, float) and pd.isna(prop_type_raw)) else ''
+
             if not url and not dnb_id:
                 # skip rows without an identifier
                 continue
@@ -1219,15 +1266,16 @@ class PropertyDatabase:
                     SET dnb_id = COALESCE(?, dnb_id), adresse = ?, postnummer = ?, pris = ?,
                         lat = COALESCE(?, lat), lng = COALESCE(?, lng),
                         duplicate_of_finnkode = COALESCE(?, duplicate_of_finnkode),
+                        property_type = COALESCE(?, property_type),
                         active = 1, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                ''', (dnb_id or None, adresse, postnummer, pris, lat, lng, duplicate or None, existing[0]))
+                ''', (dnb_id or None, adresse, postnummer, pris, lat, lng, duplicate or None, property_type or None, existing[0]))
                 updated += 1
             else:
                 cursor.execute('''
-                    INSERT INTO dnbeiendom (dnb_id, url, adresse, postnummer, pris, lat, lng, duplicate_of_finnkode)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (dnb_id or None, url or None, adresse, postnummer, pris, lat, lng, duplicate or None))
+                    INSERT INTO dnbeiendom (dnb_id, url, adresse, postnummer, pris, lat, lng, duplicate_of_finnkode, property_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (dnb_id or None, url or None, adresse, postnummer, pris, lat, lng, duplicate or None, property_type or None))
                 inserted += 1
 
         conn.commit()

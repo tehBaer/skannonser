@@ -82,12 +82,14 @@ def run_eiendom_postprocess_and_store(
     print("FINN Post-processing data")
     print("=" * 60)
     live_data = pd.read_csv(f'{project_name}/A_live.csv')
+    donor_seed_df = db.get_travel_donor_seed()
     processed_data = post_process_eiendom(
         live_data,
         project_name,
         db,
         calculate_location_features=calculate_location_features,
         calculate_google_directions=calculate_google_directions,
+        donor_seed_df=donor_seed_df,
     )
 
     print("\n" + "=" * 60)

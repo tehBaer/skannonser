@@ -63,6 +63,17 @@ def extract_fields_from_entry(entry: dict):
     out['Region'] = addr.get('addressRegion')
     out['PostalCode'] = addr.get('postalCode')
 
+    # Map JSON-LD @type to Norwegian boligtype categories.
+    about_type = about.get('@type', '')
+    TYPE_MAP = {
+        'Apartment': 'Leilighet',
+        'House': 'Enebolig',
+        'Accommodation': 'Fritidsbolig',
+        'Landform': 'Tomt',
+        'Place': 'Annet',
+    }
+    out['PropertyType'] = TYPE_MAP.get(about_type, about_type or '')
+
     geo = about.get('geo') or {}
     out['Latitude'] = geo.get('latitude')
     out['Longitude'] = geo.get('longitude')

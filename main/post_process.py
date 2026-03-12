@@ -1,6 +1,7 @@
 ﻿import re
 import time
 import math
+import os
 
 import pandas as pd
 from pandas import DataFrame
@@ -189,6 +190,7 @@ def post_process_eiendom(
     calculate_location_features: bool = True,
     calculate_google_directions: bool = None,
     travel_targets: str = "all",
+    donor_seed_df: DataFrame | None = None,
 ) -> DataFrame:
     """
     Post-process eiendom data by calculating location features and cleaning data.
@@ -201,6 +203,8 @@ def post_process_eiendom(
         calculate_google_directions: Whether to run paid Google Directions calculations.
             If None, defaults to the value of calculate_location_features.
         travel_targets: Which travel destination group to compute: "all", "brj", or "mvv".
+        donor_seed_df: Optional dataframe with additional donor candidates
+            (Finnkode, LAT/LNG, travel columns) shared across runs/sources.
     
     Returns:
         Processed DataFrame
@@ -217,6 +221,7 @@ def post_process_eiendom(
         target_value = "all"
     run_brj = target_value in {"all", "brj"}
     run_mvv = target_value in {"all", "mvv"}
+    updates_only_logging = str(os.getenv("TRAVEL_LOG_UPDATES_ONLY", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
     # Optional filters/config for API calls and sheets export
     try:
@@ -267,7 +272,6 @@ def post_process_eiendom(
             print(f"⚠️  Could not load existing data from database: {e}")
     else:
         # Fallback to CSV if no database provided (backwards compatibility)
-        import os
         processed_file_path = f'{projectName}/AB_processed.csv'
         if os.path.exists(processed_file_path):
             try:
@@ -319,12 +323,24 @@ def post_process_eiendom(
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
     # Calculate PRIS KVM from best available area source.
-    area_for_price = df['Primærrom'].fillna(df['Internt bruksareal (BRA-i)']).fillna(df['Bruksareal'])
-    mask = df['Pris'].notna() & area_for_price.notna() & (area_for_price > 0)
-    df['PRIS KVM'] = (df['Pris'].astype(float) / area_for_price.astype(float)).where(mask)
-    # Replace infinity with NaN before converting to Int64
-    df['PRIS KVM'] = df['PRIS KVM'].replace([float('inf'), float('-inf')], pd.NA)
-    df['PRIS KVM'] = df['PRIS KVM'].round().astype('Int64')
+    # Some pipelines (e.g., DNB export) do not include FINN area columns.
+    primary_area = df['Primærrom'] if 'Primærrom' in df.columns else pd.Series(pd.NA, index=df.index)
+    usable_i_area = (
+        df['Internt bruksareal (BRA-i)']
+        if 'Internt bruksareal (BRA-i)' in df.columns
+        else pd.Series(pd.NA, index=df.index)
+    )
+    usable_area = df['Bruksareal'] if 'Bruksareal' in df.columns else pd.Series(pd.NA, index=df.index)
+    area_for_price = primary_area.fillna(usable_i_area).fillna(usable_area)
+
+    if 'Pris' in df.columns:
+        price_numeric = pd.to_numeric(df['Pris'], errors='coerce')
+        area_numeric = pd.to_numeric(area_for_price, errors='coerce')
+        mask = price_numeric.notna() & area_numeric.notna() & (area_numeric > 0)
+        df['PRIS KVM'] = (price_numeric / area_numeric).where(mask)
+        # Replace infinity with NaN before converting to Int64
+        df['PRIS KVM'] = df['PRIS KVM'].replace([float('inf'), float('-inf')], pd.NA)
+        df['PRIS KVM'] = df['PRIS KVM'].round().astype('Int64')
 
     # Format capitalization
     df['Adresse'] = df['Adresse'].str.title()
@@ -380,6 +396,37 @@ def post_process_eiendom(
     donor_cache_brj = _build_travel_donor_cache(df, brj_travel_columns, lat_col, lng_col, max_travel_minutes)
     donor_cache_mvv = _build_travel_donor_cache(df, mvv_travel_columns, lat_col, lng_col, max_travel_minutes)
 
+    if donor_seed_df is not None and not donor_seed_df.empty:
+        seed_lat_col = 'LAT' if 'LAT' in donor_seed_df.columns else ('lat' if 'lat' in donor_seed_df.columns else None)
+        seed_lng_col = 'LNG' if 'LNG' in donor_seed_df.columns else ('lng' if 'lng' in donor_seed_df.columns else None)
+
+        def _merge_seed_cache(cache: list[tuple[float, float, str]], required_cols: list[str]) -> int:
+            seed_cache = _build_travel_donor_cache(
+                donor_seed_df,
+                required_cols,
+                seed_lat_col,
+                seed_lng_col,
+                max_travel_minutes,
+            )
+            existing = {finnkode for _, _, finnkode in cache}
+            added = 0
+            for item in seed_cache:
+                finnkode = item[2]
+                if finnkode in existing:
+                    continue
+                cache.append(item)
+                existing.add(finnkode)
+                added += 1
+            return added
+
+        added_brj = _merge_seed_cache(donor_cache_brj, brj_travel_columns)
+        added_mvv = _merge_seed_cache(donor_cache_mvv, mvv_travel_columns)
+        if added_brj or added_mvv:
+            print(
+                "Loaded shared donor seeds "
+                f"(BRJ: +{added_brj}, MVV: +{added_mvv})"
+            )
+
     # Debugging: show donor cache sizes to help diagnose missing donor assignments
     try:
         print(f"Debug: donor_cache_brj size: {len(donor_cache_brj)}; sample: {[c[2] for c in donor_cache_brj[:5]]}")
@@ -414,6 +461,13 @@ def post_process_eiendom(
     pendl_dag_missing = df.loc[eligible_mask, 'PENDL DAG BRJ'].isna().sum() if run_brj else 0
     pendl_morn_mvv_missing = df.loc[eligible_mask, 'PENDL MORN MVV'].isna().sum() if run_mvv else 0
     pendl_dag_mvv_missing = df.loc[eligible_mask, 'PENDL DAG MVV'].isna().sum() if run_mvv else 0
+
+    rows_missing_any = pd.Series(False, index=df.index)
+    if run_brj:
+        rows_missing_any = rows_missing_any | df['PENDL MORN BRJ'].isna() | df['PENDL DAG BRJ'].isna()
+    if run_mvv:
+        rows_missing_any = rows_missing_any | df['PENDL MORN MVV'].isna() | df['PENDL DAG MVV'].isna()
+    rows_missing_count = int((eligible_mask & rows_missing_any).sum())
     
     if pendl_morn_missing > 0 or pendl_dag_missing > 0 or pendl_morn_mvv_missing > 0 or pendl_dag_mvv_missing > 0:
         if run_brj:
@@ -424,6 +478,8 @@ def post_process_eiendom(
             print(f"⚠️  {pendl_dag_mvv_missing} properties missing PENDL DAG MVV (public transit return from Lambertseter svømmeklubb)")
         if MAX_PRICE is not None:
             print(f"⚠️  Price filter active: MAX_PRICE = {MAX_PRICE}")
+        if updates_only_logging:
+            print(f"ℹ️  Updates-only logging enabled: {rows_missing_count} rows need travel updates")
         
         proceed, requests_per_minute = confirm_with_rate_limit("Calculate location features for these properties?")
         
@@ -453,8 +509,9 @@ def post_process_eiendom(
                 except Exception as checkpoint_error:
                     print(f"⚠️  Could not checkpoint row {row_idx}: {checkpoint_error}")
             
-            print(f"\n🚀 Starting calculations for {len(df)} properties...")
-            print(f"   (This may take a while - each property needs 2 API calls)")
+            eligible_total = int(eligible_mask.sum())
+            brj_api_calls_needed = int(df.loc[eligible_mask, 'PENDL MORN BRJ'].isna().sum()) + int(df.loc[eligible_mask, 'PENDL DAG BRJ'].isna().sum()) if run_brj else 0
+            print(f"\n🚀 BRJ: scanning {eligible_total} eligible properties, {brj_api_calls_needed} API call(s) needed...")
             if requests_per_minute < 60.0:
                 print(f"   Rate limited to {requests_per_minute} requests/minute\n")
             else:
@@ -502,14 +559,15 @@ def post_process_eiendom(
                     donor_cache.append((lat, lng, finnkode))
 
             try:
-                for idx, row in df.loc[eligible_mask].iterrows():
+                for loop_pos, (idx, row) in enumerate(df.loc[eligible_mask].iterrows(), start=1):
                     address = row['Adresse']
                     postnummer = row.get('Postnummer')
-                    current_num = calculated_transit + calculated_transit_return
 
                     # Show which property we're working on
-                    if current_num % 5 == 0 or current_num < 5:
-                        print(f"⏳ Processing property {current_num + 1}/{len(df)}: {address}")
+                    if not updates_only_logging and (loop_pos % 5 == 0 or loop_pos <= 5):
+                        print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
+
+                    row_changed = False
 
                     donor_finnkode = _maybe_assign_donor(row, brj_travel_columns, donor_cache_brj)
                     if donor_finnkode:
@@ -517,7 +575,9 @@ def post_process_eiendom(
                         if not had_donor:
                             df.at[idx, 'TRAVEL_COPY_FROM_FINNKODE'] = donor_finnkode
                             donor_assigned_count += 1
-                            print(f"   🔁 Using donor travel values from #{donor_finnkode}")
+                            row_changed = True
+                            if not updates_only_logging:
+                                print(f"   🔁 Using donor travel values from #{donor_finnkode}")
 
                     # Calculate PENDL MORN BRJ (total public transit commute time to work)
                     if run_brj and pd.isna(row.get('PENDL MORN BRJ')):
@@ -525,16 +585,20 @@ def post_process_eiendom(
                             pass
                         else:
                             try:
-                                print(f"   📍 Calculating public transit time...", end='', flush=True)
+                                if not updates_only_logging:
+                                    print(f"   📍 Calculating public transit time...", end='', flush=True)
                                 minutes = transit_commute_calculator.calculate(address, postnummer)
                                 if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                     df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
                                     calculated_transit += 1
-                                    print(f" ✓ {minutes} min")
+                                    row_changed = True
+                                    if not updates_only_logging:
+                                        print(f" ✓ {minutes} min")
                                     if delay_between_requests > 0:
                                         time.sleep(delay_between_requests)
                                 else:
-                                    print(f" ✗ Rejected/failed value ({minutes})")
+                                    if not updates_only_logging:
+                                        print(f" ✗ Rejected/failed value ({minutes})")
                             except Exception as e:
                                 print(f" ✗ Error: {str(e)}")
 
@@ -547,7 +611,8 @@ def post_process_eiendom(
                             pass
                         else:
                             try:
-                                print(f"   🚌 Calculating public transit return (16:00)...", end='', flush=True)
+                                if not updates_only_logging:
+                                    print(f"   🚌 Calculating public transit return (16:00)...", end='', flush=True)
                                 minutes = transit_commute_calculator.calculate(
                                     address,
                                     postnummer,
@@ -558,21 +623,27 @@ def post_process_eiendom(
                                 if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                     df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
                                     calculated_transit_return += 1
-                                    print(f" ✓ {minutes} min")
+                                    row_changed = True
+                                    if not updates_only_logging:
+                                        print(f" ✓ {minutes} min")
                                     if delay_between_requests > 0:
                                         time.sleep(delay_between_requests)
                                 else:
-                                    print(f" ✗ Rejected/failed value ({minutes})")
+                                    if not updates_only_logging:
+                                        print(f" ✗ Rejected/failed value ({minutes})")
                             except Exception as e:
                                 print(f" ✗ Error: {str(e)}")
 
                     _add_row_as_donor_if_complete(idx, brj_travel_columns, donor_cache_brj)
 
-                    _checkpoint_row(idx)
+                    if row_changed:
+                        _checkpoint_row(idx)
+                        if updates_only_logging:
+                            print(f"✓ Updated BRJ: {address}")
 
                     # Summary every 10 properties
                     total_calculated = calculated_transit + calculated_transit_return
-                    if total_calculated % 20 == 0 and total_calculated > 0:
+                    if not updates_only_logging and total_calculated % 20 == 0 and total_calculated > 0:
                         print(
                             f"\n📊 Progress: {calculated_transit} transit "
                             f"+ {calculated_transit_return} transit_return "
@@ -602,22 +673,26 @@ def post_process_eiendom(
                 calculated_transit_return_mvv = 0
                 donor_assigned_mvv_count = 0
 
-                print(f"\n🚀 Starting calculations for Lambertseter svømmeklubb (MVV)...\n")
+                mvv_api_calls_needed = int(df.loc[eligible_mask, 'PENDL MORN MVV'].isna().sum()) + int(df.loc[eligible_mask, 'PENDL DAG MVV'].isna().sum())
+                print(f"\n🚀 MVV: scanning {eligible_total} eligible properties, {mvv_api_calls_needed} API call(s) needed...\n")
 
                 try:
-                    for idx, row in df.loc[eligible_mask].iterrows():
+                    for loop_pos, (idx, row) in enumerate(df.loc[eligible_mask].iterrows(), start=1):
                         address = row['Adresse']
                         postnummer = row.get('Postnummer')
-                        current_num = calculated_transit_mvv + calculated_transit_return_mvv
 
-                        if current_num % 10 == 0 or current_num < 5:
-                            print(f"⏳ Processing property {current_num + 1}/{len(df[eligible_mask])}: {address}")
+                        if not updates_only_logging and (loop_pos % 10 == 0 or loop_pos <= 5):
+                            print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
+
+                        row_changed = False
 
                         donor_finnkode = _maybe_assign_donor(row, mvv_travel_columns, donor_cache_mvv)
                         if donor_finnkode and not str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
                             df.at[idx, 'TRAVEL_COPY_FROM_FINNKODE'] = donor_finnkode
                             donor_assigned_mvv_count += 1
-                            print(f"   🔁 Using donor travel values from #{donor_finnkode}")
+                            row_changed = True
+                            if not updates_only_logging:
+                                print(f"   🔁 Using donor travel values from #{donor_finnkode}")
 
                         # Calculate PENDL MORN MVV
                         if pd.isna(row.get('PENDL MORN MVV')):
@@ -625,16 +700,20 @@ def post_process_eiendom(
                                 pass
                             else:
                                 try:
-                                    print(f"   📍 Calculating public transit to Lambertseter svømmeklubb...", end='', flush=True)
+                                    if not updates_only_logging:
+                                        print(f"   📍 Calculating public transit to Lambertseter svømmeklubb...", end='', flush=True)
                                     minutes = transit_commute_calculator_mvv.calculate(address, postnummer)
                                     if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                         df.at[idx, 'PENDL MORN MVV'] = int(minutes)
                                         calculated_transit_mvv += 1
-                                        print(f" ✓ {minutes} min")
+                                        row_changed = True
+                                        if not updates_only_logging:
+                                            print(f" ✓ {minutes} min")
                                         if delay_between_requests > 0:
                                             time.sleep(delay_between_requests)
                                     else:
-                                        print(f" ✗ Rejected/failed value ({minutes})")
+                                        if not updates_only_logging:
+                                            print(f" ✗ Rejected/failed value ({minutes})")
                                 except Exception as e:
                                     print(f" ✗ Error: {str(e)}")
 
@@ -646,7 +725,8 @@ def post_process_eiendom(
                                 pass
                             else:
                                 try:
-                                    print(f"   🚌 Calculating public transit return from Lambertseter svømmeklubb (16:00)...", end='', flush=True)
+                                    if not updates_only_logging:
+                                        print(f"   🚌 Calculating public transit return from Lambertseter svømmeklubb (16:00)...", end='', flush=True)
                                     minutes = transit_commute_calculator_mvv.calculate(
                                         address,
                                         postnummer,
@@ -657,17 +737,23 @@ def post_process_eiendom(
                                     if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                         df.at[idx, 'PENDL DAG MVV'] = int(minutes)
                                         calculated_transit_return_mvv += 1
-                                        print(f" ✓ {minutes} min")
+                                        row_changed = True
+                                        if not updates_only_logging:
+                                            print(f" ✓ {minutes} min")
                                         if delay_between_requests > 0:
                                             time.sleep(delay_between_requests)
                                     else:
-                                        print(f" ✗ Rejected/failed value ({minutes})")
+                                        if not updates_only_logging:
+                                            print(f" ✗ Rejected/failed value ({minutes})")
                                 except Exception as e:
                                     print(f" ✗ Error: {str(e)}")
 
                         _add_row_as_donor_if_complete(idx, mvv_travel_columns, donor_cache_mvv)
 
-                        _checkpoint_row(idx)
+                        if row_changed:
+                            _checkpoint_row(idx)
+                            if updates_only_logging:
+                                print(f"✓ Updated MVV: {address}")
                 except KeyboardInterrupt:
                     print("\n⚠️  Interrupted during MVV travel calculations. Returning partial results and preserving saved progress.")
 
