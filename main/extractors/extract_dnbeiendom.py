@@ -1,118 +1,151 @@
 import os
-import random
-import time
-import re
+import json
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+SEARCH_URL = (
+    'https://dnbeiendom.no/bolig?'
+    'estateStatus=project_false&'
+    'locations=BUSKERUD_ae0fe87e-0ba2-46b7-9164-5ee26c4fc85b&'
+    'locations=AKERSHUS_fe2e9e2c-620e-4190-9af0-a5baa93abc1f&'
+    'locations=OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c'
+)
+LISTING_PATH_PREFIX = '/bolig/'
+PROJECT_DIR = 'data/dnbeiendom'
+OUTPUT_FILE = '0_URLs.csv'
+MAX_PAGES = 200
 
-def _parse_count(value: str):
-    digits_only = re.sub(r'\D', '', value)
-    if not digits_only:
-        return None
-    try:
-        return int(digits_only)
-    except ValueError:
-        return None
+
+def _set_page(search_url, page):
+    parsed = urlparse(search_url)
+    query_pairs = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != 'page']
+    query_pairs.append(('page', str(page)))
+    new_query = urlencode(query_pairs, doseq=True)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 
-def parse_resultpage_dn(urlBase, folder, page: int = 1, df=None, seen_urls=None):
-    append = ''
-    if page != 1:
-        append = f'&page={page}'
+def _extract_listing_urls_from_html(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    found = set()
 
-    if '?' in urlBase:
-        url = urlBase + append
-    else:
-        url = urlBase + (('?' + append.lstrip('&')) if append else '')
-
-    response = requests.get(url)
-    response.raise_for_status()
-
-    soup = BeautifulSoup(response.content, 'html.parser')
-
-    # Save HTML for inspection
-    os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, f'page{page}.html'), 'w', encoding='utf-8') as fh:
-        fh.write(soup.prettify())
-
-    hrefs = [a.get('href') for a in soup.find_all('a', href=True)]
-
-    matches = set()
-    for href in hrefs:
-        if not href:
+    # Primary source: JSON-LD ItemList embedded in search page.
+    for script in soup.find_all('script', attrs={'type': 'application/ld+json'}):
+        script_content = script.string or script.get_text() or ''
+        script_content = script_content.strip()
+        if not script_content:
             continue
-        # Accept links that point to listings on dnbeiendom, or relative /bolig paths
-        if 'dnbeiendom.no' in href and '/bolig' in href:
-            matches.add(href)
-        elif href.startswith('/bolig') or '/bolig?' in href or '/bolig/' in href:
-            matches.add(href)
 
-    full_urls = []
-    for match in sorted(matches):
-        if match.startswith('http'):
-            full_urls.append(match)
+        try:
+            payload = json.loads(script_content)
+        except Exception:
+            continue
+
+        entries = payload if isinstance(payload, list) else [payload]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get('@type') != 'ItemList':
+                continue
+
+            item_elements = entry.get('itemListElement') or []
+            for li in item_elements:
+                if not isinstance(li, dict):
+                    continue
+                item = li.get('item') if isinstance(li.get('item'), dict) else li
+                url = item.get('url') or item.get('@id')
+                if not isinstance(url, str):
+                    continue
+
+                absolute = urljoin('https://dnbeiendom.no', url)
+                parsed = urlparse(absolute)
+                if parsed.netloc != 'dnbeiendom.no':
+                    continue
+                if not parsed.path.startswith(LISTING_PATH_PREFIX):
+                    continue
+
+                # Canonicalize: normalize case, remove fragments, use unquoted path
+                path = parsed.path.rstrip('/')
+                # Unquote to catch double-encoded variants
+                path = path.replace('%', '').lower() if '%' in path else path.lower().rstrip('/')
+                canonical = f"https://dnbeiendom.no{path}"
+                found.add(canonical)
+
+    if found:
+        return found
+
+    # Fallback source: anchor tags.
+    for tag in soup.find_all('a', href=True):
+        href = tag['href'].strip()
+        absolute = urljoin('https://dnbeiendom.no', href)
+        parsed = urlparse(absolute)
+        if parsed.netloc != 'dnbeiendom.no':
+            continue
+        if not parsed.path.startswith(LISTING_PATH_PREFIX):
+            continue
+        # Keep canonical URL without querystring/fragment to avoid duplicates.
+        path = parsed.path.rstrip('/')
+        path = path.replace('%', '').lower() if '%' in path else path.lower().rstrip('/')
+        canonical = f"https://dnbeiendom.no{path}"
+        found.add(canonical)
+    return found
+
+
+def fetch_urls_from_search(search_url, project_dir, output_filename, max_pages=MAX_PAGES):
+    print("\n" + "=" * 40)
+    print("DNB Crawl: URLs")
+    print("=" * 40)
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (compatible; dnbscraper/1.0; +https://dnbeiendom.no)'
+    }
+    all_urls = set()
+    consecutive_empty_pages = 0
+    consecutive_no_new_pages = 0
+
+    for page in range(1, max_pages + 1):
+        page_url = _set_page(search_url, page)
+        response = requests.get(page_url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        page_urls = _extract_listing_urls_from_html(response.text)
+        new_count = len(page_urls - all_urls)
+        all_urls.update(page_urls)
+
+        print(f"Page {page}: found {len(page_urls)} listing links ({new_count} new) [cumulative: {len(all_urls)}]")
+
+        if len(page_urls) == 0:
+            consecutive_empty_pages += 1
         else:
-            full_urls.append(f'https://dnbeiendom.no{match}')
+            consecutive_empty_pages = 0
 
-    if seen_urls is None:
-        seen_urls = set()
+        if new_count == 0:
+            consecutive_no_new_pages += 1
+        else:
+            consecutive_no_new_pages = 0
 
-    page_new_urls = [u for u in full_urls if u not in seen_urls]
-    seen_urls.update(page_new_urls)
-
-    new_df = pd.DataFrame(page_new_urls, columns=['URL'])
-    if df is not None:
-        df = pd.concat([df, new_df], ignore_index=True)
-    else:
-        df = new_df
-
-    # Try to extract total matches from page text (best-effort)
-    total_matches = None
-    m = re.search(r"(\d[\d\s\u00a0.,]+)\s+(annonser|boliger|treff)", response.text, flags=re.IGNORECASE)
-    if m:
-        total_matches = _parse_count(m.group(1))
-
-    # Return the number of NEW URLs found on this page (so caller can stop when 0)
-    return df, len(page_new_urls), seen_urls, total_matches
-
-
-def extract_dnbeiendom_urls(urlBase, projectname, outputFileName: str, max_pages: int = None):
-    df = pd.DataFrame(columns=['URL'])
-
-    os.makedirs(projectname, exist_ok=True)
-    os.makedirs(os.path.join(projectname, 'html_crawled'), exist_ok=True)
-
-    page = 1
-    seen_urls = set()
-    total_expected = None
-    while True:
-        folder = os.path.join(projectname, 'html_crawled')
-        df, match_count, seen_urls, parsed_total = parse_resultpage_dn(urlBase, folder, page, df, seen_urls)
-        if total_expected is None and parsed_total is not None:
-            total_expected = parsed_total
-
-        if match_count == 0:
-            print('No more results found. Stopping.')
+        # Stop when pages no longer produce new URLs.
+        if consecutive_empty_pages >= 2:
+            print(f"Stopping at page {page} after consecutive empty pages.")
+            break
+        if consecutive_no_new_pages >= 2:
+            print(f"Stopping at page {page} after consecutive pages without new URLs.")
             break
 
-        total_label = str(total_expected) if total_expected is not None else '?'
-        print(f"{len(df)}/{total_label} (page {page})")
+    matched = sorted(all_urls)
 
-        page += 1
-        if max_pages is not None and page > max_pages:
-            print(f"Reached max_pages={max_pages}. Stopping.")
-            break
-        time.sleep(random.uniform(200, 500) / 1000)
+    if not matched:
+        raise RuntimeError('No listing URLs found in search results; check search URL or page parsing.')
 
-    df.to_csv(os.path.join(projectname, outputFileName), index=False)
-    print(f"Crawling completed. Saved to {projectname}/{outputFileName}")
+    os.makedirs(project_dir, exist_ok=True)
+    df = pd.DataFrame(matched, columns=['URL'])
+    df.to_csv(os.path.join(project_dir, output_filename), index=False)
+    print(f"Found {len(matched)} unique URLs from search results")
+    print(f"Saved to {project_dir}/{output_filename}")
     return df
 
 
 if __name__ == '__main__':
-    url = 'https://dnbeiendom.no/bolig?estateStatus=project_false&locations=BUSKERUD_ae0fe87e-0ba2-46b7-9164-5ee26c4fc85b&locations=AKERSHUS_fe2e9e2c-620e-4190-9af0-a5baa93abc1f&locations=OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c'
-    # Cap pages to 39 per user's observation
-    extract_dnbeiendom_urls(url, 'data/dnbeiendom', '0_URLs.csv', max_pages=39)
+    fetch_urls_from_search(SEARCH_URL, PROJECT_DIR, OUTPUT_FILE)

@@ -289,7 +289,7 @@ class PropertyDatabase:
         conn.execute('PRAGMA journal_mode=WAL')
         return conn
     
-    def insert_or_update_eiendom(self, df: pd.DataFrame):
+    def insert_or_update_eiendom(self, df: pd.DataFrame, context: str = None):
         """Insert or update property listings from a DataFrame."""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -446,8 +446,13 @@ class PropertyDatabase:
         
         conn.commit()
         conn.close()
-        
-        print(f"Database updated: {inserted} inserted, {updated} updated")
+
+        if context is not None:
+            if inserted > 0 or updated > 0:
+                action = "inserted" if inserted > 0 else "checkpoint"
+                print(f"  Saved #{context}: {action} ({inserted} inserted, {updated} updated)")
+        else:
+            print(f"Database updated: {inserted} inserted, {updated} updated")
         return inserted, updated
     
     def mark_inactive(self, table: str, active_finnkodes: List[str]):
@@ -841,7 +846,7 @@ class PropertyDatabase:
         return df
 
     def get_eiendom_missing_coordinates(self) -> pd.DataFrame:
-        """Get listings that are missing lat/lng in processed table."""
+        """Get listings that are missing lat/lng and are visible in Sheets (stale=0, not Solgt/Inaktiv)."""
         conn = self.get_connection()
 
         query = '''
@@ -856,8 +861,10 @@ class PropertyDatabase:
                 ep.lng as "LNG"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
-            WHERE ep.lat IS NULL OR ep.lng IS NULL
-            ORDER BY e.stale DESC, e.scraped_at DESC
+            WHERE (ep.lat IS NULL OR ep.lng IS NULL)
+              AND e.stale = 0
+              AND (e.tilgjengelighet IS NULL OR LOWER(e.tilgjengelighet) NOT IN ('solgt', 'inaktiv'))
+            ORDER BY e.scraped_at DESC
         '''
 
         df = pd.read_sql_query(query, conn)

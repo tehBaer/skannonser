@@ -7,6 +7,7 @@
 
 const DEFAULT_LISTINGS_SHEET = 'Eie';
 const DEFAULT_SOLD_SHEET = 'Sold';
+const DEFAULT_DNB_SHEET = 'DNB';
 const DEFAULT_STATIONS_SHEET = 'Stations';
 const DEFAULT_FINN_POLYGON_SHEET = 'Finn Polygon Coords';
 const SEARCH_POLYGON_BUFFER_KM = 2;
@@ -72,6 +73,7 @@ function getBootstrapData_() {
     mapApiKey: props.getProperty('MAPS_API_KEY') || '',
     defaultListingsSheet: props.getProperty('LISTINGS_SHEET') || DEFAULT_LISTINGS_SHEET,
     defaultSoldSheet: props.getProperty('SOLD_SHEET') || DEFAULT_SOLD_SHEET,
+    defaultDnbSheet: props.getProperty('DNB_SHEET') || DEFAULT_DNB_SHEET,
     defaultStationsSheet: props.getProperty('STATIONS_SHEET') || DEFAULT_STATIONS_SHEET,
   };
 }
@@ -93,6 +95,13 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
     DEFAULT_SOLD_SHEET
   ).trim() || DEFAULT_SOLD_SHEET;
   const soldSheet = includeSold ? ss.getSheetByName(soldSheetName) : null;
+  const includeDnb = Boolean(options && options.includeDnb === true);
+  const dnbSheetName = String(
+    (options && options.dnbSheetName) ||
+    PropertiesService.getScriptProperties().getProperty('DNB_SHEET') ||
+    DEFAULT_DNB_SHEET
+  ).trim() || DEFAULT_DNB_SHEET;
+  const dnbSheet = includeDnb ? ss.getSheetByName(dnbSheetName) : null;
 
   if (!listingSheet) {
     throw new Error('Listings sheet not found: ' + (listingsSheetName || DEFAULT_LISTINGS_SHEET));
@@ -105,6 +114,10 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
   let soldResult = null;
   if (includeSold && soldSheet) {
     soldResult = getVisibleListings_(soldSheet, respectSheetFilters, searchBounds, searchPolygon);
+  }
+  let dnbResult = null;
+  if (includeDnb && dnbSheet) {
+    dnbResult = getVisibleListings_(dnbSheet, respectSheetFilters, searchBounds, searchPolygon);
   }
 
   const combinedRows = [];
@@ -133,6 +146,9 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
   if (soldResult) {
     pushUniqueByFinnkode(soldResult.rows, 'sold');
   }
+  if (dnbResult) {
+    pushUniqueByFinnkode(dnbResult.rows, 'dnb');
+  }
   const tAfterListings = Date.now();
 
   const stations = stationSheet ? getStations_(stationSheet) : [];
@@ -156,6 +172,9 @@ function getMapData(listingsSheetName, stationsSheetName, options) {
       soldSheet: soldSheet ? soldSheet.getName() : soldSheetName,
       soldSheetFound: Boolean(soldSheet),
       soldRowsVisible: soldResult ? soldResult.rows.length : 0,
+      dnbSheet: dnbSheet ? dnbSheet.getName() : dnbSheetName,
+      dnbSheetFound: Boolean(dnbSheet),
+      dnbRowsVisible: dnbResult ? dnbResult.rows.length : 0,
       stationsSheet: stationSheet ? stationSheet.getName() : '',
       totalDataRows: listingResult.meta.totalDataRows + (soldResult ? soldResult.meta.totalDataRows : 0),
       scannedRows: listingResult.meta.scannedRows + (soldResult ? soldResult.meta.scannedRows : 0),

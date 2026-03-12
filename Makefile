@@ -62,10 +62,31 @@ full:
 	$(PYTHON) main/runners/run_eiendom_db.py --step extract
 	# 4) DNB extraction
 	$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
+	# Optional coords fill (asks by default; set COORDS_CONFIRM=0 to skip prompt)
+	@if [ "$(COORDS_CONFIRM)" = "1" ]; then \
+		printf "Run coords fill now (geocode missing LAT/LNG)? [y/N]: "; \
+		read ans; \
+		case "$$ans" in \
+			y|Y|yes|YES) \
+				COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,);; \
+			*) \
+				echo "Skipping coords fill.";; \
+		esac; \
+	else \
+		COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,); \
+	fi
+	@echo ""
+	@echo "--- Next step: continue DB + sheet pipeline ---"
+	@echo ""
 	# Continue existing DB/sheet pipeline steps after extraction
 	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
 	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py
 	COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
+	@echo ""
+	@echo "--- Next step: refresh stale inactive listings ---"
+	@echo ""
+	# Re-check stale inactive listings (excludes already confirmed Solgt/Inaktiv)
+	$(PYTHON) main/sync/refresh_listings.py --only-inactive --exclude-status Solgt --exclude-status Inaktiv
 	$(PYTHON) main/tools/manage.py sync eiendom
 
 refresh:

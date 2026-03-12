@@ -445,7 +445,11 @@ def post_process_eiendom(
                 if db is None:
                     return
                 try:
-                    db.insert_or_update_eiendom(df.loc[[row_idx]].copy())
+                    row = df.loc[row_idx]
+                    finnkode = str(row.get('Finnkode', '') or '').strip()
+                    donor = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
+                    ctx = finnkode + (f" [donor→{donor}]" if donor else "")
+                    db.insert_or_update_eiendom(df.loc[[row_idx]].copy(), context=ctx)
                 except Exception as checkpoint_error:
                     print(f"⚠️  Could not checkpoint row {row_idx}: {checkpoint_error}")
             

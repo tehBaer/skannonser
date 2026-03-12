@@ -109,11 +109,13 @@ def extract_all(url_csv_path: str, output_folder: str):
     }
 
     for idx, url in enumerate(urls, start=1):
+        made_network_request = False
         try:
             # Try loading from cache or fetching+saving via loader; fallback to direct request.
             try:
                 soup = load_or_fetch_ad_html(url, output_folder, auto_save_new=True, force_save=False)
             except Exception:
+                made_network_request = True
                 resp = requests.get(url, headers=headers, timeout=15)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.content, 'html.parser')
@@ -131,7 +133,9 @@ def extract_all(url_csv_path: str, output_folder: str):
             failures.append({'URL': url, 'Index': idx, 'Error': str(e)})
             print(f"{idx}/{len(urls)}: ERROR {url} -> {e}")
 
-        time.sleep(random.uniform(200, 800) / 1000)
+        # Only sleep when we actually made a network request; cached reads need no delay
+        if made_network_request:
+            time.sleep(random.uniform(200, 800) / 1000)
 
     df_out = pd.DataFrame(results)
     df_out.to_csv(os.path.join(output_folder, 'A_live.csv'), index=False)

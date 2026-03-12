@@ -7,6 +7,7 @@ import time
 from typing import Optional, Tuple
 
 import requests
+import pandas as pd
 
 # Add parent and project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -184,17 +185,25 @@ def main() -> int:
     if not args.include_inactive and not df.empty:
         # Keep geocoding scope aligned with what is visible in Sheets by default.
         visible_statuses = {"solgt", "inaktiv"}
-        status_normalized = (
-            df["Tilgjengelighet"]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .str.lower()
-        )
-        df = df[
-            (df["active"].fillna(0).astype(int) == 1)
-            & (~status_normalized.isin(visible_statuses))
-        ]
+
+        if "Tilgjengelighet" in df.columns:
+            status_normalized = (
+                df["Tilgjengelighet"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+        else:
+            status_normalized = pd.Series([""] * len(df), index=df.index)
+
+        if "active" in df.columns:
+            active_series = df["active"].fillna(0).astype(int)
+        else:
+            # If active is unavailable, treat rows as active rather than crashing.
+            active_series = pd.Series([1] * len(df), index=df.index)
+
+        df = df[(active_series == 1) & (~status_normalized.isin(visible_statuses))]
 
     if args.limit > 0:
         df = df.head(args.limit)
