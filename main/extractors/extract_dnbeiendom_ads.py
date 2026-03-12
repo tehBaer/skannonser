@@ -1,10 +1,17 @@
 import os
+import sys
 import time
 import random
 import json
+import argparse
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
+
+# Ensure project root is importable when run as a script path.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
  
 try:
     from main.extractors.ad_html_loader import load_or_fetch_ad_html
@@ -135,7 +142,18 @@ def extract_all(url_csv_path: str, output_folder: str):
     return df_out, failures
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Extract DNB ad data from URL CSV')
+    parser.add_argument('--input', default='data/dnbeiendom/0_URLs.csv', help='Input URL CSV path')
+    parser.add_argument('--output-folder', default='data/dnbeiendom', help='Output folder')
+    parser.add_argument('--fallback-input', default='data/dnbeiendom/0_URLs_from_saved.csv', help='Fallback input CSV if --input is missing')
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    csv_in = 'data/dnbeiendom/0_URLs_from_saved.csv'
-    out_folder = 'data/dnbeiendom'
-    extract_all(csv_in, out_folder)
+    args = parse_args()
+    csv_in = args.input
+    if not os.path.exists(csv_in) and os.path.exists(args.fallback_input):
+        csv_in = args.fallback_input
+        print(f"Primary input not found, using fallback: {csv_in}")
+    extract_all(csv_in, args.output_folder)

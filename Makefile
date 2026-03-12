@@ -9,7 +9,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv full refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync
+.PHONY: help sheets travel brj mvv full refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync
 
 help:
 	@echo "Available targets:"
@@ -36,6 +36,7 @@ help:
 	@echo "  make polygon-sync - Sync finn_polygon_points to 'Finn Polygon Coords' sheet"
 	@echo "  make map-push  - Push Apps Script map files via clasp"
 	@echo "  make map-deploy - Deploy Apps Script web app via clasp"
+	@echo "  make map-live-url - Print live Apps Script web app URL (/exec)"
   
 
 
@@ -53,10 +54,19 @@ mvv:
 	$(PYTHON) main/tools/manual_fill_missing_travel_times.py --target mvv
 
 full:
-	# Run DNB pipeline (filter, load) and resync DNB sheet, then run full eiendom pipeline
-	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py || true
-	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py || true
-	COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/tools/manage.py run eiendom
+	# 1) FINN crawling
+	$(PYTHON) main/runners/run_eiendom_db.py --step crawl
+	# 2) DNB crawling
+	$(PYTHON) main/extractors/extract_dnbeiendom.py
+	# 3) FINN extraction
+	$(PYTHON) main/runners/run_eiendom_db.py --step extract
+	# 4) DNB extraction
+	$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
+	# Continue existing DB/sheet pipeline steps after extraction
+	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
+	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py
+	COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
+	$(PYTHON) main/tools/manage.py sync eiendom
 
 refresh:
 	$(PYTHON) main/sync/refresh_listings.py
@@ -84,6 +94,17 @@ map-push:
 
 map-deploy:
 	@cd apps_script/map && clasp deploy --description "Interactive map update"
+
+map-live-url:
+	@cd apps_script/map && DEPLOY_ID="$$(clasp deployments 2>/dev/null | sed -nE '/@HEAD/! s/.*(AKfy[a-zA-Z0-9_-]+).*/\1/p' | head -n 1)"; \
+	if [ -z "$$DEPLOY_ID" ]; then \
+		DEPLOY_ID="$$(clasp deployments 2>/dev/null | sed -nE 's/.*(AKfy[a-zA-Z0-9_-]+).*/\1/p' | head -n 1)"; \
+	fi; \
+	if [ -z "$$DEPLOY_ID" ]; then \
+		echo "No deployment ID found. Run 'make map-deploy' first."; \
+		exit 1; \
+	fi; \
+	echo "https://script.google.com/macros/s/$$DEPLOY_ID/exec"
 
 coords-missing:
 	$(PYTHON) main/tools/report_missing_coordinates.py
