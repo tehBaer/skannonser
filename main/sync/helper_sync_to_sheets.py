@@ -626,6 +626,61 @@ def sync_stale_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Sold"):
 
     df = db.get_stale_eiendom_for_sheets()
 
+    # Apply the same export filters (price/BRA-i) used elsewhere before writing Sold.
+    # This keeps sold/inactive scope aligned with sheet-visible listing rules.
+    try:
+        from main.config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+    except ImportError:
+        try:
+            from config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+        except ImportError:
+            SHEETS_MAX_PRICE = None
+            MIN_BRA_I = None
+
+    prefilter_count = len(df)
+    excluded_by_price = 0
+    excluded_by_bra = 0
+
+    if not df.empty:
+        include_mask = pd.Series(True, index=df.index)
+
+        if SHEETS_MAX_PRICE is not None and 'Pris' in df.columns:
+            price_vals = pd.to_numeric(df['Pris'], errors='coerce')
+            price_mask = price_vals <= float(SHEETS_MAX_PRICE)
+            excluded_by_price = int((~price_mask.fillna(False)).sum())
+            include_mask &= price_mask.fillna(False)
+
+        if MIN_BRA_I is not None and 'Internt bruksareal (BRA-i)' in df.columns:
+            bra_vals = pd.to_numeric(df['Internt bruksareal (BRA-i)'], errors='coerce')
+            bra_mask = bra_vals >= float(MIN_BRA_I)
+            excluded_by_bra = int((~bra_mask.fillna(False)).sum())
+            include_mask &= bra_mask.fillna(False)
+
+        excluded_total = int((~include_mask).sum())
+        if excluded_total > 0:
+            print(
+                f"Applying Sold filters: excluding {excluded_total} listing(s) "
+                f"(MAX_PRICE fails: {excluded_by_price}, MIN_BRA_I fails: {excluded_by_bra})"
+            )
+            print(
+                f"Filters: SHEETS_MAX_PRICE={SHEETS_MAX_PRICE}, MIN_BRA_I={MIN_BRA_I}"
+            )
+
+            confirm_drop = os.getenv("SOLD_FILTER_CONFIRM", "1").strip().lower() in {"1", "true", "yes", "y"}
+            if confirm_drop:
+                response = input(
+                    "Remove these out-of-filter rows from Sold sheet now? (yes/no): "
+                ).strip().lower()
+                if response not in {"yes", "y"}:
+                    print("Sold sync cancelled. No changes were made to Sold sheet.")
+                    return True
+
+        df = df.loc[include_mask].copy()
+
+        kept_count = len(df)
+        if excluded_total > 0:
+            print(f"Sold rows kept after filters: {kept_count}/{prefilter_count}")
+
     if df.empty:
         print("No sold/inactive listings found. Clearing Sold sheet.")
         try:

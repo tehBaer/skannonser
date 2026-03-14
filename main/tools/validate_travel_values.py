@@ -107,10 +107,18 @@ def _is_valid_travel(value: object, max_travel_minutes: float | None) -> bool:
 
 
 def _format_reason(label: str, value: float, median: float, diff: float, group_size: int) -> str:
-    return (
-        f"{label}: value={int(round(value))} median={int(round(median))} "
-        f"diff={int(round(diff))} n={group_size}"
-    )
+    value_i = int(round(value))
+    median_i = int(round(median))
+    diff_i = int(round(diff))
+    direction = "higher" if value >= median else "lower"
+
+    if label == "local":
+        return f"Local: {value_i}m ({diff_i}m {direction} vs near med {median_i}, n={group_size})"
+
+    if label == "postcode":
+        return f"Postnr: {value_i}m ({diff_i}m {direction} vs med {median_i}, n={group_size})"
+
+    return f"Outlier: {value_i}m ({diff_i}m from med {median_i}, n={group_size})"
 
 
 def parse_args() -> argparse.Namespace:
@@ -182,12 +190,56 @@ def parse_args() -> argparse.Namespace:
         help="Optional output CSV path for the full findings table",
     )
     parser.add_argument(
+        "--full-table",
+        action="store_true",
+        help="Print full wide table (default prints compact readable table)",
+    )
+    parser.add_argument(
         "--max-travel-minutes",
         type=float,
         default=default_max_travel,
         help="Upper bound for valid stored travel values (default: MAX_TRAVEL_MINUTES)",
     )
     return parser.parse_args()
+
+
+def _truncate_text(value: object, max_len: int) -> str:
+    text = "" if value is None or pd.isna(value) else str(value)
+    if len(text) <= max_len:
+        return text
+    if max_len <= 3:
+        return text[:max_len]
+    return text[: max_len - 3] + "..."
+
+
+def _print_findings_table(findings: pd.DataFrame, top: int, full_table: bool) -> None:
+    show = findings.head(max(top, 0)).copy()
+    if show.empty:
+        return
+
+    if full_table:
+        print(show.to_string(index=False))
+        return
+
+    # Compact default output keeps only high-signal fields and truncates long text.
+    show["target"] = show["target"].map({
+        "PENDL RUSH BRJ": "BRJ",
+        "PENDL RUSH MVV": "MVV",
+    }).fillna(show["target"])
+    show["Adresse"] = show["Adresse"].apply(lambda v: _truncate_text(v, 28))
+    if "GOOGLE_MAPS_URL" in show.columns:
+        show["GOOGLE_MAPS_URL"] = show["GOOGLE_MAPS_URL"].apply(lambda v: _truncate_text(v, 56))
+        show["reason"] = show["reason"].apply(lambda v: _truncate_text(v, 50))
+
+    display_cols = [
+        "suspicion_score",
+        "target",
+        "Adresse",
+        "GOOGLE_MAPS_URL",
+        "reason",
+    ]
+    existing_cols = [c for c in display_cols if c in show.columns]
+    print(show[existing_cols].to_string(index=False))
 
 
 def _prepare_source_dataframe(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, tuple[float | None, float | None]]]:
@@ -385,7 +437,7 @@ def _build_findings(
                     if donor_distance_m > args.radius_meters:
                         score += 3
                         reasons.append(
-                            f"donor: distance_m={int(round(donor_distance_m))} limit_m={int(round(args.radius_meters))} donor={donor_finnkode}"
+                            f"Donor: {int(round(donor_distance_m))}m > {int(round(args.radius_meters))}m ({donor_finnkode})"
                         )
 
             if score < args.score_threshold:
@@ -398,6 +450,7 @@ def _build_findings(
                     "Finnkode": row.get("Finnkode"),
                     "Adresse": row.get("Adresse") or row.get("ADRESSE"),
                     "Postnummer": row.get("Postnummer"),
+                    "GOOGLE_MAPS_URL": row.get("GOOGLE_MAPS_URL"),
                     "travel_minutes": int(round(value)),
                     "active": row.get("active"),
                     "neighbor_count": local_neighbor_count,
@@ -449,7 +502,7 @@ def main() -> int:
 
     print(f"Flagged findings: {len(findings)}")
     print()
-    print(findings.head(max(args.top, 0)).to_string(index=False))
+    _print_findings_table(findings, args.top, args.full_table)
 
     if args.csv:
         findings.to_csv(args.csv, index=False)

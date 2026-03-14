@@ -4,12 +4,18 @@ COORDS_LIMIT ?= 100
 COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
+TRAVEL_RPM ?= 60
+TRAVEL_CONFIRM ?= 1
+SUSPICIOUS_CSV ?= tmp/travel_suspicious_findings.csv
+SCORE_THRESHOLD ?= 2
+MIN_ABS_DIFF ?= 15
+MIN_REL_DIFF ?= 0.25
 COORDS_LIMIT ?= 100
 COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel
+.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest validate-travel-rerequest-suspicious
 
 help:
 	@echo "Available targets:"
@@ -22,7 +28,9 @@ help:
 	@echo "  make full     - Full manual run (scrape + coords fill + sheet sync)"
 	@echo "  make full-no-scrape - Full manual run without scrape/crawl steps"
 	@echo "                     Prompts before geocoding API call by default; set COORDS_CONFIRM=0 to skip prompt"
+	@echo "                     Prompts before travel API calls by default; set TRAVEL_CONFIRM=0 to skip prompt"
 	@echo "                     Geocodes all missing coordinates (no limit)"
+	@echo "                     Travel API rate: TRAVEL_RPM=60 (shows candidate progress)"
 	@echo "  make coords-import-sheet - Import existing LAT/LNG from sheet back into DB"
 	@echo "  make travel   - Fill missing travel-time fields only (manual)"
 	@echo "  make brj      - Fill missing BRJ transit travel fields only"
@@ -40,7 +48,16 @@ help:
 	@echo "  make coords-count - Count coordinate geocode candidates (no API calls)"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
 	@echo "  make validate-travel - Flag suspicious stored travel values without API calls"
+	@echo "  make validate-travel-rerequest - Re-request travel values for active listings, then validate"
+	@echo "                     Optional: TARGET=all TRAVEL_AUTO_CONFIRM=1 TRAVEL_REQUESTS_PER_MINUTE=60"
+	@echo "  make validate-travel-rerequest-suspicious - Validate and re-request only high-suspicion listings"
+	@echo "                     Optional: TARGET=all SCORE_THRESHOLD=2 MIN_ABS_DIFF=15 MIN_REL_DIFF=0.25"
+	@echo "                     Optional: TRAVEL_AUTO_CONFIRM=1 TRAVEL_REQUESTS_PER_MINUTE=60 SUSPICIOUS_CSV=tmp/travel_suspicious_findings.csv"
 	@echo "                     Optional: TARGET=all RADIUS=750 INCLUDE_INACTIVE=1 TOP=100 CSV=tmp/travel_validation.csv"
+	@echo "                     Thresholds: SCORE_THRESHOLD=2 MIN_ABS_DIFF=15 MIN_REL_DIFF=0.25 MAD_MULT=2.0"
+	@echo "                     Groups: MIN_NEIGHBORS=4 MIN_POSTCODE_GROUP=5 MAX_TRAVEL_MINUTES=360"
+	@echo "                     Display: FULL_TABLE=1 (show full untruncated reasons)"
+	@echo "  make travel-count-process - Estimate process-step travel API candidates (no API calls)"
 	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
 	@echo "  make map-guide - Open setup guide for interactive map"
 	@echo "  make polygon-edit - Open visual editor for FINN polygon coordinates"
@@ -84,73 +101,131 @@ dnb-backfill-travel-dryrun:
 
 full:
 	# 1) FINN crawling
-	$(PYTHON) main/runners/run_eiendom_db.py --step crawl
+	@echo ""
+	@echo "== [1/7] FINN crawl =="
+	@$(PYTHON) main/runners/run_eiendom_db.py --step crawl
 	# 2) DNB crawling
-	$(PYTHON) main/extractors/extract_dnbeiendom.py
+	@echo ""
+	@echo "== [2/7] DNB crawl =="
+	@$(PYTHON) main/extractors/extract_dnbeiendom.py
 	# 3) FINN extraction
-	$(PYTHON) main/runners/run_eiendom_db.py --step extract
+	@echo ""
+	@echo "== [3/7] FINN extract =="
+	@$(PYTHON) main/runners/run_eiendom_db.py --step extract
 	# 4) DNB extraction
-	$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
-	# Coords preflight count (no API calls)
-	COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,)
-	# Optional coords fill (asks by default; set COORDS_CONFIRM=0 to skip prompt)
-	@if [ "$(COORDS_CONFIRM)" = "1" ]; then \
+	@echo ""
+	@echo "== [4/7] DNB extract =="
+	@$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
+	# Coords preflight count (no API calls), then skip prompt/run when no candidates.
+	@COORD_CAND="$$(COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,) | awk -F': ' '/^Candidates:/ {print $$2}' | tail -n 1)"; \
+	if [ -z "$$COORD_CAND" ]; then COORD_CAND="0"; fi; \
+	echo "[COORDS] candidates=$$COORD_CAND"; \
+	if [ "$$COORD_CAND" = "0" ]; then \
+		echo "[COORDS] skip (no missing LAT/LNG)"; \
+	elif [ "$(COORDS_CONFIRM)" = "1" ]; then \
 		printf "Run coords fill now (geocode missing LAT/LNG)? [y/N]: "; \
 		read ans; \
 		case "$$ans" in \
 			y|Y|yes|YES) \
 				COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,);; \
 			*) \
-				echo "Skipping coords fill.";; \
+				echo "[COORDS] skip (user declined)";; \
 		esac; \
 	else \
 		COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,); \
 	fi
 	@echo ""
-	@echo "--- Next step: continue DB + sheet pipeline ---"
-	@echo ""
+	@echo "== [5/7] DNB filter/load + sheet sync =="
 	# Continue existing DB/sheet pipeline steps after extraction
-	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
-	$(PYTHON) scripts/sync_dnbeiendom_sheet.py
-	TRAVEL_AUTO_CONFIRM="0" TRAVEL_REQUESTS_PER_MINUTE="60" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
-	$(PYTHON) main/tools/manage.py sync eiendom
+	@$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
+	@$(PYTHON) scripts/sync_dnbeiendom_sheet.py
+	# Travel preflight estimate aligned with process step input (A_live.csv).
+	@TRAVEL_CAND="$$($(PYTHON) main/tools/estimate_process_travel_missing.py --target all --format count)"; \
+	if [ -z "$$TRAVEL_CAND" ]; then TRAVEL_CAND="0"; fi; \
+	echo "[TRAVEL] process candidates=$$TRAVEL_CAND"; \
+	if [ "$$TRAVEL_CAND" = "0" ]; then \
+		echo "[TRAVEL] skip API calls (no missing BRJ/MVV)"; \
+		EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="0" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process; \
+	elif [ "$(TRAVEL_CONFIRM)" = "1" ]; then \
+		printf "Run travel API calls now (fill missing BRJ/MVV)? [y/N]: "; \
+		read ans; \
+		case "$$ans" in \
+			y|Y|yes|YES) \
+				EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="1" TRAVEL_AUTO_CONFIRM="1" TRAVEL_REQUESTS_PER_MINUTE="$(TRAVEL_RPM)" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process;; \
+			*) \
+				echo "[TRAVEL] skip API calls (user declined)"; \
+				EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="0" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process;; \
+		esac; \
+	else \
+		EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="1" TRAVEL_AUTO_CONFIRM="1" TRAVEL_REQUESTS_PER_MINUTE="$(TRAVEL_RPM)" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process; \
+	fi
 	@echo ""
-	@echo "--- Next step: refresh stale inactive listings (temporarily disabled) ---"
+	@echo "== [6/7] Sync eiendom -> sheet =="
+	@$(PYTHON) main/tools/manage.py sync eiendom
+	@$(PYTHON) main/sync/update_rows_in_sheet.py
 	@echo ""
-	@echo "Skipping inactive refresh in 'make full' for now."
+	@echo "== [7/7] Refresh stale open =="
+	@$(MAKE) refresh-stale-open
 
 full-no-scrape:
 	# 1) FINN extraction
-	$(PYTHON) main/runners/run_eiendom_db.py --step extract
+	@echo ""
+	@echo "== [1/5] FINN extract =="
+	@$(PYTHON) main/runners/run_eiendom_db.py --step extract
 	# 2) DNB extraction
-	$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
-	# Coords preflight count (no API calls)
-	COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,)
-	# Optional coords fill (asks by default; set COORDS_CONFIRM=0 to skip prompt)
-	@if [ "$(COORDS_CONFIRM)" = "1" ]; then \
+	@echo ""
+	@echo "== [2/5] DNB extract =="
+	@$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
+	# Coords preflight count (no API calls), then skip prompt/run when no candidates.
+	@COORD_CAND="$$(COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,) | awk -F': ' '/^Candidates:/ {print $$2}' | tail -n 1)"; \
+	if [ -z "$$COORD_CAND" ]; then COORD_CAND="0"; fi; \
+	echo "[COORDS] candidates=$$COORD_CAND"; \
+	if [ "$$COORD_CAND" = "0" ]; then \
+		echo "[COORDS] skip (no missing LAT/LNG)"; \
+	elif [ "$(COORDS_CONFIRM)" = "1" ]; then \
 		printf "Run coords fill now (geocode missing LAT/LNG)? [y/N]: "; \
 		read ans; \
 		case "$$ans" in \
 			y|Y|yes|YES) \
 				COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,);; \
 			*) \
-				echo "Skipping coords fill.";; \
+				echo "[COORDS] skip (user declined)";; \
 		esac; \
 	else \
 		COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,); \
 	fi
 	@echo ""
-	@echo "--- Next step: continue DB + sheet pipeline ---"
-	@echo ""
+	@echo "== [3/5] DNB filter/load + sheet sync =="
 	# Continue existing DB/sheet pipeline steps after extraction
-	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
-	$(PYTHON) scripts/sync_dnbeiendom_sheet.py
-	TRAVEL_AUTO_CONFIRM="0" TRAVEL_REQUESTS_PER_MINUTE="60" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
-	$(PYTHON) main/tools/manage.py sync eiendom
+	@$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
+	@$(PYTHON) scripts/sync_dnbeiendom_sheet.py
+	# Travel preflight estimate aligned with process step input (A_live.csv).
+	@TRAVEL_CAND="$$($(PYTHON) main/tools/estimate_process_travel_missing.py --target all --format count)"; \
+	if [ -z "$$TRAVEL_CAND" ]; then TRAVEL_CAND="0"; fi; \
+	echo "[TRAVEL] process candidates=$$TRAVEL_CAND"; \
+	if [ "$$TRAVEL_CAND" = "0" ]; then \
+		echo "[TRAVEL] skip API calls (no missing BRJ/MVV)"; \
+		EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="0" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process; \
+	elif [ "$(TRAVEL_CONFIRM)" = "1" ]; then \
+		printf "Run travel API calls now (fill missing BRJ/MVV)? [y/N]: "; \
+		read ans; \
+		case "$$ans" in \
+			y|Y|yes|YES) \
+				EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="1" TRAVEL_AUTO_CONFIRM="1" TRAVEL_REQUESTS_PER_MINUTE="$(TRAVEL_RPM)" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process;; \
+			*) \
+				echo "[TRAVEL] skip API calls (user declined)"; \
+				EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="0" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process;; \
+		esac; \
+	else \
+		EIENDOM_CALCULATE_GOOGLE_DIRECTIONS="1" TRAVEL_AUTO_CONFIRM="1" TRAVEL_REQUESTS_PER_MINUTE="$(TRAVEL_RPM)" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process; \
+	fi
 	@echo ""
-	@echo "--- Next step: refresh stale inactive listings (temporarily disabled) ---"
+	@echo "== [4/5] Sync eiendom -> sheet =="
+	@$(PYTHON) main/tools/manage.py sync eiendom
+	@$(PYTHON) main/sync/update_rows_in_sheet.py
 	@echo ""
-	@echo "Skipping inactive refresh in 'make full-no-scrape' for now."
+	@echo "== [5/5] Refresh stale open =="
+	@$(MAKE) refresh-stale-open
 
 refresh:
 	$(PYTHON) main/sync/refresh_listings.py
@@ -193,13 +268,78 @@ map-live-url:
 coords-missing:
 	$(PYTHON) main/tools/report_missing_coordinates.py
 
+travel-count-process:
+	$(PYTHON) main/tools/estimate_process_travel_missing.py --target "$(if $(TARGET),$(TARGET),all)"
+
 validate-travel:
 	$(PYTHON) main/tools/validate_travel_values.py \
 		--target "$(if $(TARGET),$(TARGET),all)" \
 		$(if $(RADIUS),--radius-meters "$(RADIUS)",) \
 		$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,) \
+		$(if $(SCORE_THRESHOLD),--score-threshold "$(SCORE_THRESHOLD)",) \
+		$(if $(MIN_ABS_DIFF),--min-abs-diff "$(MIN_ABS_DIFF)",) \
+		$(if $(MIN_REL_DIFF),--min-relative-diff "$(MIN_REL_DIFF)",) \
+		$(if $(MAD_MULT),--mad-multiplier "$(MAD_MULT)",) \
+		$(if $(MIN_NEIGHBORS),--min-neighbors "$(MIN_NEIGHBORS)",) \
+		$(if $(MIN_POSTCODE_GROUP),--min-postcode-group "$(MIN_POSTCODE_GROUP)",) \
+		$(if $(MAX_TRAVEL_MINUTES),--max-travel-minutes "$(MAX_TRAVEL_MINUTES)",) \
+		$(if $(filter 1 yes true,$(FULL_TABLE)),--full-table,) \
 		$(if $(TOP),--top "$(TOP)",) \
 		$(if $(CSV),--csv "$(CSV)",)
+
+validate-travel-rerequest:
+	@echo "Force-refreshing stored travel values for active listings (target=$(if $(TARGET),$(TARGET),all))..."
+	$(PYTHON) -c "from main.database.db import PropertyDatabase; db=PropertyDatabase(); conn=db.get_connection(); cur=conn.cursor(); target='$(if $(TARGET),$(TARGET),all)'.strip().lower(); cols=[]; cols += ['pendl_rush_brj'] if target in ('all','brj') else []; cols += ['pendl_rush_mvv'] if target in ('all','mvv') else []; cols = cols or ['pendl_rush_brj','pendl_rush_mvv']; set_clause = ', '.join([f'{c} = NULL' for c in cols] + ['travel_copy_from_finnkode = NULL', 'updated_at = CURRENT_TIMESTAMP']); sql = f'UPDATE eiendom_processed SET {set_clause} WHERE finnkode IN (SELECT finnkode FROM eiendom WHERE active = 1)'; cur.execute(sql); print('Cleared travel fields for %s active row(s): %s + travel_copy_from_finnkode' % (cur.rowcount, ', '.join(cols))); conn.commit(); conn.close()"
+	TRAVEL_AUTO_CONFIRM="$(if $(TRAVEL_AUTO_CONFIRM),$(TRAVEL_AUTO_CONFIRM),1)" TRAVEL_REQUESTS_PER_MINUTE="$(if $(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_REQUESTS_PER_MINUTE),60)" $(PYTHON) main/tools/manual_fill_missing_travel_times.py --target "$(if $(TARGET),$(TARGET),all)"
+	$(MAKE) validate-travel \
+		TARGET="$(if $(TARGET),$(TARGET),all)" \
+		RADIUS="$(RADIUS)" \
+		INCLUDE_INACTIVE="$(INCLUDE_INACTIVE)" \
+		SCORE_THRESHOLD="$(SCORE_THRESHOLD)" \
+		MIN_ABS_DIFF="$(MIN_ABS_DIFF)" \
+		MIN_REL_DIFF="$(MIN_REL_DIFF)" \
+		MAD_MULT="$(MAD_MULT)" \
+		MIN_NEIGHBORS="$(MIN_NEIGHBORS)" \
+		MIN_POSTCODE_GROUP="$(MIN_POSTCODE_GROUP)" \
+		MAX_TRAVEL_MINUTES="$(MAX_TRAVEL_MINUTES)" \
+		FULL_TABLE="$(FULL_TABLE)" \
+		TOP="$(TOP)" \
+		CSV="$(CSV)"
+
+validate-travel-rerequest-suspicious:
+	@mkdir -p tmp
+	@echo "Finding suspicious travel rows (target=$(if $(TARGET),$(TARGET),all), score>=$(SCORE_THRESHOLD))..."
+	$(PYTHON) main/tools/validate_travel_values.py \
+		--target "$(if $(TARGET),$(TARGET),all)" \
+		$(if $(RADIUS),--radius-meters "$(RADIUS)",) \
+		$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,) \
+		$(if $(SCORE_THRESHOLD),--score-threshold "$(SCORE_THRESHOLD)",) \
+		$(if $(MIN_ABS_DIFF),--min-abs-diff "$(MIN_ABS_DIFF)",) \
+		$(if $(MIN_REL_DIFF),--min-relative-diff "$(MIN_REL_DIFF)",) \
+		$(if $(MAD_MULT),--mad-multiplier "$(MAD_MULT)",) \
+		$(if $(MIN_NEIGHBORS),--min-neighbors "$(MIN_NEIGHBORS)",) \
+		$(if $(MIN_POSTCODE_GROUP),--min-postcode-group "$(MIN_POSTCODE_GROUP)",) \
+		$(if $(MAX_TRAVEL_MINUTES),--max-travel-minutes "$(MAX_TRAVEL_MINUTES)",) \
+		--csv "$(SUSPICIOUS_CSV)"
+	TRAVEL_AUTO_CONFIRM="$(if $(TRAVEL_AUTO_CONFIRM),$(TRAVEL_AUTO_CONFIRM),1)" TRAVEL_REQUESTS_PER_MINUTE="$(if $(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_RPM))" $(PYTHON) main/tools/rerequest_suspicious_travel.py \
+		--findings-csv "$(SUSPICIOUS_CSV)" \
+		--target "$(if $(TARGET),$(TARGET),all)" \
+		--score-threshold "$(if $(SCORE_THRESHOLD),$(SCORE_THRESHOLD),2)" \
+		$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,)
+	$(MAKE) validate-travel \
+		TARGET="$(if $(TARGET),$(TARGET),all)" \
+		RADIUS="$(RADIUS)" \
+		INCLUDE_INACTIVE="$(INCLUDE_INACTIVE)" \
+		SCORE_THRESHOLD="$(SCORE_THRESHOLD)" \
+		MIN_ABS_DIFF="$(MIN_ABS_DIFF)" \
+		MIN_REL_DIFF="$(MIN_REL_DIFF)" \
+		MAD_MULT="$(MAD_MULT)" \
+		MIN_NEIGHBORS="$(MIN_NEIGHBORS)" \
+		MIN_POSTCODE_GROUP="$(MIN_POSTCODE_GROUP)" \
+		MAX_TRAVEL_MINUTES="$(MAX_TRAVEL_MINUTES)" \
+		FULL_TABLE="$(FULL_TABLE)" \
+		TOP="$(TOP)" \
+		CSV="$(CSV)"
 
 coords-count:
 	$(PYTHON) main/tools/fill_missing_coordinates.py --limit 0 --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,)

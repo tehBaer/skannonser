@@ -44,18 +44,30 @@ def normalize_value(val):
     # Remove all whitespace characters (including non-breaking spaces)
     val_str = re.sub(r'\s+', '', val_str)
     
+    # Normalize common unicode minus variants before numeric parsing.
+    val_str = val_str.replace('−', '-').replace('–', '-').replace('—', '-')
+
     # Remove currency formatting
     # Example: "7144740kr" → "7144740"
     val_str = val_str.lower().replace('kr', '').strip()
     
     # For numeric values, try to normalize
     try:
-        # Try to parse as number
-        num = float(val_str.replace(',', ''))
+        # Try to parse as number.
+        # Treat comma as decimal separator when there is no dot.
+        # Otherwise treat comma as thousands separator.
+        parse_str = val_str
+        if ',' in parse_str and '.' not in parse_str:
+            parse_str = parse_str.replace(',', '.')
+        else:
+            parse_str = parse_str.replace(',', '')
+
+        num = float(parse_str)
         # If it's a whole number, return as int string
         if num == int(num):
             return str(int(num))
-        return str(num)
+        # Keep decimal normalization stable across runs (avoid binary float noise).
+        return f"{num:.10f}".rstrip('0').rstrip('.')
     except (ValueError, TypeError):
         # Not a number, just return the cleaned string
         return val_str
@@ -106,7 +118,8 @@ def get_sheet_data_with_row_numbers(service, sheet_name: str) -> Dict:
         range_name = f"{sheet_name}!A1:AZ10000"
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, 
-            range=range_name
+            range=range_name,
+            valueRenderOption="UNFORMATTED_VALUE"
         ).execute()
         
         values = result.get("values", [])

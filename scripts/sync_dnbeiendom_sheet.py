@@ -132,9 +132,7 @@ def main() -> None:
     finally:
         conn.close()
 
-    print(f"Active DNB-only rows in DB: {len(src)}")
-    if SHEETS_MAX_PRICE is not None:
-        print(f"Excluded by MAX_PRICE>{int(SHEETS_MAX_PRICE)}: {int(total_active_dnb_only) - len(src)}")
+    excluded_by_price = (int(total_active_dnb_only) - len(src)) if SHEETS_MAX_PRICE is not None else 0
 
     db_by_url: dict = {}
     for _, row in src.iterrows():
@@ -162,13 +160,13 @@ def main() -> None:
     values = res.get("values", [])
 
     if not values:
-        print("Sheet is empty — appending all DB rows.")
+        print(f"[DNB sheet] empty sheet -> append={len(db_by_url)}")
         _append_rows(service, sheet_name, list(db_by_url.values()), FULL_COL_ORDER)
         return
 
     headers = [helper.canonicalize_header_name(h) for h in values[0]]
     if "URL" not in headers:
-        print("No URL column found in sheet — cannot sync.")
+        print("[DNB sheet] URL column missing; sync aborted")
         return
 
     url_idx = headers.index("URL")
@@ -204,10 +202,15 @@ def main() -> None:
 
     new_urls = [u for u in db_by_url if u not in sheet_urls]
 
-    print(f"Sheet data rows: {len(values) - 1}")
-    print(f"Rows to delete (not in active DB): {len(rows_to_delete)}")
-    print(f"Cell updates (field changes): {len(cell_updates)}")
-    print(f"New rows to append: {len(new_urls)}")
+    print(
+        "[DNB sheet] "
+        f"db_active={len(src)} "
+        f"excluded_by_price={excluded_by_price} "
+        f"sheet_rows={len(values) - 1} "
+        f"delete={len(rows_to_delete)} "
+        f"cell_updates={len(cell_updates)} "
+        f"append={len(new_urls)}"
+    )
 
     # 1. Cell updates
     if cell_updates:
@@ -217,7 +220,7 @@ def main() -> None:
                 spreadsheetId=helper.SPREADSHEET_ID,
                 body={"valueInputOption": "RAW", "data": chunk},
             ).execute()
-        print(f"Updated {len(cell_updates)} cells.")
+        print(f"[DNB sheet] updated_cells={len(cell_updates)}")
 
     # 2. Delete stale rows (descending order so earlier indices stay valid)
     if rows_to_delete:
@@ -239,13 +242,13 @@ def main() -> None:
             spreadsheetId=helper.SPREADSHEET_ID,
             body={"requests": requests},
         ).execute()
-        print(f"Deleted {len(rows_to_delete)} stale rows.")
+        print(f"[DNB sheet] deleted_rows={len(rows_to_delete)}")
 
     # 3. Append new rows (base fields only; travel times filled by make dnb-backfill-travel)
     if new_urls:
         new_rows = [db_by_url[u] for u in new_urls]
         _append_rows(service, sheet_name, new_rows, headers)
-        print(f"Appended {len(new_urls)} new rows.")
+        print(f"[DNB sheet] appended_rows={len(new_urls)}")
 
 
 if __name__ == "__main__":

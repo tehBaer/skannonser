@@ -116,8 +116,18 @@ def _build_work_df(df: pd.DataFrame, travel_cols: list[str]) -> pd.DataFrame:
     out["LAT"] = df.get("lat", "")
     out["LNG"] = df.get("lng", "")
 
+    existing_col_map = {
+        "PENDL RUSH BRJ": "existing_pendl_rush_brj",
+        "PENDL RUSH MVV": "existing_pendl_rush_mvv",
+    }
     for col in travel_cols:
-        out[col] = pd.NA
+        src_col = existing_col_map.get(col)
+        if src_col and src_col in df.columns:
+            out[col] = df[src_col]
+        else:
+            out[col] = pd.NA
+
+    out["TRAVEL_COPY_FROM_FINNKODE"] = df.get("existing_travel_copy_from_finnkode", pd.NA)
 
     return out
 
@@ -220,10 +230,16 @@ def main() -> int:
         # Backfill against rows that should exist in DNB sheet (active DNB-only rows).
         src = pd.read_sql_query(
             """
-            SELECT *
-            FROM dnbeiendom
-            WHERE active = 1
-              AND (duplicate_of_finnkode IS NULL OR TRIM(duplicate_of_finnkode) = '')
+                        SELECT
+                                d.*,
+                                ep.pendl_rush_brj AS existing_pendl_rush_brj,
+                                ep.pendl_rush_mvv AS existing_pendl_rush_mvv,
+                                ep.travel_copy_from_finnkode AS existing_travel_copy_from_finnkode
+                        FROM dnbeiendom d
+                        LEFT JOIN eiendom_processed ep
+                            ON ep.finnkode = COALESCE(d.dnb_id, 'DNB-' || d.id)
+                        WHERE d.active = 1
+                            AND (d.duplicate_of_finnkode IS NULL OR TRIM(d.duplicate_of_finnkode) = '')
             ORDER BY scraped_at DESC
             """,
             conn,

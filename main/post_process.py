@@ -309,7 +309,10 @@ def post_process_eiendom(
     # Load existing commute data from database if available
     if db is not None:
         try:
-            existing_data = db.get_eiendom_for_sheets()
+            if hasattr(db, 'get_eiendom_commute_data'):
+                existing_data = db.get_eiendom_commute_data()
+            else:
+                existing_data = db.get_eiendom_for_sheets()
             
             # Extract commute columns from existing database data (BRJ + CNTR + MVV)
             commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV',
@@ -469,22 +472,9 @@ def post_process_eiendom(
                 added += 1
             return added
 
-        added_brj = _merge_seed_cache(donor_cache_brj, brj_travel_columns)
-        added_mvv = _merge_seed_cache(donor_cache_mvv, mvv_travel_columns)
-        added_all = _merge_seed_cache(donor_cache_all, transit_travel_columns)
-        if added_brj or added_mvv or added_all:
-            print(
-                "Loaded shared donor seeds "
-                f"(BRJ: +{added_brj}, MVV: +{added_mvv}, ALL: +{added_all})"
-            )
-
-    # Show donor pool sizes to help diagnose missing donor assignments
-    try:
-        print(f"  Donor pool (BRJ-complete): {len(donor_cache_brj)} listings; sample: {[c[2] for c in donor_cache_brj[:5]]}")
-        print(f"  Donor pool (MVV-complete): {len(donor_cache_mvv)} listings; sample: {[c[2] for c in donor_cache_mvv[:5]]}")
-        print(f"  Donor pool (all-complete):  {len(donor_cache_all)} listings; sample: {[c[2] for c in donor_cache_all[:5]]}")
-    except Exception:
-        pass
+        _merge_seed_cache(donor_cache_brj, brj_travel_columns)
+        _merge_seed_cache(donor_cache_mvv, mvv_travel_columns)
+        _merge_seed_cache(donor_cache_all, transit_travel_columns)
 
     if travel_reuse_within_meters > 0:
         if lat_col and lng_col:
@@ -563,16 +553,13 @@ def post_process_eiendom(
                     print(f"⚠️  Could not checkpoint row {row_idx}: {checkpoint_error}")
             
             eligible_total = int(eligible_mask.sum())
-            brj_api_calls_needed = int(df.loc[eligible_mask, 'PENDL RUSH BRJ'].isna().sum()) if run_brj else 0
-            print(f"\n🚀 BRJ: scanning {eligible_total} eligible properties, {brj_api_calls_needed} API call(s) needed...")
-            if requests_per_minute < 60.0:
-                print(f"   Rate limited to {requests_per_minute} requests/minute\n")
-            else:
-                print(f"   Running at {requests_per_minute} requests/minute\n")
-            
+
             delay_between_requests = 60.0 / requests_per_minute if requests_per_minute > 0 else 0
             interrupted = False
             donor_assigned_count = 0
+            donor_existing_reuse_count = 0
+            donor_api_skipped_count = 0
+            brj_api_attempted_count = 0
 
             # If target=all, donor must cover all transit columns (BRJ+MVV).
             donor_required_cols = transit_travel_columns if (run_brj and run_mvv) else brj_travel_columns
@@ -619,10 +606,32 @@ def post_process_eiendom(
                 if not any(c_finnkode == finnkode for _, _, c_finnkode in donor_cache):
                     donor_cache.append((lat, lng, finnkode))
 
+            # Count only rows that will actually trigger an API request (excludes donor skips).
+            if run_brj:
+                brj_api_calls_needed = 0
+                for _, row0 in df.loc[eligible_mask].iterrows():
+                    if not pd.isna(row0.get('PENDL RUSH BRJ')):
+                        continue
+                    donor0 = _maybe_assign_donor(row0, donor_required_cols, donor_cache_for_assignment)
+                    if donor0 and not force_api_for_missing:
+                        continue
+                    brj_api_calls_needed += 1
+            else:
+                brj_api_calls_needed = 0
+
+            print(f"\n🚀 BRJ: scanning {eligible_total} eligible properties, {brj_api_calls_needed} API candidate(s)...")
+            if requests_per_minute < 60.0:
+                print(f"   Rate limited to {requests_per_minute} requests/minute\n")
+            else:
+                print(f"   Running at {requests_per_minute} requests/minute\n")
+
             try:
                 for loop_pos, (idx, row) in enumerate(df.loc[eligible_mask].iterrows(), start=1):
                     address = row['Adresse']
                     postnummer = row.get('Postnummer')
+                    existing_donor_before = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
+                    brj_api_attempted = False
+                    brj_attempt_status = None
 
                     # Show which property we're working on for every row in detailed mode.
                     if not updates_only_logging:
@@ -633,8 +642,7 @@ def post_process_eiendom(
 
                     donor_finnkode = _maybe_assign_donor(row, donor_required_cols, donor_cache_for_assignment)
                     if donor_finnkode:
-                        had_donor = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
-                        if not had_donor:
+                        if not existing_donor_before:
                             df.at[idx, 'TRAVEL_COPY_FROM_FINNKODE'] = donor_finnkode
                             donor_assigned_count += 1
                             row_changed = True
@@ -644,8 +652,12 @@ def post_process_eiendom(
                     # Calculate PENDL RUSH BRJ (public transit rush-hour commute time to work)
                     if run_brj and pd.isna(row.get('PENDL RUSH BRJ')):
                         if donor_finnkode and not force_api_for_missing:
-                            pass
+                            donor_api_skipped_count += 1
+                            if existing_donor_before:
+                                donor_existing_reuse_count += 1
                         else:
+                            brj_api_attempted = True
+                            brj_api_attempted_count += 1
                             try:
                                 if not updates_only_logging:
                                     print(f"   📍 Calculating public transit time...", end='', flush=True)
@@ -655,20 +667,24 @@ def post_process_eiendom(
                                     brj_rush_stored = minutes
                                     calculated_transit += 1
                                     row_changed = True
+                                    brj_attempt_status = f"OK {int(minutes)} min"
                                     if not updates_only_logging:
                                         print(f" ✓ {minutes} min")
                                 elif is_travel_sentinel(minutes):
                                     df.at[idx, 'PENDL RUSH BRJ'] = int(minutes)
                                     brj_rush_stored = minutes
                                     row_changed = True
+                                    brj_attempt_status = f"FAIL {_sentinel_label(minutes)}"
                                     if not updates_only_logging:
                                         print(f" ✗ {_sentinel_label(minutes)}")
                                 else:
+                                    brj_attempt_status = f"FAIL rejected ({minutes})"
                                     if not updates_only_logging:
                                         print(f" ✗ Rejected/failed value ({minutes})")
                                 if minutes is not None and delay_between_requests > 0:
                                     time.sleep(delay_between_requests)
                             except Exception as e:
+                                brj_attempt_status = f"ERROR {str(e)}"
                                 print(f" ✗ Error: {str(e)}")
 
                     _add_row_as_donor_if_complete(idx, brj_travel_columns, donor_cache_brj)
@@ -676,12 +692,10 @@ def post_process_eiendom(
 
                     if row_changed:
                         _checkpoint_row(idx)
-                        if updates_only_logging:
-                            parts = []
-                            if brj_rush_stored is not None:
-                                parts.append(f"RUSH: {_sentinel_label(brj_rush_stored) if is_travel_sentinel(brj_rush_stored) else str(brj_rush_stored) + ' min'}")
-                            suffix = f" ({', '.join(parts)})" if parts else ""
-                            print(f"✓ Updated BRJ: {address}{suffix}")
+
+                    if updates_only_logging and brj_api_attempted:
+                        status = brj_attempt_status or "DONE"
+                        print(f"[{brj_api_attempted_count}/{brj_api_calls_needed}] BRJ API: {address} -> {status}")
 
                     # Summary every 10 properties
                     total_calculated = calculated_transit
@@ -703,6 +717,13 @@ def post_process_eiendom(
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors='coerce').round().astype('Int64')
                 return df
+
+            if donor_api_skipped_count > 0 or donor_assigned_count > 0:
+                print(
+                    "✓ BRJ donor usage: "
+                    f"{donor_api_skipped_count} API call(s) skipped via donor "
+                    f"({donor_assigned_count} newly linked, {donor_existing_reuse_count} existing links reused)"
+                )
             
             if run_mvv:
                 # Calculate new MVV destination (Lambertseter svømmeklubb).
@@ -711,17 +732,30 @@ def post_process_eiendom(
 
                 calculated_transit_mvv = 0
                 donor_assigned_mvv_count = 0
+                donor_existing_reuse_mvv_count = 0
+                donor_api_skipped_mvv_count = 0
+                mvv_api_attempted_count = 0
 
                 donor_required_cols_mvv = transit_travel_columns if (run_brj and run_mvv) else mvv_travel_columns
                 donor_cache_for_assignment_mvv = donor_cache_all if (run_brj and run_mvv) else donor_cache_mvv
 
-                mvv_api_calls_needed = int(df.loc[eligible_mask, 'PENDL RUSH MVV'].isna().sum())
-                print(f"\n🚀 MVV: scanning {eligible_total} eligible properties, {mvv_api_calls_needed} API call(s) needed...\n")
+                mvv_api_calls_needed = 0
+                for _, row0 in df.loc[eligible_mask].iterrows():
+                    if not pd.isna(row0.get('PENDL RUSH MVV')):
+                        continue
+                    donor0 = _maybe_assign_donor(row0, donor_required_cols_mvv, donor_cache_for_assignment_mvv)
+                    if donor0 and not force_api_for_missing:
+                        continue
+                    mvv_api_calls_needed += 1
+                print(f"\n🚀 MVV: scanning {eligible_total} eligible properties, {mvv_api_calls_needed} API candidate(s)...\n")
 
                 try:
                     for loop_pos, (idx, row) in enumerate(df.loc[eligible_mask].iterrows(), start=1):
                         address = row['Adresse']
                         postnummer = row.get('Postnummer')
+                        existing_donor_before = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
+                        mvv_api_attempted = False
+                        mvv_attempt_status = None
 
                         if not updates_only_logging:
                             print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
@@ -730,7 +764,7 @@ def post_process_eiendom(
                         mvv_rush_stored = None
 
                         donor_finnkode = _maybe_assign_donor(row, donor_required_cols_mvv, donor_cache_for_assignment_mvv)
-                        if donor_finnkode and not str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
+                        if donor_finnkode and not existing_donor_before:
                             df.at[idx, 'TRAVEL_COPY_FROM_FINNKODE'] = donor_finnkode
                             donor_assigned_mvv_count += 1
                             row_changed = True
@@ -740,8 +774,12 @@ def post_process_eiendom(
                         # Calculate PENDL RUSH MVV
                         if pd.isna(row.get('PENDL RUSH MVV')):
                             if donor_finnkode and not force_api_for_missing:
-                                pass
+                                donor_api_skipped_mvv_count += 1
+                                if existing_donor_before:
+                                    donor_existing_reuse_mvv_count += 1
                             else:
+                                mvv_api_attempted = True
+                                mvv_api_attempted_count += 1
                                 try:
                                     if not updates_only_logging:
                                         print(f"   📍 Calculating public transit to Lambertseter svømmeklubb...", end='', flush=True)
@@ -751,20 +789,24 @@ def post_process_eiendom(
                                         mvv_rush_stored = minutes
                                         calculated_transit_mvv += 1
                                         row_changed = True
+                                        mvv_attempt_status = f"OK {int(minutes)} min"
                                         if not updates_only_logging:
                                             print(f" ✓ {minutes} min")
                                     elif is_travel_sentinel(minutes):
                                         df.at[idx, 'PENDL RUSH MVV'] = int(minutes)
                                         mvv_rush_stored = minutes
                                         row_changed = True
+                                        mvv_attempt_status = f"FAIL {_sentinel_label(minutes)}"
                                         if not updates_only_logging:
                                             print(f" ✗ {_sentinel_label(minutes)}")
                                     else:
+                                        mvv_attempt_status = f"FAIL rejected ({minutes})"
                                         if not updates_only_logging:
                                             print(f" ✗ Rejected/failed value ({minutes})")
                                     if minutes is not None and delay_between_requests > 0:
                                         time.sleep(delay_between_requests)
                                 except Exception as e:
+                                    mvv_attempt_status = f"ERROR {str(e)}"
                                     print(f" ✗ Error: {str(e)}")
 
                         _add_row_as_donor_if_complete(idx, mvv_travel_columns, donor_cache_mvv)
@@ -772,18 +814,22 @@ def post_process_eiendom(
 
                         if row_changed:
                             _checkpoint_row(idx)
-                            if updates_only_logging:
-                                parts = []
-                                if mvv_rush_stored is not None:
-                                    parts.append(f"RUSH: {_sentinel_label(mvv_rush_stored) if is_travel_sentinel(mvv_rush_stored) else str(mvv_rush_stored) + ' min'}")
-                                suffix = f" ({', '.join(parts)})" if parts else ""
-                                print(f"✓ Updated MVV: {address}{suffix}")
+
+                        if updates_only_logging and mvv_api_attempted:
+                            status = mvv_attempt_status or "DONE"
+                            print(f"[{mvv_api_attempted_count}/{mvv_api_calls_needed}] MVV API: {address} -> {status}")
                 except KeyboardInterrupt:
                     print("\n⚠️  Interrupted during MVV travel calculations. Returning partial results and preserving saved progress.")
 
                 print(
                     f"\n✓ Successfully calculated {calculated_transit_mvv} RUSH transit times to Lambertseter svømmeklubb"
                 )
+                if donor_api_skipped_mvv_count > 0 or donor_assigned_mvv_count > 0:
+                    print(
+                        "✓ MVV donor usage: "
+                        f"{donor_api_skipped_mvv_count} API call(s) skipped via donor "
+                        f"({donor_assigned_mvv_count} newly linked, {donor_existing_reuse_mvv_count} existing links reused)"
+                    )
                 if donor_assigned_count > 0 or donor_assigned_mvv_count > 0:
                     print(f"✓ Linked {donor_assigned_count + donor_assigned_mvv_count} rows to nearby donor Finnkoder")
         else:

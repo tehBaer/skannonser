@@ -333,6 +333,16 @@ class PropertyDatabase:
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.execute('PRAGMA journal_mode=WAL')
         return conn
+
+    @staticmethod
+    def _is_excluded_eiendom_url(url: str) -> bool:
+        """Return True for FINN URL patterns we do not want persisted in eiendom."""
+        u = (url or "").strip().lower()
+        return (
+            "/realestate/projectsingle/" in u
+            or "/realestate/newbuildings/" in u
+            or "/realestate/planned/" in u
+        )
     
     def insert_or_update_eiendom(self, df: pd.DataFrame, context: str = None):
         """Insert or update property listings from a DataFrame."""
@@ -364,10 +374,16 @@ class PropertyDatabase:
         
         inserted = 0
         updated = 0
+        skipped_excluded_url = 0
         
         for _, row in df.iterrows():
             finnkode = str(row.get('Finnkode', '')).strip()
             if not finnkode:
+                continue
+
+            url = str(row.get('URL', '') or '')
+            if self._is_excluded_eiendom_url(url):
+                skipped_excluded_url += 1
                 continue
             
             # Check if record exists
@@ -380,7 +396,7 @@ class PropertyDatabase:
                 'adresse': row.get('Adresse', ''),
                 'postnummer': row.get('Postnummer', ''),
                 'pris': self._to_int(row.get('Pris')),
-                'url': row.get('URL', ''),
+                'url': url,
                 'image_url': row.get('IMAGE_URL', ''),
                 'image_hosted_url': row.get('IMAGE_HOSTED_URL', ''),
                 'info_usable_area': self._to_int(row.get('Bruksareal')),
@@ -477,9 +493,17 @@ class PropertyDatabase:
         if context is not None:
             if inserted > 0 or updated > 0:
                 action = "inserted" if inserted > 0 else "checkpoint"
-                print(f"  Saved #{context}: {action} ({inserted} inserted, {updated} updated)")
+                print(
+                    f"  Saved #{context}: {action} "
+                    f"({inserted} inserted, {updated} updated, {skipped_excluded_url} skipped excluded URL)"
+                )
+            elif skipped_excluded_url > 0:
+                print(f"  Saved #{context}: skipped {skipped_excluded_url} excluded URL")
         else:
-            print(f"Database updated: {inserted} inserted, {updated} updated")
+            print(
+                f"Database updated: {inserted} inserted, {updated} updated, "
+                f"{skipped_excluded_url} skipped excluded URL"
+            )
         return inserted, updated
     
     def mark_inactive(self, table: str, active_finnkodes: List[str]):
@@ -666,6 +690,42 @@ class PropertyDatabase:
             if col in df.columns:
                 df[col] = df[col].fillna(0).astype(int)
         
+        return df
+
+    def get_eiendom_commute_data(self) -> pd.DataFrame:
+        """Get unfiltered commute-related columns for process-step merge.
+
+        Unlike get_eiendom_for_sheets(), this intentionally ignores sheet export
+        filters (for example SHEETS_MAX_PRICE and MIN_BRA_I) so process-step
+        travel reuse remains idempotent across repeated runs.
+        """
+        conn = self.get_connection()
+        query = '''
+            SELECT
+                e.finnkode as "Finnkode",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_rush_brj IS NOT NULL
+                    THEN ep_src.pendl_rush_brj
+                    ELSE ep.pendl_rush_brj
+                END as "PENDL RUSH BRJ",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_rush_mvv IS NOT NULL
+                    THEN ep_src.pendl_rush_mvv
+                    ELSE ep.pendl_rush_mvv
+                END as "PENDL RUSH MVV",
+                COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
+                COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
+                COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
+                COALESCE(ep.bil_dag_cntr, ep_src.bil_dag_cntr) as "BIL DAG CNTR",
+                ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
+        '''
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         return df
 
     def get_eiendom_for_status_refresh(self, only_inactive: bool = False) -> pd.DataFrame:

@@ -135,14 +135,14 @@ def extract_all(url_csv_path: str, output_folder: str):
             if entry:
                 out = extract_fields_from_entry(entry)
                 results.append(out)
-                print(f"{idx}/{len(urls)}: OK {out.get('URL')}")
+                print(f"{idx}/{len(urls)}: OK")
             else:
                 # fallback: still save URL as failed
                 failures.append({'URL': url, 'Index': idx, 'Error': 'No JSON-LD RealEstateListing found'})
-                print(f"{idx}/{len(urls)}: FAILED no JSON-LD {url}")
+                print(f"{idx}/{len(urls)}: FAILED no JSON-LD")
         except Exception as e:
             failures.append({'URL': url, 'Index': idx, 'Error': str(e)})
-            print(f"{idx}/{len(urls)}: ERROR {url} -> {e}")
+            print(f"{idx}/{len(urls)}: ERROR {e}")
 
         # Only sleep when we actually made a network request; cached reads need no delay
         if made_network_request:
@@ -153,7 +153,7 @@ def extract_all(url_csv_path: str, output_folder: str):
     if failures:
         pd.DataFrame(failures).to_csv(os.path.join(output_folder, 'A_failed.csv'), index=False)
 
-    print(f"Done. Extracted {len(results)} records, {len(failures)} failures.")
+    print(f"[DNB extract] done ok={len(results)} failed={len(failures)}")
     return df_out, failures
 
 

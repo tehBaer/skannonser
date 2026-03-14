@@ -82,9 +82,7 @@ def main():
     filtered = df[mask].copy()
     filtered.to_csv(out, index=False)
 
-    print(f"Total rows: {total}")
-    print(f"Kept rows strictly inside polygon: {len(filtered)}")
-    print(f"Filtered CSV written to: {out}")
+    print(f"[DNB filter] kept {len(filtered)}/{total} strictly inside polygon -> {out}")
 
     # annotate matches against FINN
     finn_path = Path('data/eiendom/A_live.csv')
@@ -110,7 +108,7 @@ def main():
     # load into DB
     db = PropertyDatabase()
     inserted, updated = db.insert_or_update_dnbeiendom(filtered)
-    print(f"Inserted {inserted}, Updated {updated} into dnbeiendom")
+    print(f"[DNB db] upsert inserted={inserted} updated={updated}")
 
     # Deactivate rows whose URL is no longer listed on DNB Eiendom.
     # Use the full crawled URL list (not just polygon-filtered) so that listings
@@ -134,13 +132,13 @@ def main():
                 f'UPDATE dnbeiendom SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id IN ({placeholders})',
                 to_deactivate,
             )
-            print(f"Deactivated {len(to_deactivate)} stale rows (sold/removed from site)")
+            print(f"[DNB db] stale deactivated={len(to_deactivate)}")
         else:
-            print("No stale rows to deactivate")
+            print("[DNB db] stale deactivated=0")
         conn.commit()
         conn.close()
     else:
-        print(f"Warning: {live_url_path} not found; skipping deactivation step")
+        print(f"[DNB db] stale check skipped (missing {live_url_path})")
 
 if __name__ == '__main__':
     main()

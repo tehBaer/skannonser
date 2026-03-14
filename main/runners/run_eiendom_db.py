@@ -10,6 +10,19 @@ import subprocess
 from urllib.parse import urlencode
 
 
+def _env_bool(name: str):
+    """Parse optional boolean env var; returns True/False or None when unset/invalid."""
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    if value in {'1', 'true', 'yes', 'y', 'on'}:
+        return True
+    if value in {'0', 'false', 'no', 'n', 'off'}:
+        return False
+    return None
+
+
 def build_finn_polylocation(points):
     """Build FINN polylocation string from (lng, lat) point tuples.
 
@@ -86,6 +99,11 @@ def run_eiendom_postprocess_and_store(
     calculate_location_features: bool = True,
     calculate_google_directions: bool = None,
 ):
+    # Optional env override used by Makefile targets that want explicit travel API control.
+    env_google_directions = _env_bool('EIENDOM_CALCULATE_GOOGLE_DIRECTIONS')
+    if calculate_google_directions is None and env_google_directions is not None:
+        calculate_google_directions = env_google_directions
+
     db = PropertyDatabase(db_path)
     print(f"Using database: {db.db_path}")
 
