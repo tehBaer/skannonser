@@ -9,7 +9,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address
+.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel
 
 help:
 	@echo "Available targets:"
@@ -39,6 +39,8 @@ help:
 	@echo "  make refresh-stale-open - Re-download active=0 listings except Tilgjengelighet=Solgt/Inaktiv"
 	@echo "  make coords-count - Count coordinate geocode candidates (no API calls)"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
+	@echo "  make validate-travel - Flag suspicious stored travel values without API calls"
+	@echo "                     Optional: TARGET=all RADIUS=750 INCLUDE_INACTIVE=1 TOP=100 CSV=tmp/travel_validation.csv"
 	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
 	@echo "  make map-guide - Open setup guide for interactive map"
 	@echo "  make polygon-edit - Open visual editor for FINN polygon coordinates"
@@ -190,6 +192,14 @@ map-live-url:
 
 coords-missing:
 	$(PYTHON) main/tools/report_missing_coordinates.py
+
+validate-travel:
+	$(PYTHON) main/tools/validate_travel_values.py \
+		--target "$(if $(TARGET),$(TARGET),all)" \
+		$(if $(RADIUS),--radius-meters "$(RADIUS)",) \
+		$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,) \
+		$(if $(TOP),--top "$(TOP)",) \
+		$(if $(CSV),--csv "$(CSV)",)
 
 coords-count:
 	$(PYTHON) main/tools/fill_missing_coordinates.py --limit 0 --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,)
