@@ -20,11 +20,11 @@ from main.config.filters import SHEETS_MAX_PRICE
 from main.sync import helper_sync_to_sheets as helper
 
 MUTABLE_COLS = ["Adresse", "Postnummer", "Pris", "Boligtype", "LAT", "LNG"]
-TRAVEL_COLS = ["PENDL MORN BRJ", "PENDL DAG BRJ", "PENDL MORN MVV", "PENDL DAG MVV"]
+TRAVEL_COLS = ["PENDL RUSH BRJ", "PENDL RUSH MVV"]
 SYNC_CHECK_COLS = MUTABLE_COLS + TRAVEL_COLS
 FULL_COL_ORDER = [
     "Adresse", "Postnummer", "Pris", "Boligtype", "URL", "LAT", "LNG",
-    "PENDL MORN BRJ", "PENDL DAG BRJ", "PENDL MORN MVV", "PENDL DAG MVV",
+    "PENDL RUSH BRJ", "PENDL RUSH MVV",
 ]
 
 

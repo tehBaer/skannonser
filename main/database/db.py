@@ -139,6 +139,8 @@ class PropertyDatabase:
                 bil_morn_mvv INTEGER,
                 pendl_dag_mvv INTEGER,
                 bil_dag_mvv INTEGER,
+                pendl_rush_brj INTEGER,
+                pendl_rush_mvv INTEGER,
                 pendl_morn_cntr INTEGER,
                 bil_morn_cntr INTEGER,
                 pendl_dag_cntr INTEGER,
@@ -222,6 +224,8 @@ class PropertyDatabase:
             "bil_morn_mvv": "INTEGER",
             "pendl_dag_mvv": "INTEGER",
             "bil_dag_mvv": "INTEGER",
+            "pendl_rush_brj": "INTEGER",
+            "pendl_rush_mvv": "INTEGER",
             "pendl_morn_cntr": "INTEGER",
             "bil_morn_cntr": "INTEGER",
             "pendl_dag_cntr": "INTEGER",
@@ -244,6 +248,15 @@ class PropertyDatabase:
                OR bil_morn_mvv IS NOT NULL
                OR pendl_dag_mvv IS NOT NULL
                OR bil_dag_mvv IS NOT NULL
+        ''')
+
+        # One-time migration: copy MORN values to new RUSH columns.
+        cursor.execute('''
+            UPDATE eiendom_processed
+            SET pendl_rush_brj = COALESCE(pendl_rush_brj, pendl_morn_brj),
+                pendl_rush_mvv = COALESCE(pendl_rush_mvv, pendl_morn_mvv)
+            WHERE pendl_morn_brj IS NOT NULL
+               OR pendl_morn_mvv IS NOT NULL
         ''')
 
         # Create indexes for better query performance
@@ -387,21 +400,9 @@ class PropertyDatabase:
             # Check for manual overrides
             data = self.overrides.apply_overrides_to_data(finnkode, data)
             
-            # Get pendl_morn_brj if present (for location table)
-            pendl_morn_brj = row.get('PENDL MORN BRJ', None) if pd.notna(row.get('PENDL MORN BRJ')) else None
-            
-            # Get bil_morn_brj if present (for location table)
-            bil_morn_brj = row.get('BIL MORN BRJ', None) if pd.notna(row.get('BIL MORN BRJ')) else None
-
-            # Get return times if present (for location table)
-            pendl_dag_brj = row.get('PENDL DAG BRJ', None) if pd.notna(row.get('PENDL DAG BRJ')) else None
-            bil_dag_brj = row.get('BIL DAG BRJ', None) if pd.notna(row.get('BIL DAG BRJ')) else None
-            
-            # Get MVV (Oslo Sentralstasjon) times if present
-            pendl_morn_mvv = row.get('PENDL MORN MVV', None) if pd.notna(row.get('PENDL MORN MVV')) else None
-            bil_morn_mvv = row.get('BIL MORN MVV', None) if pd.notna(row.get('BIL MORN MVV')) else None
-            pendl_dag_mvv = row.get('PENDL DAG MVV', None) if pd.notna(row.get('PENDL DAG MVV')) else None
-            bil_dag_mvv = row.get('BIL DAG MVV', None) if pd.notna(row.get('BIL DAG MVV')) else None
+            # Get pendl_rush_brj/mvv if present (for location table)
+            pendl_rush_brj = row.get('PENDL RUSH BRJ', None) if pd.notna(row.get('PENDL RUSH BRJ')) else None
+            pendl_rush_mvv = row.get('PENDL RUSH MVV', None) if pd.notna(row.get('PENDL RUSH MVV')) else None
             pendl_morn_cntr = row.get('PENDL MORN CNTR', None) if pd.notna(row.get('PENDL MORN CNTR')) else None
             bil_morn_cntr = row.get('BIL MORN CNTR', None) if pd.notna(row.get('BIL MORN CNTR')) else None
             pendl_dag_cntr = row.get('PENDL DAG CNTR', None) if pd.notna(row.get('PENDL DAG CNTR')) else None
@@ -461,14 +462,8 @@ class PropertyDatabase:
                 finnkode=finnkode,
                 adresse=data['adresse'],
                 postnummer=data['postnummer'],
-                pendl_morn_brj=pendl_morn_brj,
-                bil_morn_brj=bil_morn_brj,
-                pendl_dag_brj=pendl_dag_brj,
-                bil_dag_brj=bil_dag_brj,
-                pendl_morn_mvv=pendl_morn_mvv,
-                bil_morn_mvv=bil_morn_mvv,
-                pendl_dag_mvv=pendl_dag_mvv,
-                bil_dag_mvv=bil_dag_mvv,
+                pendl_rush_brj=pendl_rush_brj,
+                pendl_rush_mvv=pendl_rush_mvv,
                 pendl_morn_cntr=pendl_morn_cntr,
                 bil_morn_cntr=bil_morn_cntr,
                 pendl_dag_cntr=pendl_dag_cntr,
@@ -629,44 +624,16 @@ class PropertyDatabase:
                 e.pris_kvm as "PRIS KVM",
                 CASE
                     WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_morn_brj
-                    ELSE ep.pendl_morn_brj
-                END as "PENDL MORN BRJ",
-                COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
+                         AND ep_src.pendl_rush_brj IS NOT NULL
+                    THEN ep_src.pendl_rush_brj
+                    ELSE ep.pendl_rush_brj
+                END as "PENDL RUSH BRJ",
                 CASE
                     WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_dag_brj
-                    ELSE ep.pendl_dag_brj
-                END as "PENDL DAG BRJ",
-                COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
-                CASE
-                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_morn_mvv
-                    ELSE ep.pendl_morn_mvv
-                END as "PENDL MORN MVV",
-                COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
-                CASE
-                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_dag_mvv
-                    ELSE ep.pendl_dag_mvv
-                END as "PENDL DAG MVV",
-                COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
+                         AND ep_src.pendl_rush_mvv IS NOT NULL
+                    THEN ep_src.pendl_rush_mvv
+                    ELSE ep.pendl_rush_mvv
+                END as "PENDL RUSH MVV",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
                 COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
@@ -800,44 +767,16 @@ class PropertyDatabase:
                 e.pris_kvm as "PRIS KVM",
                 CASE
                     WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_morn_brj
-                    ELSE ep.pendl_morn_brj
-                END as "PENDL MORN BRJ",
-                COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
+                         AND ep_src.pendl_rush_brj IS NOT NULL
+                    THEN ep_src.pendl_rush_brj
+                    ELSE ep.pendl_rush_brj
+                END as "PENDL RUSH BRJ",
                 CASE
                     WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_dag_brj
-                    ELSE ep.pendl_dag_brj
-                END as "PENDL DAG BRJ",
-                COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
-                CASE
-                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_morn_mvv
-                    ELSE ep.pendl_morn_mvv
-                END as "PENDL MORN MVV",
-                COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
-                CASE
-                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_dag_mvv
-                    ELSE ep.pendl_dag_mvv
-                END as "PENDL DAG MVV",
-                COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
+                         AND ep_src.pendl_rush_mvv IS NOT NULL
+                    THEN ep_src.pendl_rush_mvv
+                    ELSE ep.pendl_rush_mvv
+                END as "PENDL RUSH MVV",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
                 COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
@@ -902,44 +841,16 @@ class PropertyDatabase:
                 e.pris_kvm as "PRIS KVM",
                 CASE
                     WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_morn_brj
-                    ELSE ep.pendl_morn_brj
-                END as "PENDL MORN BRJ",
-                COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
+                         AND ep_src.pendl_rush_brj IS NOT NULL
+                    THEN ep_src.pendl_rush_brj
+                    ELSE ep.pendl_rush_brj
+                END as "PENDL RUSH BRJ",
                 CASE
                     WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_dag_brj
-                    ELSE ep.pendl_dag_brj
-                END as "PENDL DAG BRJ",
-                COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
-                CASE
-                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_morn_mvv
-                    ELSE ep.pendl_morn_mvv
-                END as "PENDL MORN MVV",
-                COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
-                CASE
-                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-                         AND ep_src.pendl_morn_brj IS NOT NULL
-                         AND ep_src.pendl_dag_brj IS NOT NULL
-                         AND ep_src.pendl_morn_mvv IS NOT NULL
-                         AND ep_src.pendl_dag_mvv IS NOT NULL
-                    THEN ep_src.pendl_dag_mvv
-                    ELSE ep.pendl_dag_mvv
-                END as "PENDL DAG MVV",
-                COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
+                         AND ep_src.pendl_rush_mvv IS NOT NULL
+                    THEN ep_src.pendl_rush_mvv
+                    ELSE ep.pendl_rush_mvv
+                END as "PENDL RUSH MVV",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
                 COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
@@ -1089,10 +1000,8 @@ class PropertyDatabase:
     def insert_or_update_eiendom_processed(self, finnkode: str, adresse: str,
                                          postnummer: str,
                                          lat: float = None, lng: float = None,
-                                         pendl_morn_brj: str = None, bil_morn_brj: str = None,
-                                         pendl_dag_brj: str = None, bil_dag_brj: str = None,
-                                         pendl_morn_mvv: str = None, bil_morn_mvv: str = None,
-                                         pendl_dag_mvv: str = None, bil_dag_mvv: str = None,
+                                         pendl_rush_brj: str = None,
+                                         pendl_rush_mvv: str = None,
                                          pendl_morn_cntr: str = None, bil_morn_cntr: str = None,
                                          pendl_dag_cntr: str = None, bil_dag_cntr: str = None,
                                          travel_copy_from_finnkode: str = None):
@@ -1120,30 +1029,26 @@ class PropertyDatabase:
                 SET adresse_cleaned = ?,
                     lat = COALESCE(?, lat),
                     lng = COALESCE(?, lng),
-                    pendl_morn_brj = ?, bil_morn_brj = ?,
-                    pendl_dag_brj = ?, bil_dag_brj = ?,
-                    pendl_morn_mvv = ?, bil_morn_mvv = ?,
-                    pendl_dag_mvv = ?, bil_dag_mvv = ?,
+                    pendl_rush_brj = COALESCE(?, pendl_rush_brj),
+                    pendl_rush_mvv = COALESCE(?, pendl_rush_mvv),
                     pendl_morn_cntr = ?, bil_morn_cntr = ?,
                     pendl_dag_cntr = ?, bil_dag_cntr = ?,
                     travel_copy_from_finnkode = ?,
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, lat_norm, lng_norm, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                                    pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
+            ''', (adresse_cleaned, lat_norm, lng_norm, pendl_rush_brj, pendl_rush_mvv,
                                     pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                     travel_copy_from_finnkode,
                   google_maps_url, finnkode))
         else:
             cursor.execute('''
                 INSERT INTO eiendom_processed
-                (finnkode, adresse_cleaned, lat, lng, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                                 pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
+                (finnkode, adresse_cleaned, lat, lng,
+                                 pendl_rush_brj, pendl_rush_mvv,
                                  pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                  travel_copy_from_finnkode, google_maps_url)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, lat_norm, lng_norm, pendl_morn_brj, bil_morn_brj, pendl_dag_brj, bil_dag_brj,
-                                    pendl_morn_mvv, bil_morn_mvv, pendl_dag_mvv, bil_dag_mvv,
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (finnkode, adresse_cleaned, lat_norm, lng_norm, pendl_rush_brj, pendl_rush_mvv,
                                     pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                     travel_copy_from_finnkode, google_maps_url))
         
@@ -1178,10 +1083,8 @@ class PropertyDatabase:
                 ep.finnkode as "Finnkode",
                 ep.lat as "LAT",
                 ep.lng as "LNG",
-                ep.pendl_morn_brj as "PENDL MORN BRJ",
-                ep.pendl_dag_brj as "PENDL DAG BRJ",
-                ep.pendl_morn_mvv as "PENDL MORN MVV",
-                ep.pendl_dag_mvv as "PENDL DAG MVV",
+                ep.pendl_rush_brj as "PENDL RUSH BRJ",
+                ep.pendl_rush_mvv as "PENDL RUSH MVV",
                 ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE"
             FROM eiendom_processed ep
             WHERE ep.finnkode IS NOT NULL AND TRIM(ep.finnkode) != ''
@@ -1244,8 +1147,7 @@ class PropertyDatabase:
                 finnkode,
                 adresse,
                 postnummer,
-                pendl_morn_brj=pendlevei,
-                bil_morn_brj=None
+                pendl_rush_brj=pendlevei,
             )
             migrated += 1
         

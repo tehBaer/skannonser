@@ -15,9 +15,9 @@ from main.sync import helper_sync_to_sheets as helper
 
 
 TRAVEL_COLS_BY_TARGET = {
-    "all": ["PENDL MORN BRJ", "PENDL DAG BRJ", "PENDL MORN MVV", "PENDL DAG MVV"],
-    "brj": ["PENDL MORN BRJ", "PENDL DAG BRJ"],
-    "mvv": ["PENDL MORN MVV", "PENDL DAG MVV"],
+    "all": ["PENDL RUSH BRJ", "PENDL RUSH MVV"],
+    "brj": ["PENDL RUSH BRJ"],
+    "mvv": ["PENDL RUSH MVV"],
 }
 
 FULL_DNB_COL_ORDER = [
@@ -28,10 +28,8 @@ FULL_DNB_COL_ORDER = [
     "URL",
     "LAT",
     "LNG",
-    "PENDL MORN BRJ",
-    "PENDL DAG BRJ",
-    "PENDL MORN MVV",
-    "PENDL DAG MVV",
+    "PENDL RUSH BRJ",
+    "PENDL RUSH MVV",
 ]
 
 
@@ -133,10 +131,8 @@ def _build_shared_donor_seed(db: PropertyDatabase) -> pd.DataFrame:
         "Finnkode",
         "LAT",
         "LNG",
-        "PENDL MORN BRJ",
-        "PENDL DAG BRJ",
-        "PENDL MORN MVV",
-        "PENDL DAG MVV",
+            "PENDL RUSH BRJ",
+            "PENDL RUSH MVV",
     ]
     for col in needed_cols:
         if col not in seed.columns:
@@ -208,10 +204,8 @@ def _persist_shared_travel_seed(db: PropertyDatabase, processed: pd.DataFrame) -
             postnummer=str(row.get("Postnummer", "") or ""),
             lat=_db_value(row.get("LAT", None)),
             lng=_db_value(row.get("LNG", None)),
-            pendl_morn_brj=_db_value(row.get("PENDL MORN BRJ", None)),
-            pendl_dag_brj=_db_value(row.get("PENDL DAG BRJ", None)),
-            pendl_morn_mvv=_db_value(row.get("PENDL MORN MVV", None)),
-            pendl_dag_mvv=_db_value(row.get("PENDL DAG MVV", None)),
+                pendl_rush_brj=_db_value(row.get("PENDL RUSH BRJ", None)),
+                pendl_rush_mvv=_db_value(row.get("PENDL RUSH MVV", None)),
             travel_copy_from_finnkode=_db_value(row.get("TRAVEL_COPY_FROM_FINNKODE", None)),
         )
 

@@ -312,9 +312,8 @@ def post_process_eiendom(
             existing_data = db.get_eiendom_for_sheets()
             
             # Extract commute columns from existing database data (BRJ + CNTR + MVV)
-            commute_columns = ['Finnkode', 'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+            commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV',
                              'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
-                             'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV',
                              'TRAVEL_COPY_FROM_FINNKODE']
             existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_data.columns]
             existing_commute = existing_data[existing_commute_cols].copy() if len(existing_commute_cols) > 1 else None
@@ -344,19 +343,17 @@ def post_process_eiendom(
                 
                 # Migrate old column names in existing data
                 column_renames = {
-                    'PENDLEVEI': 'PENDL MORN BRJ',
-                    'KJØRETID': 'BIL MORN BRJ',
-                    'PENDLEVEI_RETUR_16': 'PENDL DAG BRJ',
-                    'KJØRETID_RETUR_16': 'BIL DAG BRJ'
+                    'PENDLEVEI': 'PENDL RUSH BRJ',
+                    'PENDL MORN BRJ': 'PENDL RUSH BRJ',
+                    'PENDL MORN MVV': 'PENDL RUSH MVV',
                 }
                 for old_name, new_name in column_renames.items():
                     if old_name in existing_df.columns:
                         existing_df.rename(columns={old_name: new_name}, inplace=True)
                 
                 # Extract commute columns from existing data (BRJ + CNTR + MVV)
-                commute_columns = ['Finnkode', 'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV',
                                  'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
-                                 'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV',
                                  'TRAVEL_COPY_FROM_FINNKODE']
                 # Filter to only include columns that exist in existing data
                 existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_df.columns]
@@ -412,10 +409,9 @@ def post_process_eiendom(
 
     # Migrate old column names to new names (backward compatibility)
     column_renames = {
-        'PENDLEVEI': 'PENDL MORN BRJ',
-        'KJØRETID': 'BIL MORN BRJ',
-        'PENDLEVEI_RETUR_16': 'PENDL DAG BRJ',
-        'KJØRETID_RETUR_16': 'BIL DAG BRJ'
+        'PENDLEVEI': 'PENDL RUSH BRJ',
+        'PENDL MORN BRJ': 'PENDL RUSH BRJ',
+        'PENDL MORN MVV': 'PENDL RUSH MVV',
     }
     for old_name, new_name in column_renames.items():
         if old_name in df.columns and new_name not in df.columns:
@@ -423,14 +419,10 @@ def post_process_eiendom(
             print(f"✓ Migrated column: {old_name} → {new_name}")
 
     # Initialize columns if not present
-    if 'PENDL MORN BRJ' not in df.columns:
-        df['PENDL MORN BRJ'] = None
-    if 'BIL MORN BRJ' not in df.columns:
-        df['BIL MORN BRJ'] = None
-    if 'PENDL DAG BRJ' not in df.columns:
-        df['PENDL DAG BRJ'] = None
-    if 'BIL DAG BRJ' not in df.columns:
-        df['BIL DAG BRJ'] = None
+    if 'PENDL RUSH BRJ' not in df.columns:
+        df['PENDL RUSH BRJ'] = None
+    if 'PENDL RUSH MVV' not in df.columns:
+        df['PENDL RUSH MVV'] = None
     if 'PENDL MORN CNTR' not in df.columns:
         df['PENDL MORN CNTR'] = None
     if 'BIL MORN CNTR' not in df.columns:
@@ -439,20 +431,12 @@ def post_process_eiendom(
         df['PENDL DAG CNTR'] = None
     if 'BIL DAG CNTR' not in df.columns:
         df['BIL DAG CNTR'] = None
-    if 'PENDL MORN MVV' not in df.columns:
-        df['PENDL MORN MVV'] = None
-    if 'BIL MORN MVV' not in df.columns:
-        df['BIL MORN MVV'] = None
-    if 'PENDL DAG MVV' not in df.columns:
-        df['PENDL DAG MVV'] = None
-    if 'BIL DAG MVV' not in df.columns:
-        df['BIL DAG MVV'] = None
     if 'TRAVEL_COPY_FROM_FINNKODE' not in df.columns:
         df['TRAVEL_COPY_FROM_FINNKODE'] = None
 
     # Transit-only donor reuse. Driving columns remain in DB as legacy data but are no longer fetched.
-    brj_travel_columns = ['PENDL MORN BRJ', 'PENDL DAG BRJ']
-    mvv_travel_columns = ['PENDL MORN MVV', 'PENDL DAG MVV']
+    brj_travel_columns = ['PENDL RUSH BRJ']
+    mvv_travel_columns = ['PENDL RUSH MVV']
     transit_travel_columns = brj_travel_columns + mvv_travel_columns
 
     lat_col = 'LAT' if 'LAT' in df.columns else ('lat' if 'lat' in df.columns else None)
@@ -524,14 +508,12 @@ def post_process_eiendom(
         return df
 
     # Calculate transit commute columns only.
-    pendl_morn_missing, brj_morn_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL MORN BRJ']) if run_brj else (0, Counter())
-    pendl_dag_missing, brj_dag_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL DAG BRJ']) if run_brj else (0, Counter())
-    pendl_morn_mvv_missing, mvv_morn_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL MORN MVV']) if run_mvv else (0, Counter())
-    pendl_dag_mvv_missing, mvv_dag_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL DAG MVV']) if run_mvv else (0, Counter())
+    pendl_rush_brj_missing, brj_rush_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL RUSH BRJ']) if run_brj else (0, Counter())
+    pendl_rush_mvv_missing, mvv_rush_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL RUSH MVV']) if run_mvv else (0, Counter())
 
     # Report sentinel (known-failure) totals — these won't be retried.
-    brj_sentinels_total = brj_morn_sentinels + brj_dag_sentinels
-    mvv_sentinels_total = mvv_morn_sentinels + mvv_dag_sentinels
+    brj_sentinels_total = brj_rush_sentinels
+    mvv_sentinels_total = mvv_rush_sentinels
     if run_brj and brj_sentinels_total:
         print(f"⚠️  BRJ has {sum(brj_sentinels_total.values())} failure-coded values (skipping re-calc): {_sentinel_summary(brj_sentinels_total)}")
     if run_mvv and mvv_sentinels_total:
@@ -539,18 +521,16 @@ def post_process_eiendom(
 
     rows_missing_any = pd.Series(False, index=df.index)
     if run_brj:
-        rows_missing_any = rows_missing_any | df['PENDL MORN BRJ'].isna() | df['PENDL DAG BRJ'].isna()
+        rows_missing_any = rows_missing_any | df['PENDL RUSH BRJ'].isna()
     if run_mvv:
-        rows_missing_any = rows_missing_any | df['PENDL MORN MVV'].isna() | df['PENDL DAG MVV'].isna()
+        rows_missing_any = rows_missing_any | df['PENDL RUSH MVV'].isna()
     rows_missing_count = int((eligible_mask & rows_missing_any).sum())
     
-    if pendl_morn_missing > 0 or pendl_dag_missing > 0 or pendl_morn_mvv_missing > 0 or pendl_dag_mvv_missing > 0:
+    if pendl_rush_brj_missing > 0 or pendl_rush_mvv_missing > 0:
         if run_brj:
-            print(f"\n⚠️  {pendl_morn_missing} properties missing PENDL MORN BRJ (public transit morning commute time)")
-            print(f"⚠️  {pendl_dag_missing} properties missing PENDL DAG BRJ (public transit return at 16:00)")
+            print(f"\n⚠️  {pendl_rush_brj_missing} properties missing PENDL RUSH BRJ (public transit rush-hour commute time)")
         if run_mvv:
-            print(f"⚠️  {pendl_morn_mvv_missing} properties missing PENDL MORN MVV (public transit to Lambertseter svømmeklubb)")
-            print(f"⚠️  {pendl_dag_mvv_missing} properties missing PENDL DAG MVV (public transit return from Lambertseter svømmeklubb)")
+            print(f"⚠️  {pendl_rush_mvv_missing} properties missing PENDL RUSH MVV (public transit to Lambertseter svømmeklubb)")
         if SHEETS_MAX_PRICE is not None:
             print(f"⚠️  Price filter active: MAX_PRICE = {SHEETS_MAX_PRICE}")
         if updates_only_logging:
@@ -566,11 +546,9 @@ def post_process_eiendom(
             
             # Initialize calculators
             work_address = "Rådmann Halmrasts Vei 5"
-            # PENDL MORN BRJ = public transit commute time to work
             transit_commute_calculator = PublicTransitCommuteTime(work_address)
             
             calculated_transit = 0
-            calculated_transit_return = 0
 
             def _checkpoint_row(row_idx):
                 if db is None:
@@ -585,7 +563,7 @@ def post_process_eiendom(
                     print(f"⚠️  Could not checkpoint row {row_idx}: {checkpoint_error}")
             
             eligible_total = int(eligible_mask.sum())
-            brj_api_calls_needed = int(df.loc[eligible_mask, 'PENDL MORN BRJ'].isna().sum()) + int(df.loc[eligible_mask, 'PENDL DAG BRJ'].isna().sum()) if run_brj else 0
+            brj_api_calls_needed = int(df.loc[eligible_mask, 'PENDL RUSH BRJ'].isna().sum()) if run_brj else 0
             print(f"\n🚀 BRJ: scanning {eligible_total} eligible properties, {brj_api_calls_needed} API call(s) needed...")
             if requests_per_minute < 60.0:
                 print(f"   Rate limited to {requests_per_minute} requests/minute\n")
@@ -651,8 +629,7 @@ def post_process_eiendom(
                         print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
 
                     row_changed = False
-                    brj_morn_stored = None
-                    brj_dag_stored = None
+                    brj_rush_stored = None
 
                     donor_finnkode = _maybe_assign_donor(row, donor_required_cols, donor_cache_for_assignment)
                     if donor_finnkode:
@@ -664,8 +641,8 @@ def post_process_eiendom(
                             if not updates_only_logging:
                                 print(f"   🔁 Using donor travel values from #{donor_finnkode}")
 
-                    # Calculate PENDL MORN BRJ (total public transit commute time to work)
-                    if run_brj and pd.isna(row.get('PENDL MORN BRJ')):
+                    # Calculate PENDL RUSH BRJ (public transit rush-hour commute time to work)
+                    if run_brj and pd.isna(row.get('PENDL RUSH BRJ')):
                         if donor_finnkode and not force_api_for_missing:
                             pass
                         else:
@@ -674,54 +651,15 @@ def post_process_eiendom(
                                     print(f"   📍 Calculating public transit time...", end='', flush=True)
                                 minutes = transit_commute_calculator.calculate(address, postnummer)
                                 if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
-                                    df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
-                                    brj_morn_stored = minutes
+                                    df.at[idx, 'PENDL RUSH BRJ'] = int(minutes)
+                                    brj_rush_stored = minutes
                                     calculated_transit += 1
                                     row_changed = True
                                     if not updates_only_logging:
                                         print(f" ✓ {minutes} min")
                                 elif is_travel_sentinel(minutes):
-                                    df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
-                                    brj_morn_stored = minutes
-                                    row_changed = True
-                                    if not updates_only_logging:
-                                        print(f" ✗ {_sentinel_label(minutes)}")
-                                else:
-                                    if not updates_only_logging:
-                                        print(f" ✗ Rejected/failed value ({minutes})")
-                                if minutes is not None and delay_between_requests > 0:
-                                    time.sleep(delay_between_requests)
-                            except Exception as e:
-                                print(f" ✗ Error: {str(e)}")
-
-                    destination = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
-                    work_addr_norway = f"{work_address}, Norway" if "Norway" not in work_address else work_address
-
-                    # Calculate PENDL DAG BRJ (public transit return at 16:00 Monday)
-                    if run_brj and pd.isna(row.get('PENDL DAG BRJ')):
-                        if donor_finnkode and not force_api_for_missing:
-                            pass
-                        else:
-                            try:
-                                if not updates_only_logging:
-                                    print(f"   🚌 Calculating public transit return (16:00)...", end='', flush=True)
-                                minutes = transit_commute_calculator.calculate(
-                                    address,
-                                    postnummer,
-                                    departure_time=16,
-                                    origin_override=work_addr_norway,
-                                    destination_override=destination
-                                )
-                                if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
-                                    df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
-                                    brj_dag_stored = minutes
-                                    calculated_transit_return += 1
-                                    row_changed = True
-                                    if not updates_only_logging:
-                                        print(f" ✓ {minutes} min")
-                                elif is_travel_sentinel(minutes):
-                                    df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
-                                    brj_dag_stored = minutes
+                                    df.at[idx, 'PENDL RUSH BRJ'] = int(minutes)
+                                    brj_rush_stored = minutes
                                     row_changed = True
                                     if not updates_only_logging:
                                         print(f" ✗ {_sentinel_label(minutes)}")
@@ -740,19 +678,16 @@ def post_process_eiendom(
                         _checkpoint_row(idx)
                         if updates_only_logging:
                             parts = []
-                            if brj_morn_stored is not None:
-                                parts.append(f"MORN: {_sentinel_label(brj_morn_stored) if is_travel_sentinel(brj_morn_stored) else str(brj_morn_stored) + ' min'}")
-                            if brj_dag_stored is not None:
-                                parts.append(f"DAG: {_sentinel_label(brj_dag_stored) if is_travel_sentinel(brj_dag_stored) else str(brj_dag_stored) + ' min'}")
+                            if brj_rush_stored is not None:
+                                parts.append(f"RUSH: {_sentinel_label(brj_rush_stored) if is_travel_sentinel(brj_rush_stored) else str(brj_rush_stored) + ' min'}")
                             suffix = f" ({', '.join(parts)})" if parts else ""
                             print(f"✓ Updated BRJ: {address}{suffix}")
 
                     # Summary every 10 properties
-                    total_calculated = calculated_transit + calculated_transit_return
+                    total_calculated = calculated_transit
                     if not updates_only_logging and total_calculated % 20 == 0 and total_calculated > 0:
                         print(
-                            f"\n📊 Progress: {calculated_transit} transit "
-                            f"+ {calculated_transit_return} transit_return "
+                            f"\n📊 Progress: {calculated_transit} transit RUSH "
                             f"+ {donor_assigned_count} donor-linked = {total_calculated + donor_assigned_count} total\n"
                         )
             except KeyboardInterrupt:
@@ -761,9 +696,8 @@ def post_process_eiendom(
 
             if interrupted:
                 commute_cols = [
-                    'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+                    'PENDL RUSH BRJ', 'PENDL RUSH MVV',
                     'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
-                    'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV'
                 ]
                 for col in commute_cols:
                     if col in df.columns:
@@ -776,13 +710,12 @@ def post_process_eiendom(
                 transit_commute_calculator_mvv = PublicTransitCommuteTime(mvv_address)
 
                 calculated_transit_mvv = 0
-                calculated_transit_return_mvv = 0
                 donor_assigned_mvv_count = 0
 
                 donor_required_cols_mvv = transit_travel_columns if (run_brj and run_mvv) else mvv_travel_columns
                 donor_cache_for_assignment_mvv = donor_cache_all if (run_brj and run_mvv) else donor_cache_mvv
 
-                mvv_api_calls_needed = int(df.loc[eligible_mask, 'PENDL MORN MVV'].isna().sum()) + int(df.loc[eligible_mask, 'PENDL DAG MVV'].isna().sum())
+                mvv_api_calls_needed = int(df.loc[eligible_mask, 'PENDL RUSH MVV'].isna().sum())
                 print(f"\n🚀 MVV: scanning {eligible_total} eligible properties, {mvv_api_calls_needed} API call(s) needed...\n")
 
                 try:
@@ -794,8 +727,7 @@ def post_process_eiendom(
                             print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
 
                         row_changed = False
-                        mvv_morn_stored = None
-                        mvv_dag_stored = None
+                        mvv_rush_stored = None
 
                         donor_finnkode = _maybe_assign_donor(row, donor_required_cols_mvv, donor_cache_for_assignment_mvv)
                         if donor_finnkode and not str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
@@ -805,8 +737,8 @@ def post_process_eiendom(
                             if not updates_only_logging:
                                 print(f"   🔁 Using donor travel values from #{donor_finnkode}")
 
-                        # Calculate PENDL MORN MVV
-                        if pd.isna(row.get('PENDL MORN MVV')):
+                        # Calculate PENDL RUSH MVV
+                        if pd.isna(row.get('PENDL RUSH MVV')):
                             if donor_finnkode and not force_api_for_missing:
                                 pass
                             else:
@@ -815,53 +747,15 @@ def post_process_eiendom(
                                         print(f"   📍 Calculating public transit to Lambertseter svømmeklubb...", end='', flush=True)
                                     minutes = transit_commute_calculator_mvv.calculate(address, postnummer)
                                     if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
-                                        df.at[idx, 'PENDL MORN MVV'] = int(minutes)
-                                        mvv_morn_stored = minutes
+                                        df.at[idx, 'PENDL RUSH MVV'] = int(minutes)
+                                        mvv_rush_stored = minutes
                                         calculated_transit_mvv += 1
                                         row_changed = True
                                         if not updates_only_logging:
                                             print(f" ✓ {minutes} min")
                                     elif is_travel_sentinel(minutes):
-                                        df.at[idx, 'PENDL MORN MVV'] = int(minutes)
-                                        mvv_morn_stored = minutes
-                                        row_changed = True
-                                        if not updates_only_logging:
-                                            print(f" ✗ {_sentinel_label(minutes)}")
-                                    else:
-                                        if not updates_only_logging:
-                                            print(f" ✗ Rejected/failed value ({minutes})")
-                                    if minutes is not None and delay_between_requests > 0:
-                                        time.sleep(delay_between_requests)
-                                except Exception as e:
-                                    print(f" ✗ Error: {str(e)}")
-
-                        destination_mvv = f"{address}, {postnummer}, Norway" if pd.notna(postnummer) and postnummer else f"{address}, Norway"
-
-                        # Calculate PENDL DAG MVV
-                        if pd.isna(row.get('PENDL DAG MVV')):
-                            if donor_finnkode and not force_api_for_missing:
-                                pass
-                            else:
-                                try:
-                                    if not updates_only_logging:
-                                        print(f"   🚌 Calculating public transit return from Lambertseter svømmeklubb (16:00)...", end='', flush=True)
-                                    minutes = transit_commute_calculator_mvv.calculate(
-                                        address,
-                                        postnummer,
-                                        departure_time=16,
-                                        origin_override=mvv_address,
-                                        destination_override=destination_mvv
-                                    )
-                                    if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
-                                        df.at[idx, 'PENDL DAG MVV'] = int(minutes)
-                                        mvv_dag_stored = minutes
-                                        calculated_transit_return_mvv += 1
-                                        row_changed = True
-                                        if not updates_only_logging:
-                                            print(f" ✓ {minutes} min")
-                                    elif is_travel_sentinel(minutes):
-                                        df.at[idx, 'PENDL DAG MVV'] = int(minutes)
-                                        mvv_dag_stored = minutes
+                                        df.at[idx, 'PENDL RUSH MVV'] = int(minutes)
+                                        mvv_rush_stored = minutes
                                         row_changed = True
                                         if not updates_only_logging:
                                             print(f" ✗ {_sentinel_label(minutes)}")
@@ -880,18 +774,15 @@ def post_process_eiendom(
                             _checkpoint_row(idx)
                             if updates_only_logging:
                                 parts = []
-                                if mvv_morn_stored is not None:
-                                    parts.append(f"MORN: {_sentinel_label(mvv_morn_stored) if is_travel_sentinel(mvv_morn_stored) else str(mvv_morn_stored) + ' min'}")
-                                if mvv_dag_stored is not None:
-                                    parts.append(f"DAG: {_sentinel_label(mvv_dag_stored) if is_travel_sentinel(mvv_dag_stored) else str(mvv_dag_stored) + ' min'}")
+                                if mvv_rush_stored is not None:
+                                    parts.append(f"RUSH: {_sentinel_label(mvv_rush_stored) if is_travel_sentinel(mvv_rush_stored) else str(mvv_rush_stored) + ' min'}")
                                 suffix = f" ({', '.join(parts)})" if parts else ""
                                 print(f"✓ Updated MVV: {address}{suffix}")
                 except KeyboardInterrupt:
                     print("\n⚠️  Interrupted during MVV travel calculations. Returning partial results and preserving saved progress.")
 
                 print(
-                    f"\n✓ Successfully calculated {calculated_transit_mvv} transit times to Lambertseter svømmeklubb "
-                    f"and {calculated_transit_return_mvv} transit return times"
+                    f"\n✓ Successfully calculated {calculated_transit_mvv} RUSH transit times to Lambertseter svømmeklubb"
                 )
                 if donor_assigned_count > 0 or donor_assigned_mvv_count > 0:
                     print(f"✓ Linked {donor_assigned_count + donor_assigned_mvv_count} rows to nearby donor Finnkoder")
@@ -902,9 +793,8 @@ def post_process_eiendom(
 
     # Ensure commute time columns are integers without decimals
     commute_cols = [
-        'PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
+        'PENDL RUSH BRJ', 'PENDL RUSH MVV',
         'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
-        'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV'
     ]
     for col in commute_cols:
         if col in df.columns:

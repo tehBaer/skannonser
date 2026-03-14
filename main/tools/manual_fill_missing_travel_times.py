@@ -29,17 +29,13 @@ except ImportError:
 
 
 COMMUTE_COLS = [
-    'PENDL MORN BRJ',
-    'PENDL DAG BRJ',
-    'PENDL MORN MVV',
-    'PENDL DAG MVV',
+    'PENDL RUSH BRJ',
+    'PENDL RUSH MVV',
 ]
 
 TRANSIT_COLS = [
-    'PENDL MORN BRJ',
-    'PENDL DAG BRJ',
-    'PENDL MORN MVV',
-    'PENDL DAG MVV',
+    'PENDL RUSH BRJ',
+    'PENDL RUSH MVV',
 ]
 
 # Google Maps Routes API pricing assumptions (USD), last checked 2026-02
@@ -48,8 +44,8 @@ PRICE_ESSENTIALS_PER_1K = 5.0
 
 TARGET_COLUMNS = {
     'all': COMMUTE_COLS,
-    'brj': ['PENDL MORN BRJ', 'PENDL DAG BRJ'],
-    'mvv': ['PENDL MORN MVV', 'PENDL DAG MVV'],
+    'brj': ['PENDL RUSH BRJ'],
+    'mvv': ['PENDL RUSH MVV'],
 }
 
 

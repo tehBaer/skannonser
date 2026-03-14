@@ -105,10 +105,6 @@ def filter_rows_for_sheet_visibility(df: pd.DataFrame, db: PropertyDatabase) -> 
 
 
 HIDDEN_SHEET_COLUMNS = {
-    'BIL MORN BRJ',
-    'BIL DAG BRJ',
-    'BIL MORN MVV',
-    'BIL DAG MVV',
     'PENDL MORN CNTR',
     'BIL MORN CNTR',
     'PENDL DAG CNTR',
@@ -157,8 +153,7 @@ def dedupe_and_canonicalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
 def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     """Clean data for Google Sheets export."""
     # Convert commute columns to integers without decimals before fillna
-    commute_cols = ['PENDL MORN BRJ', 'BIL MORN BRJ', 'PENDL DAG BRJ', 'BIL DAG BRJ',
-                    'PENDL MORN MVV', 'BIL MORN MVV', 'PENDL DAG MVV', 'BIL DAG MVV']
+    commute_cols = ['PENDL RUSH BRJ', 'PENDL RUSH MVV']
     area_cols = [
         'Bruksareal',
         'Internt bruksareal (BRA-i)',
