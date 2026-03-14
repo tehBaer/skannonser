@@ -95,6 +95,54 @@ def _build_shared_donor_seed(db: PropertyDatabase) -> pd.DataFrame:
     return seed[needed_cols].copy()
 
 
+def _normalize_finnkode_key(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        num = float(text)
+        if num.is_integer():
+            return str(int(num))
+    except Exception:
+        pass
+    return text
+
+
+def _fill_missing_from_donor_seed(processed: pd.DataFrame, donor_seed_df: pd.DataFrame, travel_cols: list[str]) -> None:
+    if processed.empty or donor_seed_df is None or donor_seed_df.empty:
+        return
+
+    donor_map: dict[str, dict] = {}
+    for _, row in donor_seed_df.iterrows():
+        key = _normalize_finnkode_key(row.get("Finnkode"))
+        if not key:
+            continue
+        donor_map[key] = {col: row.get(col, pd.NA) for col in travel_cols}
+
+    copied_rows = 0
+    for idx, row in processed.iterrows():
+        donor_key = _normalize_finnkode_key(row.get("TRAVEL_COPY_FROM_FINNKODE"))
+        if not donor_key:
+            continue
+
+        donor_vals = donor_map.get(donor_key)
+        if not donor_vals:
+            continue
+
+        # All-or-nothing donor rule: only use donor when every travel column exists.
+        if any(pd.isna(donor_vals.get(col, pd.NA)) for col in travel_cols):
+            continue
+
+        for col in travel_cols:
+            processed.at[idx, col] = donor_vals[col]
+        copied_rows += 1
+
+    if copied_rows:
+        print(f"Copied complete donor travel sets into {copied_rows} row(s)")
+
+
 def _persist_shared_travel_seed(db: PropertyDatabase, processed: pd.DataFrame) -> None:
     def _db_value(value):
         return None if pd.isna(value) else value
@@ -153,6 +201,8 @@ def main():
         donor_seed_df=donor_seed_df,
     )
 
+    _fill_missing_from_donor_seed(processed, donor_seed_df, TRAVEL_EXPORT_COLS)
+
     _persist_shared_travel_seed(db, processed)
 
     export_df = pd.DataFrame()
@@ -163,10 +213,11 @@ def main():
     export_df['LAT'] = processed.get('LAT', '')
     export_df['LNG'] = processed.get('LNG', '')
     for col in TRAVEL_EXPORT_COLS:
-        export_df[col] = processed.get(col, pd.NA)
+        export_df[col] = processed.get(col, '')
 
     # Avoid nullable Int64 fillna('') issues during sheet sanitization.
     export_df = export_df.astype(object)
+    export_df = export_df.where(~pd.isna(export_df), '')
 
     export_df = helper.dedupe_and_canonicalize_dataframe_columns(export_df)
     export_df = helper.sanitize_for_sheets(export_df)

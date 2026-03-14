@@ -6,6 +6,8 @@ import pandas as pd
 import sys
 import os
 import argparse
+import subprocess
+from urllib.parse import urlencode
 
 
 def build_finn_polylocation(points):
@@ -25,11 +27,21 @@ def build_finn_polylocation(points):
 
 def get_finn_scrape_config():
     project_name = 'data/eiendom'
+    try:
+        from main.config.filters import get_finn_search_filter_params
+    except ImportError:
+        from config.filters import get_finn_search_filter_params
+
+    finn_filter_params = get_finn_search_filter_params()
+    filter_suffix = ''
+    if finn_filter_params:
+        filter_suffix = '&' + urlencode(finn_filter_params)
+
     finn_url_base = (
         'https://www.finn.no/realestate/homes/search.html?filters='
         '&property_type=4&property_type=1&property_type=2&property_type=11'
-        '&lifecycle=1&is_new_property=false&price_to=6500000'
-        '&property_type=3&area_from=50'
+        '&lifecycle=1&is_new_property=false'
+        '&property_type=3'
     )
     # Editable polygon points: (lng, lat). Tweak these directly for precise adjustments.
     finn_polygon_points = [
@@ -44,7 +56,7 @@ def get_finn_scrape_config():
         (10.721282958984, 59.712097173323),
         (10.715468622953, 59.849132221282),
     ]
-    url_base = f"{finn_url_base}&polylocation={build_finn_polylocation(finn_polygon_points)}"
+    url_base = f"{finn_url_base}{filter_suffix}&polylocation={build_finn_polylocation(finn_polygon_points)}"
     regex = r'/realestate/.*?/ad\.html\?finnkode=\d+'
     return project_name, url_base, regex
 
@@ -109,6 +121,21 @@ def run_eiendom_postprocess_and_store(
     print(f"Unlisted: {stats['unlisted']}")
     print(f"Not yet exported to Sheets: {stats['not_exported']}")
     print(f"Inserted/Updated this run: {inserted}/{updated}")
+
+    print("\n" + "=" * 60)
+    print("DNB Travel Backfill")
+    print("=" * 60)
+    env = os.environ.copy()
+    env.setdefault('TRAVEL_REQUESTS_PER_MINUTE', '60')
+
+    backfill_cmd = [
+        sys.executable,
+        os.path.join(project_root, 'scripts', 'backfill_dnbeiendom_travel_to_sheet.py'),
+        '--target',
+        'all',
+    ]
+    subprocess.run(backfill_cmd, cwd=project_root, env=env, check=True)
+    print("✓ DNB travel backfill completed")
 
     return db
 

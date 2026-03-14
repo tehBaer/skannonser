@@ -9,13 +9,16 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv dnb-url dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync
+.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address
 
 help:
 	@echo "Available targets:"
 	@echo "  make gha      - Run CI-safe scrape (scrape + DB update, no Google Directions API)"
 	@echo "  make coords-fill - Geocode missing LAT/LNG in DB"
 	@echo "                     Optional: COORDS_LIMIT=0 COORDS_RPM=40 COORDS_INCLUDE_INACTIVE=1"
+	@echo "  make find-grouped-address-count - Count grouped unique address clusters"
+	@echo "                     Uses TRAVEL_REUSE_WITHIN_METERS as cluster radius"
+	@echo "                     Optional: RADIUS=500 INCLUDE_INACTIVE=1 VERBOSE=1"
 	@echo "  make full     - Full manual run (scrape + coords fill + sheet sync)"
 	@echo "  make full-no-scrape - Full manual run without scrape/crawl steps"
 	@echo "                     Prompts before geocoding API call by default; set COORDS_CONFIRM=0 to skip prompt"
@@ -25,7 +28,8 @@ help:
 	@echo "  make brj      - Fill missing BRJ transit travel fields only"
 	@echo "  make mvv      - Fill missing MVV transit travel fields only"
 	@echo "  make dnb-url  - Print DNB search URL used for URL extraction"
-	@echo "  make dnb-export-travel - Export DNB rows to DNB sheet with travel API calls"
+	@echo "  make dnb-sync - Sync DNB sheet from DB (update fields, delete stale, append new)"
+	@echo "  make dnb-export-travel - Export new DNB-only rows to sheet with travel API calls"
 	@echo "  make dnb-backfill-travel - Backfill BRJ/MVV into existing DNB sheet rows by URL"
 	@echo "  make dnb-backfill-travel-dryrun - Backfill dry run (no API calls, no sheet writes)"
 	@echo "  make sheets   - Manually sync database to Google Sheets"
@@ -63,6 +67,9 @@ mvv:
 
 dnb-url:
 	$(PYTHON) -c "from main.extractors.extract_dnbeiendom import SEARCH_URL; print(SEARCH_URL)"
+
+dnb-sync:
+	$(PYTHON) scripts/sync_dnbeiendom_sheet.py
 
 dnb-export-travel:
 	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py --target all
@@ -102,8 +109,8 @@ full:
 	@echo ""
 	# Continue existing DB/sheet pipeline steps after extraction
 	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
-	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py
-	TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
+	$(PYTHON) scripts/sync_dnbeiendom_sheet.py
+	TRAVEL_AUTO_CONFIRM="0" TRAVEL_REQUESTS_PER_MINUTE="60" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
 	$(PYTHON) main/tools/manage.py sync eiendom
 	@echo ""
 	@echo "--- Next step: refresh stale inactive listings (temporarily disabled) ---"
@@ -135,8 +142,8 @@ full-no-scrape:
 	@echo ""
 	# Continue existing DB/sheet pipeline steps after extraction
 	$(PYTHON) main/extractors/filter_and_load_dnbeiendom_no_buffer.py
-	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py
-	TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
+	$(PYTHON) scripts/sync_dnbeiendom_sheet.py
+	TRAVEL_AUTO_CONFIRM="0" TRAVEL_REQUESTS_PER_MINUTE="60" TRAVEL_LOG_UPDATES_ONLY="1" COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" COORDS_INCLUDE_INACTIVE="$(COORDS_INCLUDE_INACTIVE)" COORDS_CONFIRM="$(COORDS_CONFIRM)" $(PYTHON) main/runners/run_eiendom_db.py --step process
 	$(PYTHON) main/tools/manage.py sync eiendom
 	@echo ""
 	@echo "--- Next step: refresh stale inactive listings (temporarily disabled) ---"
@@ -195,5 +202,17 @@ coords-import-sheet:
 
 addr-overrides:
 	$(PYTHON) main/tools/address_overrides.py --help
+
+find-grouped-address-count:
+	$(PYTHON) main/tools/find_grouped_address_count.py \
+		$(if $(RADIUS),--radius-meters "$(RADIUS)",) \
+		$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,) \
+		$(if $(filter 1 yes true,$(VERBOSE)),--verbose,)
+
+# Alias with original requested spelling.
+find-grouped-adress-count: find-grouped-address-count
+
+# Backward-compatible alias for previous target name.
+api-calls-new-address: find-grouped-address-count
 
 

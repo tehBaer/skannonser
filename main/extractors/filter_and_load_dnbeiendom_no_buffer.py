@@ -112,5 +112,35 @@ def main():
     inserted, updated = db.insert_or_update_dnbeiendom(filtered)
     print(f"Inserted {inserted}, Updated {updated} into dnbeiendom")
 
+    # Deactivate rows whose URL is no longer listed on DNB Eiendom.
+    # Use the full crawled URL list (not just polygon-filtered) so that listings
+    # outside the polygon but still live on the site are not prematurely deactivated.
+    live_url_path = Path('data/dnbeiendom/0_URLs.csv')
+    if live_url_path.exists():
+        live_urls = set(
+            pd.read_csv(live_url_path)['URL']
+            .astype(str).str.strip().str.lower().str.rstrip('/')
+        )
+        conn = db.get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT id, url FROM dnbeiendom WHERE active = 1')
+        to_deactivate = [
+            r[0] for r in cur.fetchall()
+            if r[1] and r[1].strip().lower().rstrip('/') not in live_urls
+        ]
+        if to_deactivate:
+            placeholders = ','.join('?' * len(to_deactivate))
+            cur.execute(
+                f'UPDATE dnbeiendom SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id IN ({placeholders})',
+                to_deactivate,
+            )
+            print(f"Deactivated {len(to_deactivate)} stale rows (sold/removed from site)")
+        else:
+            print("No stale rows to deactivate")
+        conn.commit()
+        conn.close()
+    else:
+        print(f"Warning: {live_url_path} not found; skipping deactivation step")
+
 if __name__ == '__main__':
     main()

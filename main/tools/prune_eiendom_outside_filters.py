@@ -20,12 +20,12 @@ except ImportError:
 
 def _load_filters() -> tuple[int | None, int | None]:
     try:
-        from main.config.filters import MAX_PRICE, MIN_BRA_I
-        return MAX_PRICE, MIN_BRA_I
+        from main.config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+        return SHEETS_MAX_PRICE, MIN_BRA_I
     except ImportError:
         try:
-            from config.filters import MAX_PRICE, MIN_BRA_I
-            return MAX_PRICE, MIN_BRA_I
+            from config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+            return SHEETS_MAX_PRICE, MIN_BRA_I
         except ImportError:
             return None, None
 

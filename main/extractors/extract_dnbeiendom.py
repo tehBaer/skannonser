@@ -1,24 +1,52 @@
 import os
 import json
+import sys
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-SEARCH_URL = (
-    'https://dnbeiendom.no/bolig?'
-    'estateStatus=project_false&'
-    'locations=BUSKERUD_ae0fe87e-0ba2-46b7-9164-5ee26c4fc85b&'
-    'locations=AKERSHUS_fe2e9e2c-620e-4190-9af0-a5baa93abc1f&'
-    'locations=OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c&'
-    'estateTypes=Leilighet&'
-    'estateTypes=Enebolig&'
-    'estateTypes=Tomannsbolig&'
-    'estateTypes=Rekkehus&'
-    'estateTypes=Landbruk&'
-    'estateTypes=Sm%C3%A5bruk'
-)
+# Allow running as a direct script (e.g., `python main/extractors/extract_dnbeiendom.py`)
+# by ensuring project root is importable before config imports.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from main.config.filters import get_dnb_search_filter_params
+except ImportError:
+    from config.filters import get_dnb_search_filter_params
+
+
+def _build_search_url():
+    base_pairs = [
+        ('estateStatus', 'project_false'),
+        ('locations', 'BUSKERUD_ae0fe87e-0ba2-46b7-9164-5ee26c4fc85b'),
+        ('locations', 'AKERSHUS_fe2e9e2c-620e-4190-9af0-a5baa93abc1f'),
+        ('locations', 'OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c'),
+        ('estateTypes', 'Leilighet'),
+        ('estateTypes', 'Enebolig'),
+        ('estateTypes', 'Tomannsbolig'),
+        ('estateTypes', 'Rekkehus'),
+        ('estateTypes', 'Landbruk'),
+        ('estateTypes', 'Sm\u00e5bruk'),
+    ]
+
+    filter_params = get_dnb_search_filter_params()
+    for key in ('priceSuggestion', 'primaryRoomArea'):
+        value = filter_params.get(key)
+        if value:
+            base_pairs.append((key, value))
+
+    return f"https://dnbeiendom.no/bolig?{urlencode(base_pairs, doseq=True)}"
+
+
+SEARCH_URL = _build_search_url()
+
+
+ 
 LISTING_PATH_PREFIX = '/bolig/'
 PROJECT_DIR = 'data/dnbeiendom'
 OUTPUT_FILE = '0_URLs.csv'
@@ -127,7 +155,6 @@ def fetch_urls_from_search(search_url, project_dir, output_filename, max_pages=M
     # Tracks URLs seen across historical output + current run for true "new" counts.
     seen_urls = set(existing_urls)
     consecutive_empty_pages = 0
-    consecutive_no_new_pages = 0
 
     for page in range(1, max_pages + 1):
         page_url = _set_page(search_url, page)
@@ -146,17 +173,9 @@ def fetch_urls_from_search(search_url, project_dir, output_filename, max_pages=M
         else:
             consecutive_empty_pages = 0
 
-        if new_count == 0:
-            consecutive_no_new_pages += 1
-        else:
-            consecutive_no_new_pages = 0
-
-        # Stop when pages no longer produce new URLs.
+        # Stop only when pagination itself is exhausted (consecutive empty pages).
         if consecutive_empty_pages >= 2:
             print(f"Stopping at page {page} after consecutive empty pages.")
-            break
-        if consecutive_no_new_pages >= 2:
-            print(f"Stopping at page {page} after consecutive pages without new URLs.")
             break
 
     matched = sorted(all_urls)

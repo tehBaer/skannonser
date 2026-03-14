@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 # matches are found and report the number of URLs collected per page.
 
 
-def parse_resultpage(urlBase, term, folder, page: int = 1, df=None, isNAV: bool = False, seen_urls=None):
+def parse_resultpage(urlBase, term, folder, page: int = 1, isNAV: bool = False):
     append = ''
     if page != 1:
         if isNAV:
@@ -43,52 +43,61 @@ def parse_resultpage(urlBase, term, folder, page: int = 1, df=None, isNAV: bool 
         for match in sorted(matches)
     ]
 
-    if seen_urls is None:
-        seen_urls = set()
-
-    page_new_urls = [u for u in full_urls if u not in seen_urls]
-    seen_urls.update(page_new_urls)
-
     # We no longer attempt to parse a total match count from the page.
-
-    # Store the URLs in a pandas DataFrame
-    new_df = pd.DataFrame(page_new_urls, columns=['URL'])
-
-    # Append new URLs to the existing DataFrame
-    if df is not None:
-        df = pd.concat([df, new_df], ignore_index=True)
-    else:
-        df = new_df
-    return df, len(matches), seen_urls
+    return full_urls, len(matches)
 
 
 def extract_URLs(url, searchTerm, projectname, outputFileName: str, isNAV: bool = False):
-    # Initialize an empty DataFrame
-    df = pd.DataFrame(columns=['URL'])
-
     # Create a folder in the parent directory of this file if it doesn't exist
     os.makedirs(projectname, exist_ok=True)
 
     # Create a folder inside the previous folder for the HTMLs
     os.makedirs(os.path.join(projectname, 'html_crawled'), exist_ok=True)
 
+    output_path = os.path.join(projectname, outputFileName)
+    existing_urls = set()
+    if os.path.exists(output_path):
+        try:
+            existing_df = pd.read_csv(output_path)
+            if 'URL' in existing_df.columns:
+                existing_urls = {
+                    str(v).strip() for v in existing_df['URL'].dropna().tolist() if str(v).strip()
+                }
+                print(f"Loaded {len(existing_urls)} existing URLs from {output_path}")
+        except Exception as e:
+            print(f"Warning: could not read existing URLs from {output_path}: {e}")
+
     page = 1
-    seen_urls = set()
+    # Tracks all URLs found in this crawl run.
+    all_urls = set()
+    # Tracks URLs seen across historical output + current run for true "new" counts.
+    seen_urls = set(existing_urls)
     while True:
         folder = os.path.join(projectname, 'html_crawled')
-        df, match_count, seen_urls = parse_resultpage(url, searchTerm, folder, page, df, isNAV, seen_urls)
+        page_urls, match_count = parse_resultpage(url, searchTerm, folder, page, isNAV)
 
         if match_count == 0:
             print("No more results found. Stopping.")
             break
 
-        print(f"{len(df)} (page {page})")
+        page_urls_set = set(page_urls)
+        new_count = len(page_urls_set - seen_urls)
+        seen_urls.update(page_urls_set)
+        all_urls.update(page_urls_set)
+
+        print(
+            f"Page {page}: found {len(page_urls_set)} listing links "
+            f"({new_count} new vs saved data) [cumulative: {len(all_urls)}]"
+        )
 
         page += 1
         time.sleep(random.uniform(200, 500) / 1000)
 
+    df = pd.DataFrame(sorted(all_urls), columns=['URL'])
+
     # Save the DataFrame as a CSV file inside the folder
-    df.to_csv(os.path.join(projectname, outputFileName), index=False)
+    df.to_csv(output_path, index=False)
+    print(f"Found {len(df)} unique URLs from search results")
     print(f"Crawling completed. Saved to {projectname}/{outputFileName}")
     return df
 

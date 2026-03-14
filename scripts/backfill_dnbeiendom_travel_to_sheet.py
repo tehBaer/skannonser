@@ -69,18 +69,27 @@ def _normalize_url(value: object) -> str:
 
 
 def _normalize_cell_value(value: object) -> str:
-    if value is None:
+    if value is None or pd.isna(value):
         return ""
     text = str(value).strip()
     if text == "":
         return ""
+    if text.lower() in {"na", "n/a", "nan", "none", "null", "#n/a", "<na>"}:
+        return ""
     try:
         num = float(text)
+        if num != num:
+            return ""
         if num.is_integer():
             return str(int(num))
         return str(num)
     except Exception:
         return text
+
+
+def _is_placeholder_cell(value: object) -> bool:
+    text = str(value or "").strip().lower()
+    return text in {"na", "n/a", "nan", "none", "null", "#n/a", "<na>"}
 
 
 def _build_work_df(df: pd.DataFrame, travel_cols: list[str]) -> pd.DataFrame:
@@ -134,6 +143,54 @@ def _build_shared_donor_seed(db: PropertyDatabase) -> pd.DataFrame:
             seed[col] = pd.NA
 
     return seed[needed_cols].copy()
+
+
+def _normalize_finnkode_key(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        num = float(text)
+        if num.is_integer():
+            return str(int(num))
+    except Exception:
+        pass
+    return text
+
+
+def _fill_missing_from_donor_seed(processed: pd.DataFrame, donor_seed_df: pd.DataFrame, travel_cols: list[str]) -> None:
+    if processed.empty or donor_seed_df is None or donor_seed_df.empty:
+        return
+
+    donor_map: dict[str, dict] = {}
+    for _, row in donor_seed_df.iterrows():
+        key = _normalize_finnkode_key(row.get("Finnkode"))
+        if not key:
+            continue
+        donor_map[key] = {col: row.get(col, pd.NA) for col in travel_cols}
+
+    copied_rows = 0
+    for idx, row in processed.iterrows():
+        donor_key = _normalize_finnkode_key(row.get("TRAVEL_COPY_FROM_FINNKODE"))
+        if not donor_key:
+            continue
+
+        donor_vals = donor_map.get(donor_key)
+        if not donor_vals:
+            continue
+
+        # All-or-nothing donor rule: only use donor when every travel column exists.
+        if any(pd.isna(donor_vals.get(col, pd.NA)) for col in travel_cols):
+            continue
+
+        for col in travel_cols:
+            processed.at[idx, col] = donor_vals[col]
+        copied_rows += 1
+
+    if copied_rows:
+        print(f"Copied complete donor travel sets into {copied_rows} row(s)")
 
 
 def _persist_shared_travel_seed(db: PropertyDatabase, processed: pd.DataFrame) -> None:
@@ -195,6 +252,8 @@ def main() -> int:
         travel_targets=args.target,
         donor_seed_df=donor_seed_df,
     )
+
+    _fill_missing_from_donor_seed(processed, donor_seed_df, travel_cols)
 
     _persist_shared_travel_seed(db, processed)
 
@@ -264,7 +323,8 @@ def main() -> int:
 
             old_norm = _normalize_cell_value(old)
             new_norm = _normalize_cell_value(new)
-            if new_norm == "" or new_norm == old_norm:
+            should_clear_placeholder = new_norm == "" and _is_placeholder_cell(old)
+            if not should_clear_placeholder and (new_norm == "" or new_norm == old_norm):
                 continue
 
             row_updates.append((col_idx, new_norm))

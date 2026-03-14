@@ -182,6 +182,11 @@ def main() -> int:
         action="store_true",
         help="Exit with status 0 even if some listings fail geocoding",
     )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Also attempt listings previously marked as geocode_failed",
+    )
     args = parser.parse_args()
 
     api_key = resolve_api_key(args.api_key)
@@ -191,6 +196,36 @@ def main() -> int:
 
     db = PropertyDatabase(args.db)
     df = db.get_eiendom_missing_coordinates()
+
+    if args.retry_failed:
+        # Also pull listings that were previously marked as geocode_failed.
+        conn = db.get_connection()
+        failed_df = pd.read_sql_query(
+            '''
+            SELECT
+                e.finnkode as "Finnkode",
+                COALESCE(ep.adresse_cleaned, e.adresse) as "ADRESSE",
+                e.postnummer as "Postnummer",
+                e.url as "URL",
+                e.active as "active",
+                e.tilgjengelighet as "Tilgjengelighet",
+                ep.lat as "LAT",
+                ep.lng as "LNG"
+            FROM eiendom e
+            LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
+            WHERE ep.geocode_failed = 1
+              AND e.active = 1
+              AND (e.tilgjengelighet IS NULL OR LOWER(e.tilgjengelighet) NOT IN (\"solgt\", \"inaktiv\"))
+            ORDER BY e.scraped_at DESC
+            ''',
+            conn,
+        )
+        conn.close()
+        if not failed_df.empty:
+            # Reset the failed flag so they are treated as fresh candidates.
+            for fk in failed_df["Finnkode"].dropna().astype(str):
+                db.clear_eiendom_geocode_failed(fk)
+            df = pd.concat([df, failed_df], ignore_index=True).drop_duplicates(subset="Finnkode")
 
     if not args.include_inactive and not df.empty:
         # Keep geocoding scope aligned with what is visible in Sheets by default.
@@ -236,6 +271,7 @@ def main() -> int:
 
     ok = 0
     failed = 0
+    marked = 0
     skipped = 0
 
     def _format_duration(seconds: float) -> str:
@@ -273,7 +309,12 @@ def main() -> int:
             result = geocode_address(adresse, postnummer, api_key)
             if not result:
                 failed += 1
-                print(f"{progress_prefix} - FAIL #{finnkode} {adresse}")
+                if not args.dry_run:
+                    db.mark_eiendom_geocode_failed(finnkode)
+                    marked += 1
+                    print(f"{progress_prefix} - FAIL #{finnkode} {adresse} (marked — use --retry-failed to retry)")
+                else:
+                    print(f"{progress_prefix} - FAIL #{finnkode} {adresse}")
                 time.sleep(sleep_sec)
                 continue
 
@@ -298,7 +339,7 @@ def main() -> int:
 
     print("\nSummary")
     print(f"  Updated: {ok}")
-    print(f"  Failed:  {failed}")
+    print(f"  Failed:  {failed}" + (f" ({marked} marked — skipped on future runs)" if marked else ""))
     print(f"  Skipped: {skipped}")
     print(f"  Elapsed: {_format_duration(time.time() - started_at)}")
 

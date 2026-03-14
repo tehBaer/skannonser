@@ -39,6 +39,18 @@ def _get_coord_bounds() -> tuple[float, float, float, float]:
     return lat_min, lat_max, lng_min, lng_max
 
 
+def _get_max_price() -> Optional[int]:
+    try:
+        from main.config.filters import SHEETS_MAX_PRICE
+        return int(SHEETS_MAX_PRICE) if SHEETS_MAX_PRICE is not None else None
+    except Exception:
+        try:
+            from config.filters import SHEETS_MAX_PRICE
+            return int(SHEETS_MAX_PRICE) if SHEETS_MAX_PRICE is not None else None
+        except Exception:
+            return None
+
+
 def _is_in_bounds(lat: float, lng: float, lat_min: float, lat_max: float, lng_min: float, lng_max: float) -> bool:
     return lat_min <= lat <= lat_max and lng_min <= lng <= lng_max
 
@@ -215,6 +227,7 @@ class PropertyDatabase:
             "pendl_dag_cntr": "INTEGER",
             "bil_dag_cntr": "INTEGER",
             "travel_copy_from_finnkode": "TEXT",
+            "geocode_failed": "INTEGER",
         }
         for column_name, column_type in columns_to_add.items():
             if column_name not in existing_columns:
@@ -579,12 +592,12 @@ class PropertyDatabase:
 
         # Optional filters
         try:
-            from main.config.filters import MAX_PRICE, MIN_BRA_I
+            from main.config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
         except ImportError:
             try:
-                from config.filters import MAX_PRICE, MIN_BRA_I
+                from config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
             except ImportError:
-                MAX_PRICE = None
+                SHEETS_MAX_PRICE = None
                 MIN_BRA_I = None
         
         # Get all listings regardless of status
@@ -614,13 +627,45 @@ class PropertyDatabase:
                 ep.lat as "LAT",
                 ep.lng as "LNG",
                 e.pris_kvm as "PRIS KVM",
-                COALESCE(ep.pendl_morn_brj, ep_src.pendl_morn_brj) as "PENDL MORN BRJ",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_morn_brj
+                    ELSE ep.pendl_morn_brj
+                END as "PENDL MORN BRJ",
                 COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
-                COALESCE(ep.pendl_dag_brj, ep_src.pendl_dag_brj) as "PENDL DAG BRJ",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_dag_brj
+                    ELSE ep.pendl_dag_brj
+                END as "PENDL DAG BRJ",
                 COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
-                COALESCE(ep.pendl_morn_mvv, ep_src.pendl_morn_mvv) as "PENDL MORN MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_morn_mvv
+                    ELSE ep.pendl_morn_mvv
+                END as "PENDL MORN MVV",
                 COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
-                COALESCE(ep.pendl_dag_mvv, ep_src.pendl_dag_mvv) as "PENDL DAG MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_dag_mvv
+                    ELSE ep.pendl_dag_mvv
+                END as "PENDL DAG MVV",
                 COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
@@ -635,9 +680,9 @@ class PropertyDatabase:
         '''
 
         params = []
-        if MAX_PRICE is not None:
+        if SHEETS_MAX_PRICE is not None:
             query += " AND e.pris <= ?"
-            params.append(MAX_PRICE)
+            params.append(SHEETS_MAX_PRICE)
         if MIN_BRA_I is not None:
             query += " AND CAST(e.info_usable_i_area AS REAL) >= ?"
             params.append(MIN_BRA_I)
@@ -753,13 +798,45 @@ class PropertyDatabase:
                 ep.lat as "LAT",
                 ep.lng as "LNG",
                 e.pris_kvm as "PRIS KVM",
-                COALESCE(ep.pendl_morn_brj, ep_src.pendl_morn_brj) as "PENDL MORN BRJ",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_morn_brj
+                    ELSE ep.pendl_morn_brj
+                END as "PENDL MORN BRJ",
                 COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
-                COALESCE(ep.pendl_dag_brj, ep_src.pendl_dag_brj) as "PENDL DAG BRJ",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_dag_brj
+                    ELSE ep.pendl_dag_brj
+                END as "PENDL DAG BRJ",
                 COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
-                COALESCE(ep.pendl_morn_mvv, ep_src.pendl_morn_mvv) as "PENDL MORN MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_morn_mvv
+                    ELSE ep.pendl_morn_mvv
+                END as "PENDL MORN MVV",
                 COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
-                COALESCE(ep.pendl_dag_mvv, ep_src.pendl_dag_mvv) as "PENDL DAG MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_dag_mvv
+                    ELSE ep.pendl_dag_mvv
+                END as "PENDL DAG MVV",
                 COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
@@ -791,12 +868,12 @@ class PropertyDatabase:
 
         # Optional filters
         try:
-            from main.config.filters import MAX_PRICE, MIN_BRA_I
+            from main.config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
         except ImportError:
             try:
-                from config.filters import MAX_PRICE, MIN_BRA_I
+                from config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
             except ImportError:
-                MAX_PRICE = None
+                SHEETS_MAX_PRICE = None
                 MIN_BRA_I = None
         
         # Get unlisted listings (not in search anymore, but not explicitly sold)
@@ -823,13 +900,45 @@ class PropertyDatabase:
                 ep.lat as "LAT",
                 ep.lng as "LNG",
                 e.pris_kvm as "PRIS KVM",
-                COALESCE(ep.pendl_morn_brj, ep_src.pendl_morn_brj) as "PENDL MORN BRJ",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_morn_brj
+                    ELSE ep.pendl_morn_brj
+                END as "PENDL MORN BRJ",
                 COALESCE(ep.bil_morn_brj, ep_src.bil_morn_brj) as "BIL MORN BRJ",
-                COALESCE(ep.pendl_dag_brj, ep_src.pendl_dag_brj) as "PENDL DAG BRJ",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_dag_brj
+                    ELSE ep.pendl_dag_brj
+                END as "PENDL DAG BRJ",
                 COALESCE(ep.bil_dag_brj, ep_src.bil_dag_brj) as "BIL DAG BRJ",
-                COALESCE(ep.pendl_morn_mvv, ep_src.pendl_morn_mvv) as "PENDL MORN MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_morn_mvv
+                    ELSE ep.pendl_morn_mvv
+                END as "PENDL MORN MVV",
                 COALESCE(ep.bil_morn_mvv, ep_src.bil_morn_mvv) as "BIL MORN MVV",
-                COALESCE(ep.pendl_dag_mvv, ep_src.pendl_dag_mvv) as "PENDL DAG MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_morn_brj IS NOT NULL
+                         AND ep_src.pendl_dag_brj IS NOT NULL
+                         AND ep_src.pendl_morn_mvv IS NOT NULL
+                         AND ep_src.pendl_dag_mvv IS NOT NULL
+                    THEN ep_src.pendl_dag_mvv
+                    ELSE ep.pendl_dag_mvv
+                END as "PENDL DAG MVV",
                 COALESCE(ep.bil_dag_mvv, ep_src.bil_dag_mvv) as "BIL DAG MVV",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
@@ -844,9 +953,9 @@ class PropertyDatabase:
         '''
 
         params = []
-        if MAX_PRICE is not None:
+        if SHEETS_MAX_PRICE is not None:
             query += " AND e.pris <= ?"
-            params.append(MAX_PRICE)
+            params.append(SHEETS_MAX_PRICE)
         if MIN_BRA_I is not None:
             query += " AND CAST(e.info_usable_i_area AS REAL) >= ?"
             params.append(MIN_BRA_I)
@@ -881,6 +990,7 @@ class PropertyDatabase:
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             WHERE (ep.lat IS NULL OR ep.lng IS NULL)
+              AND (ep.geocode_failed IS NULL OR ep.geocode_failed = 0)
               AND e.active = 1
               AND (e.tilgjengelighet IS NULL OR LOWER(e.tilgjengelighet) NOT IN ('solgt', 'inaktiv'))
             ORDER BY e.scraped_at DESC
@@ -912,7 +1022,7 @@ class PropertyDatabase:
             cursor.execute(
                 '''
                 UPDATE eiendom_processed
-                SET lat = ?, lng = ?, updated_at = CURRENT_TIMESTAMP
+                SET lat = ?, lng = ?, geocode_failed = 0, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
                 ''',
                 (lat_norm, lng_norm, str(finnkode)),
@@ -920,8 +1030,8 @@ class PropertyDatabase:
         else:
             cursor.execute(
                 '''
-                INSERT INTO eiendom_processed (finnkode, lat, lng)
-                VALUES (?, ?, ?)
+                INSERT INTO eiendom_processed (finnkode, lat, lng, geocode_failed)
+                VALUES (?, ?, ?, 0)
                 ''',
                 (str(finnkode), lat_norm, lng_norm),
             )
@@ -930,6 +1040,39 @@ class PropertyDatabase:
         conn.commit()
         conn.close()
         return changed
+
+    def mark_eiendom_geocode_failed(self, finnkode: str) -> None:
+        """Mark a listing as having a permanent geocoding failure (no API retry)."""
+        if not finnkode:
+            return
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM eiendom_processed WHERE finnkode = ?', (str(finnkode),))
+        if cursor.fetchone():
+            cursor.execute(
+                'UPDATE eiendom_processed SET geocode_failed = 1, updated_at = CURRENT_TIMESTAMP WHERE finnkode = ?',
+                (str(finnkode),),
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO eiendom_processed (finnkode, geocode_failed) VALUES (?, 1)',
+                (str(finnkode),),
+            )
+        conn.commit()
+        conn.close()
+
+    def clear_eiendom_geocode_failed(self, finnkode: str) -> None:
+        """Clear geocode_failed flag so the listing is retried on next run."""
+        if not finnkode:
+            return
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE eiendom_processed SET geocode_failed = 0, updated_at = CURRENT_TIMESTAMP WHERE finnkode = ?',
+            (str(finnkode),),
+        )
+        conn.commit()
+        conn.close()
     
     def _generate_google_maps_url(self, adresse: str, postnummer: str) -> str:
         """Generate a Google Maps search URL from address and postal code."""
@@ -1228,7 +1371,15 @@ class PropertyDatabase:
             url = (row.get('URL') or row.get('url') or '').strip() if row.get('URL') is not None or row.get('url') is not None else ''
             dnb_id = (row.get('Id') or row.get('dnb_id') or '').strip() if row.get('Id') is not None or row.get('dnb_id') is not None else ''
             adresse = row.get('Adresse') or row.get('adresse') or row.get('StreetAddress') or ''
-            postnummer = row.get('Postnummer') or row.get('postnummer') or row.get('PostalCode') or ''
+            _pc_raw = row.get('Postnummer') or row.get('postnummer') or row.get('PostalCode')
+            if _pc_raw is None or (isinstance(_pc_raw, float) and _pc_raw != _pc_raw):
+                postnummer = ''
+            else:
+                try:
+                    # Preserve leading zeros: Norwegian postal codes are always 4 digits.
+                    postnummer = str(int(float(str(_pc_raw)))).zfill(4)
+                except (ValueError, TypeError):
+                    postnummer = str(_pc_raw).strip()
             pris = self._to_int(row.get('Pris') or row.get('pris') or row.get('Price'))
             lat = _to_float_or_none(row.get('LAT') or row.get('lat') or row.get('Latitude'))
             lng = _to_float_or_none(row.get('LNG') or row.get('lng') or row.get('Longitude'))
@@ -1286,7 +1437,21 @@ class PropertyDatabase:
     def get_new_dnbeiendom_for_export(self) -> pd.DataFrame:
         """Return dnbeiendom rows eligible for export to Sheets (active && not exported)."""
         conn = self.get_connection()
-        df = pd.read_sql_query('SELECT * FROM dnbeiendom WHERE active = 1 AND exported_to_sheets = 0 ORDER BY scraped_at DESC', conn)
+        max_price = _get_max_price()
+        if max_price is None:
+            query = 'SELECT * FROM dnbeiendom WHERE active = 1 AND exported_to_sheets = 0 ORDER BY scraped_at DESC'
+            params = ()
+        else:
+            query = '''
+                SELECT *
+                FROM dnbeiendom
+                WHERE active = 1
+                  AND exported_to_sheets = 0
+                  AND COALESCE(pris, 0) <= ?
+                ORDER BY scraped_at DESC
+            '''
+            params = (max_price,)
+        df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         return df
 

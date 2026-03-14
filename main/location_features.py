@@ -19,6 +19,37 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
 
+# Sentinel values for travel time failures.  Stored as negative integers in DB/sheet columns.
+# Rows with these values are skipped by the post-processing pipeline (not retried).
+TRAVEL_NO_ROUTES = -1       # API returned no route between origin and destination
+TRAVEL_UNREALISTIC = -2    # Duration rejected as unrealistic (> MAX_TRAVEL_MINUTES)
+TRAVEL_API_ERROR = -3      # HTTP error or network exception
+_TRAVEL_SENTINELS = frozenset({TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC, TRAVEL_API_ERROR})
+
+
+def is_travel_sentinel(value) -> bool:
+    """Return True if value is a known travel-time failure sentinel (negative integer code)."""
+    try:
+        if value is None:
+            return False
+        return int(value) in _TRAVEL_SENTINELS
+    except (TypeError, ValueError):
+        return False
+
+
+def travel_sentinel_label(value) -> str:
+    """Return a human-readable label for a sentinel value, or empty string."""
+    labels = {
+        TRAVEL_NO_ROUTES: 'no routes',
+        TRAVEL_UNREALISTIC: 'unrealistic',
+        TRAVEL_API_ERROR: 'API error',
+    }
+    try:
+        return labels.get(int(value), '')
+    except (TypeError, ValueError):
+        return ''
+
+
 def _get_max_travel_minutes() -> int:
     default_value = 360
     try:
@@ -280,17 +311,17 @@ class CommutingTimeToWorkAddress(LocationFeature):
                 if "duration" in route:
                     minutes = _parse_duration_minutes(route["duration"])
                     if not _is_reasonable_travel_minutes(minutes):
-                        print(f"\n      ⚠️  Rejected unrealistic DRIVE duration: {route.get('duration')}")
-                        return None
+                        print(f"\n      ⚠️  Rejected unrealistic DRIVE duration: {route.get('duration')} → storing TRAVEL_UNREALISTIC")
+                        return TRAVEL_UNREALISTIC
                     return minutes
-                return None
+                return TRAVEL_NO_ROUTES
             else:
-                print(f"\n      ⚠️  No routes found in response")
-                return None
-                
+                print(f"\n      ⚠️  No routes found in response → storing TRAVEL_NO_ROUTES")
+                return TRAVEL_NO_ROUTES
+
         except Exception as e:
-            print(f"\n      ⚠️  Exception: {str(e)}")
-            return None
+            print(f"\n      ⚠️  Exception: {str(e)} → storing TRAVEL_API_ERROR")
+            return TRAVEL_API_ERROR
 
 
 class PublicTransitCommuteTime(LocationFeature):
@@ -393,17 +424,17 @@ class PublicTransitCommuteTime(LocationFeature):
                 if "duration" in route:
                     minutes = _parse_duration_minutes(route["duration"])
                     if not _is_reasonable_travel_minutes(minutes):
-                        print(f"\n      ⚠️  Rejected unrealistic TRANSIT duration: {route.get('duration')}")
-                        return None
+                        print(f"\n      ⚠️  Rejected unrealistic TRANSIT duration: {route.get('duration')} → storing TRAVEL_UNREALISTIC")
+                        return TRAVEL_UNREALISTIC
                     return minutes
-                return None
+                return TRAVEL_NO_ROUTES
             else:
-                print(f"\n      ⚠️  No routes found in response")
-                return None
-                
+                print(f"\n      ⚠️  No routes found in response → storing TRAVEL_NO_ROUTES")
+                return TRAVEL_NO_ROUTES
+
         except Exception as e:
-            print(f"\n      ⚠️  Exception: {str(e)}")
-            return None
+            print(f"\n      ⚠️  Exception: {str(e)} → storing TRAVEL_API_ERROR")
+            return TRAVEL_API_ERROR
 
 
 class WalkingTimeToPublicTransit(LocationFeature):

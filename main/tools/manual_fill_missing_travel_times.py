@@ -55,12 +55,12 @@ TARGET_COLUMNS = {
 
 def _get_max_price():
     try:
-        from main.config.filters import MAX_PRICE
-        return MAX_PRICE
+        from main.config.filters import SHEETS_MAX_PRICE
+        return SHEETS_MAX_PRICE
     except ImportError:
         try:
-            from config.filters import MAX_PRICE
-            return MAX_PRICE
+            from config.filters import SHEETS_MAX_PRICE
+            return SHEETS_MAX_PRICE
         except ImportError:
             return None
 

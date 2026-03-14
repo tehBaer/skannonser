@@ -2,9 +2,61 @@
 import time
 import math
 import os
+from collections import Counter
 
 import pandas as pd
 from pandas import DataFrame
+
+# Travel sentinel codes — negative integers stored in DB/sheet to mark known failures.
+# Rows with these values are NOT retried by the pipeline.
+TRAVEL_NO_ROUTES = -1
+TRAVEL_UNREALISTIC = -2
+TRAVEL_API_ERROR = -3
+_TRAVEL_SENTINELS = frozenset({TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC, TRAVEL_API_ERROR})
+
+
+def is_travel_sentinel(value) -> bool:
+    """Return True if value is a known travel-time failure code."""
+    try:
+        if value is None:
+            return False
+        return int(value) in _TRAVEL_SENTINELS
+    except (TypeError, ValueError):
+        return False
+
+
+_SENTINEL_LABELS = {
+    TRAVEL_NO_ROUTES: 'no routes',
+    TRAVEL_UNREALISTIC: 'unrealistic',
+    TRAVEL_API_ERROR: 'API error',
+}
+
+
+def _sentinel_label(value) -> str:
+    try:
+        return _SENTINEL_LABELS.get(int(value), 'failed')
+    except (TypeError, ValueError):
+        return 'failed'
+
+
+def _sentinel_summary(counts: Counter) -> str:
+    """Format a Counter of {sentinel_int: count} as a human-readable string."""
+    parts = []
+    for code in (TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC, TRAVEL_API_ERROR):
+        n = counts.get(code, 0)
+        if n > 0:
+            parts.append(f"{_SENTINEL_LABELS[code]} \xd7{n}")
+    return ', '.join(parts) if parts else ''
+
+
+def _count_missing_and_sentinels(series: pd.Series) -> tuple[int, Counter]:
+    """Return (missing_count, sentinel_counter) for a travel column series."""
+    missing = int(series.isna().sum())
+    sentinel_counts: Counter = Counter()
+    for v in series:
+        if not pd.isna(v) and is_travel_sentinel(v):
+            sentinel_counts[int(v)] += 1
+    return missing, sentinel_counts
 
 
 def _to_float_or_none(value):
@@ -115,6 +167,18 @@ def confirm_with_rate_limit(prompt: str) -> tuple[bool, float]:
     Examples:
         User can enter: yes, no, or a number like 30 (for 30 requests/min)
     """
+    auto_confirm = str(os.getenv("TRAVEL_AUTO_CONFIRM", "")).strip().lower()
+    if auto_confirm in {"1", "true", "yes", "y", "on"}:
+        rate_raw = str(os.getenv("TRAVEL_REQUESTS_PER_MINUTE", "60")).strip()
+        try:
+            rate = float(rate_raw)
+            if rate <= 0:
+                rate = 60.0
+        except Exception:
+            rate = 60.0
+        print(f"Auto-confirmed travel calculations via TRAVEL_AUTO_CONFIRM=1 (rpm={rate:g})")
+        return True, rate
+
     valid_input = False
     while not valid_input:
         response = input(prompt + " (yes/no/<requests per minute>): ").strip().lower()
@@ -222,15 +286,16 @@ def post_process_eiendom(
     run_brj = target_value in {"all", "brj"}
     run_mvv = target_value in {"all", "mvv"}
     updates_only_logging = str(os.getenv("TRAVEL_LOG_UPDATES_ONLY", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    force_api_for_missing = str(os.getenv("TRAVEL_FORCE_API_FOR_MISSING", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
     # Optional filters/config for API calls and sheets export
     try:
-        from main.config.filters import MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS, MAX_TRAVEL_MINUTES
+        from main.config.filters import SHEETS_MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS, MAX_TRAVEL_MINUTES
     except ImportError:
         try:
-            from config.filters import MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS, MAX_TRAVEL_MINUTES
+            from config.filters import SHEETS_MAX_PRICE, TRAVEL_REUSE_WITHIN_METERS, MAX_TRAVEL_MINUTES
         except ImportError:
-            MAX_PRICE = None
+            SHEETS_MAX_PRICE = None
             TRAVEL_REUSE_WITHIN_METERS = 0
             MAX_TRAVEL_MINUTES = 360
 
@@ -395,6 +460,7 @@ def post_process_eiendom(
 
     donor_cache_brj = _build_travel_donor_cache(df, brj_travel_columns, lat_col, lng_col, max_travel_minutes)
     donor_cache_mvv = _build_travel_donor_cache(df, mvv_travel_columns, lat_col, lng_col, max_travel_minutes)
+    donor_cache_all = _build_travel_donor_cache(df, transit_travel_columns, lat_col, lng_col, max_travel_minutes)
 
     if donor_seed_df is not None and not donor_seed_df.empty:
         seed_lat_col = 'LAT' if 'LAT' in donor_seed_df.columns else ('lat' if 'lat' in donor_seed_df.columns else None)
@@ -421,18 +487,19 @@ def post_process_eiendom(
 
         added_brj = _merge_seed_cache(donor_cache_brj, brj_travel_columns)
         added_mvv = _merge_seed_cache(donor_cache_mvv, mvv_travel_columns)
-        if added_brj or added_mvv:
+        added_all = _merge_seed_cache(donor_cache_all, transit_travel_columns)
+        if added_brj or added_mvv or added_all:
             print(
                 "Loaded shared donor seeds "
-                f"(BRJ: +{added_brj}, MVV: +{added_mvv})"
+                f"(BRJ: +{added_brj}, MVV: +{added_mvv}, ALL: +{added_all})"
             )
 
-    # Debugging: show donor cache sizes to help diagnose missing donor assignments
+    # Show donor pool sizes to help diagnose missing donor assignments
     try:
-        print(f"Debug: donor_cache_brj size: {len(donor_cache_brj)}; sample: {[c[2] for c in donor_cache_brj[:5]]}")
-        print(f"Debug: donor_cache_mvv size: {len(donor_cache_mvv)}; sample: {[c[2] for c in donor_cache_mvv[:5]]}")
+        print(f"  Donor pool (BRJ-complete): {len(donor_cache_brj)} listings; sample: {[c[2] for c in donor_cache_brj[:5]]}")
+        print(f"  Donor pool (MVV-complete): {len(donor_cache_mvv)} listings; sample: {[c[2] for c in donor_cache_mvv[:5]]}")
+        print(f"  Donor pool (all-complete):  {len(donor_cache_all)} listings; sample: {[c[2] for c in donor_cache_all[:5]]}")
     except Exception:
-        # Keep debug prints best-effort and non-fatal
         pass
 
     if travel_reuse_within_meters > 0:
@@ -445,8 +512,8 @@ def post_process_eiendom(
             print("Travel reuse enabled in config, but no LAT/LNG columns found in dataframe.")
     
     eligible_mask = pd.Series([True] * len(df), index=df.index)
-    if MAX_PRICE is not None and 'Pris' in df.columns:
-        eligible_mask = df['Pris'].fillna(0) <= MAX_PRICE
+    if SHEETS_MAX_PRICE is not None and 'Pris' in df.columns:
+        eligible_mask = df['Pris'].fillna(0) <= SHEETS_MAX_PRICE
 
     if not calculate_google_directions:
         print("Skipping Google Directions calculations (travel API calls disabled).")
@@ -457,10 +524,18 @@ def post_process_eiendom(
         return df
 
     # Calculate transit commute columns only.
-    pendl_morn_missing = df.loc[eligible_mask, 'PENDL MORN BRJ'].isna().sum() if run_brj else 0
-    pendl_dag_missing = df.loc[eligible_mask, 'PENDL DAG BRJ'].isna().sum() if run_brj else 0
-    pendl_morn_mvv_missing = df.loc[eligible_mask, 'PENDL MORN MVV'].isna().sum() if run_mvv else 0
-    pendl_dag_mvv_missing = df.loc[eligible_mask, 'PENDL DAG MVV'].isna().sum() if run_mvv else 0
+    pendl_morn_missing, brj_morn_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL MORN BRJ']) if run_brj else (0, Counter())
+    pendl_dag_missing, brj_dag_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL DAG BRJ']) if run_brj else (0, Counter())
+    pendl_morn_mvv_missing, mvv_morn_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL MORN MVV']) if run_mvv else (0, Counter())
+    pendl_dag_mvv_missing, mvv_dag_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL DAG MVV']) if run_mvv else (0, Counter())
+
+    # Report sentinel (known-failure) totals — these won't be retried.
+    brj_sentinels_total = brj_morn_sentinels + brj_dag_sentinels
+    mvv_sentinels_total = mvv_morn_sentinels + mvv_dag_sentinels
+    if run_brj and brj_sentinels_total:
+        print(f"⚠️  BRJ has {sum(brj_sentinels_total.values())} failure-coded values (skipping re-calc): {_sentinel_summary(brj_sentinels_total)}")
+    if run_mvv and mvv_sentinels_total:
+        print(f"⚠️  MVV has {sum(mvv_sentinels_total.values())} failure-coded values (skipping re-calc): {_sentinel_summary(mvv_sentinels_total)}")
 
     rows_missing_any = pd.Series(False, index=df.index)
     if run_brj:
@@ -476,8 +551,8 @@ def post_process_eiendom(
         if run_mvv:
             print(f"⚠️  {pendl_morn_mvv_missing} properties missing PENDL MORN MVV (public transit to Lambertseter svømmeklubb)")
             print(f"⚠️  {pendl_dag_mvv_missing} properties missing PENDL DAG MVV (public transit return from Lambertseter svømmeklubb)")
-        if MAX_PRICE is not None:
-            print(f"⚠️  Price filter active: MAX_PRICE = {MAX_PRICE}")
+        if SHEETS_MAX_PRICE is not None:
+            print(f"⚠️  Price filter active: MAX_PRICE = {SHEETS_MAX_PRICE}")
         if updates_only_logging:
             print(f"ℹ️  Updates-only logging enabled: {rows_missing_count} rows need travel updates")
         
@@ -521,12 +596,20 @@ def post_process_eiendom(
             interrupted = False
             donor_assigned_count = 0
 
+            # If target=all, donor must cover all transit columns (BRJ+MVV).
+            donor_required_cols = transit_travel_columns if (run_brj and run_mvv) else brj_travel_columns
+            donor_cache_for_assignment = donor_cache_all if (run_brj and run_mvv) else donor_cache_brj
+
             def _maybe_assign_donor(row_data, required_columns, donor_cache):
                 if travel_reuse_within_meters <= 0:
                     return None
+
+                # All-or-nothing donor rule: existing donor links are only valid when
+                # that donor is known-complete for the required travel columns.
+                allowed_donors = {cand_finnkode for _, _, cand_finnkode in donor_cache}
                 existing_donor = str(row_data.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
                 if existing_donor:
-                    return existing_donor
+                    return existing_donor if existing_donor in allowed_donors else None
 
                 self_finnkode = str(row_data.get('Finnkode', '') or '').strip()
                 if not self_finnkode:
@@ -563,13 +646,15 @@ def post_process_eiendom(
                     address = row['Adresse']
                     postnummer = row.get('Postnummer')
 
-                    # Show which property we're working on
-                    if not updates_only_logging and (loop_pos % 5 == 0 or loop_pos <= 5):
+                    # Show which property we're working on for every row in detailed mode.
+                    if not updates_only_logging:
                         print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
 
                     row_changed = False
+                    brj_morn_stored = None
+                    brj_dag_stored = None
 
-                    donor_finnkode = _maybe_assign_donor(row, brj_travel_columns, donor_cache_brj)
+                    donor_finnkode = _maybe_assign_donor(row, donor_required_cols, donor_cache_for_assignment)
                     if donor_finnkode:
                         had_donor = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
                         if not had_donor:
@@ -581,7 +666,7 @@ def post_process_eiendom(
 
                     # Calculate PENDL MORN BRJ (total public transit commute time to work)
                     if run_brj and pd.isna(row.get('PENDL MORN BRJ')):
-                        if donor_finnkode:
+                        if donor_finnkode and not force_api_for_missing:
                             pass
                         else:
                             try:
@@ -590,15 +675,22 @@ def post_process_eiendom(
                                 minutes = transit_commute_calculator.calculate(address, postnummer)
                                 if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                     df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
+                                    brj_morn_stored = minutes
                                     calculated_transit += 1
                                     row_changed = True
                                     if not updates_only_logging:
                                         print(f" ✓ {minutes} min")
-                                    if delay_between_requests > 0:
-                                        time.sleep(delay_between_requests)
+                                elif is_travel_sentinel(minutes):
+                                    df.at[idx, 'PENDL MORN BRJ'] = int(minutes)
+                                    brj_morn_stored = minutes
+                                    row_changed = True
+                                    if not updates_only_logging:
+                                        print(f" ✗ {_sentinel_label(minutes)}")
                                 else:
                                     if not updates_only_logging:
                                         print(f" ✗ Rejected/failed value ({minutes})")
+                                if minutes is not None and delay_between_requests > 0:
+                                    time.sleep(delay_between_requests)
                             except Exception as e:
                                 print(f" ✗ Error: {str(e)}")
 
@@ -607,7 +699,7 @@ def post_process_eiendom(
 
                     # Calculate PENDL DAG BRJ (public transit return at 16:00 Monday)
                     if run_brj and pd.isna(row.get('PENDL DAG BRJ')):
-                        if donor_finnkode:
+                        if donor_finnkode and not force_api_for_missing:
                             pass
                         else:
                             try:
@@ -622,24 +714,38 @@ def post_process_eiendom(
                                 )
                                 if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                     df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
+                                    brj_dag_stored = minutes
                                     calculated_transit_return += 1
                                     row_changed = True
                                     if not updates_only_logging:
                                         print(f" ✓ {minutes} min")
-                                    if delay_between_requests > 0:
-                                        time.sleep(delay_between_requests)
+                                elif is_travel_sentinel(minutes):
+                                    df.at[idx, 'PENDL DAG BRJ'] = int(minutes)
+                                    brj_dag_stored = minutes
+                                    row_changed = True
+                                    if not updates_only_logging:
+                                        print(f" ✗ {_sentinel_label(minutes)}")
                                 else:
                                     if not updates_only_logging:
                                         print(f" ✗ Rejected/failed value ({minutes})")
+                                if minutes is not None and delay_between_requests > 0:
+                                    time.sleep(delay_between_requests)
                             except Exception as e:
                                 print(f" ✗ Error: {str(e)}")
 
                     _add_row_as_donor_if_complete(idx, brj_travel_columns, donor_cache_brj)
+                    _add_row_as_donor_if_complete(idx, transit_travel_columns, donor_cache_all)
 
                     if row_changed:
                         _checkpoint_row(idx)
                         if updates_only_logging:
-                            print(f"✓ Updated BRJ: {address}")
+                            parts = []
+                            if brj_morn_stored is not None:
+                                parts.append(f"MORN: {_sentinel_label(brj_morn_stored) if is_travel_sentinel(brj_morn_stored) else str(brj_morn_stored) + ' min'}")
+                            if brj_dag_stored is not None:
+                                parts.append(f"DAG: {_sentinel_label(brj_dag_stored) if is_travel_sentinel(brj_dag_stored) else str(brj_dag_stored) + ' min'}")
+                            suffix = f" ({', '.join(parts)})" if parts else ""
+                            print(f"✓ Updated BRJ: {address}{suffix}")
 
                     # Summary every 10 properties
                     total_calculated = calculated_transit + calculated_transit_return
@@ -673,6 +779,9 @@ def post_process_eiendom(
                 calculated_transit_return_mvv = 0
                 donor_assigned_mvv_count = 0
 
+                donor_required_cols_mvv = transit_travel_columns if (run_brj and run_mvv) else mvv_travel_columns
+                donor_cache_for_assignment_mvv = donor_cache_all if (run_brj and run_mvv) else donor_cache_mvv
+
                 mvv_api_calls_needed = int(df.loc[eligible_mask, 'PENDL MORN MVV'].isna().sum()) + int(df.loc[eligible_mask, 'PENDL DAG MVV'].isna().sum())
                 print(f"\n🚀 MVV: scanning {eligible_total} eligible properties, {mvv_api_calls_needed} API call(s) needed...\n")
 
@@ -681,12 +790,14 @@ def post_process_eiendom(
                         address = row['Adresse']
                         postnummer = row.get('Postnummer')
 
-                        if not updates_only_logging and (loop_pos % 10 == 0 or loop_pos <= 5):
+                        if not updates_only_logging:
                             print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
 
                         row_changed = False
+                        mvv_morn_stored = None
+                        mvv_dag_stored = None
 
-                        donor_finnkode = _maybe_assign_donor(row, mvv_travel_columns, donor_cache_mvv)
+                        donor_finnkode = _maybe_assign_donor(row, donor_required_cols_mvv, donor_cache_for_assignment_mvv)
                         if donor_finnkode and not str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
                             df.at[idx, 'TRAVEL_COPY_FROM_FINNKODE'] = donor_finnkode
                             donor_assigned_mvv_count += 1
@@ -696,7 +807,7 @@ def post_process_eiendom(
 
                         # Calculate PENDL MORN MVV
                         if pd.isna(row.get('PENDL MORN MVV')):
-                            if donor_finnkode:
+                            if donor_finnkode and not force_api_for_missing:
                                 pass
                             else:
                                 try:
@@ -705,15 +816,22 @@ def post_process_eiendom(
                                     minutes = transit_commute_calculator_mvv.calculate(address, postnummer)
                                     if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                         df.at[idx, 'PENDL MORN MVV'] = int(minutes)
+                                        mvv_morn_stored = minutes
                                         calculated_transit_mvv += 1
                                         row_changed = True
                                         if not updates_only_logging:
                                             print(f" ✓ {minutes} min")
-                                        if delay_between_requests > 0:
-                                            time.sleep(delay_between_requests)
+                                    elif is_travel_sentinel(minutes):
+                                        df.at[idx, 'PENDL MORN MVV'] = int(minutes)
+                                        mvv_morn_stored = minutes
+                                        row_changed = True
+                                        if not updates_only_logging:
+                                            print(f" ✗ {_sentinel_label(minutes)}")
                                     else:
                                         if not updates_only_logging:
                                             print(f" ✗ Rejected/failed value ({minutes})")
+                                    if minutes is not None and delay_between_requests > 0:
+                                        time.sleep(delay_between_requests)
                                 except Exception as e:
                                     print(f" ✗ Error: {str(e)}")
 
@@ -721,7 +839,7 @@ def post_process_eiendom(
 
                         # Calculate PENDL DAG MVV
                         if pd.isna(row.get('PENDL DAG MVV')):
-                            if donor_finnkode:
+                            if donor_finnkode and not force_api_for_missing:
                                 pass
                             else:
                                 try:
@@ -736,24 +854,38 @@ def post_process_eiendom(
                                     )
                                     if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
                                         df.at[idx, 'PENDL DAG MVV'] = int(minutes)
+                                        mvv_dag_stored = minutes
                                         calculated_transit_return_mvv += 1
                                         row_changed = True
                                         if not updates_only_logging:
                                             print(f" ✓ {minutes} min")
-                                        if delay_between_requests > 0:
-                                            time.sleep(delay_between_requests)
+                                    elif is_travel_sentinel(minutes):
+                                        df.at[idx, 'PENDL DAG MVV'] = int(minutes)
+                                        mvv_dag_stored = minutes
+                                        row_changed = True
+                                        if not updates_only_logging:
+                                            print(f" ✗ {_sentinel_label(minutes)}")
                                     else:
                                         if not updates_only_logging:
                                             print(f" ✗ Rejected/failed value ({minutes})")
+                                    if minutes is not None and delay_between_requests > 0:
+                                        time.sleep(delay_between_requests)
                                 except Exception as e:
                                     print(f" ✗ Error: {str(e)}")
 
                         _add_row_as_donor_if_complete(idx, mvv_travel_columns, donor_cache_mvv)
+                        _add_row_as_donor_if_complete(idx, transit_travel_columns, donor_cache_all)
 
                         if row_changed:
                             _checkpoint_row(idx)
                             if updates_only_logging:
-                                print(f"✓ Updated MVV: {address}")
+                                parts = []
+                                if mvv_morn_stored is not None:
+                                    parts.append(f"MORN: {_sentinel_label(mvv_morn_stored) if is_travel_sentinel(mvv_morn_stored) else str(mvv_morn_stored) + ' min'}")
+                                if mvv_dag_stored is not None:
+                                    parts.append(f"DAG: {_sentinel_label(mvv_dag_stored) if is_travel_sentinel(mvv_dag_stored) else str(mvv_dag_stored) + ' min'}")
+                                suffix = f" ({', '.join(parts)})" if parts else ""
+                                print(f"✓ Updated MVV: {address}{suffix}")
                 except KeyboardInterrupt:
                     print("\n⚠️  Interrupted during MVV travel calculations. Returning partial results and preserving saved progress.")
 
