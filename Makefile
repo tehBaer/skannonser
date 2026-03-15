@@ -15,7 +15,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun check-donor-chains check-donor-chains-strict full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious
+.PHONY: help sheets travel brj mvv mvv-uni-rush dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun populate-travel-from-donors populate-travel-from-donors-dryrun check-donor-chains check-donor-chains-strict repair-donor-chains repair-donor-chains-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious
 
 help:
 	@echo "Available targets:"
@@ -35,6 +35,7 @@ help:
 	@echo "  make travel   - Fill missing travel-time fields only (manual)"
 	@echo "  make brj      - Fill missing BRJ transit travel fields only"
 	@echo "  make mvv      - Fill missing MVV transit travel fields only"
+	@echo "  make mvv-uni-rush - Fill missing MVV UNI RUSH transit travel fields only"
 	@echo "  make dnb-url  - Print DNB search URL used for URL extraction"
 	@echo "  make dnb-sync - Sync DNB sheet from DB (update fields, delete stale, append new)"
 	@echo "  make dnb-export-travel - Export new DNB-only rows to sheet with travel API calls"
@@ -56,6 +57,8 @@ help:
 	@echo "                     Thresholds: SCORE_THRESHOLD=2 MIN_ABS_DIFF=15 MIN_REL_DIFF=0.25 MAD_MULT=2.0"
 	@echo "                     Groups: MIN_NEIGHBORS=4 MIN_POSTCODE_GROUP=5 MAX_TRAVEL_MINUTES=360"
 	@echo "                     Display: FULL_TABLE=1 (show full untruncated reasons)"
+	@echo "  make populate-travel-from-donors - Copy travel values from donors into recipient rows (travel_copy_from_finnkode set)"
+	@echo "  make populate-travel-from-donors-dryrun - Dry run of the above (no DB writes)"
 	@echo "  make check-donor-chains - Report donor-of-donor chains/cycles/self-links/broken refs"
 	@echo "                     Optional: TOP=50 CSV=tmp/donor_chain_findings.csv"
 	@echo "  make check-donor-chains-strict - Same check, exits non-zero if findings exist"
@@ -86,6 +89,10 @@ mvv:
 	$(PYTHON) main/tools/manual_fill_missing_travel_times.py --target mvv
 	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py --target mvv
 
+mvv-uni-rush:
+	$(PYTHON) main/tools/manual_fill_missing_travel_times.py --target mvv_uni
+	$(PYTHON) scripts/export_dnbeiendom_to_sheet.py --target mvv_uni
+
 dnb-url:
 	$(PYTHON) -c "from main.extractors.extract_dnbeiendom import SEARCH_URL; print(SEARCH_URL)"
 
@@ -107,6 +114,12 @@ backfill-donor-links:
 backfill-donor-links-dryrun:
 	$(PYTHON) scripts/backfill_donor_links.py --dry-run
 
+populate-travel-from-donors:
+	$(PYTHON) scripts/populate_travel_from_donors.py
+
+populate-travel-from-donors-dryrun:
+	$(PYTHON) scripts/populate_travel_from_donors.py --dry-run
+
 check-donor-chains:
 	$(PYTHON) main/tools/check_donor_chains.py \
 		$(if $(TOP),--top "$(TOP)",) \
@@ -117,6 +130,12 @@ check-donor-chains-strict:
 		$(if $(TOP),--top "$(TOP)",) \
 		$(if $(CSV),--csv "$(CSV)",) \
 		--fail-on-findings
+
+repair-donor-chains:
+	$(PYTHON) main/tools/check_donor_chains.py --repair
+
+repair-donor-chains-dryrun:
+	$(PYTHON) main/tools/check_donor_chains.py --repair --dry-run
 
 full:
 	# 1) FINN crawling
@@ -273,7 +292,7 @@ map-push:
 map-deploy:
 	@cd apps_script/map && clasp deploy --description "Interactive map update"
 
-map-live-url:
+map-url:
 	@cd apps_script/map && DEPLOY_ID="$$(clasp deployments 2>/dev/null | sed -nE 's/.*(AKfy[a-zA-Z0-9_-]+).*@([0-9]+).*/\2 \1/p' | sort -nr | head -n 1 | awk '{print $$2}')"; \
 	if [ -z "$$DEPLOY_ID" ]; then \
 		DEPLOY_ID="$$(clasp deployments 2>/dev/null | sed -nE 's/.*(AKfy[a-zA-Z0-9_-]+).*/\1/p' | head -n 1)"; \

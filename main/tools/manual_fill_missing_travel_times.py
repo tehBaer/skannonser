@@ -46,6 +46,7 @@ TARGET_COLUMNS = {
     'all': COMMUTE_COLS,
     'brj': ['PENDL RUSH BRJ'],
     'mvv': ['PENDL RUSH MVV'],
+    'mvv_uni': ['MVV UNI RUSH'],
 }
 
 
@@ -121,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        choices=["all", "brj", "mvv"],
+        choices=["all", "brj", "mvv", "mvv_uni"],
         default="all",
         help="Select which transit destination group to fill",
     )

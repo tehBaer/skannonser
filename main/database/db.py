@@ -141,6 +141,7 @@ class PropertyDatabase:
                 bil_dag_mvv INTEGER,
                 pendl_rush_brj INTEGER,
                 pendl_rush_mvv INTEGER,
+                pendl_rush_mvv_uni_rush INTEGER,
                 pendl_morn_cntr INTEGER,
                 bil_morn_cntr INTEGER,
                 pendl_dag_cntr INTEGER,
@@ -226,6 +227,7 @@ class PropertyDatabase:
             "bil_dag_mvv": "INTEGER",
             "pendl_rush_brj": "INTEGER",
             "pendl_rush_mvv": "INTEGER",
+            "pendl_rush_mvv_uni_rush": "INTEGER",
             "pendl_morn_cntr": "INTEGER",
             "bil_morn_cntr": "INTEGER",
             "pendl_dag_cntr": "INTEGER",
@@ -419,6 +421,7 @@ class PropertyDatabase:
             # Get pendl_rush_brj/mvv if present (for location table)
             pendl_rush_brj = row.get('PENDL RUSH BRJ', None) if pd.notna(row.get('PENDL RUSH BRJ')) else None
             pendl_rush_mvv = row.get('PENDL RUSH MVV', None) if pd.notna(row.get('PENDL RUSH MVV')) else None
+            pendl_rush_mvv_uni_rush = row.get('MVV UNI RUSH', None) if pd.notna(row.get('MVV UNI RUSH')) else None
             pendl_morn_cntr = row.get('PENDL MORN CNTR', None) if pd.notna(row.get('PENDL MORN CNTR')) else None
             bil_morn_cntr = row.get('BIL MORN CNTR', None) if pd.notna(row.get('BIL MORN CNTR')) else None
             pendl_dag_cntr = row.get('PENDL DAG CNTR', None) if pd.notna(row.get('PENDL DAG CNTR')) else None
@@ -480,6 +483,7 @@ class PropertyDatabase:
                 postnummer=data['postnummer'],
                 pendl_rush_brj=pendl_rush_brj,
                 pendl_rush_mvv=pendl_rush_mvv,
+                pendl_rush_mvv_uni_rush=pendl_rush_mvv_uni_rush,
                 pendl_morn_cntr=pendl_morn_cntr,
                 bil_morn_cntr=bil_morn_cntr,
                 pendl_dag_cntr=pendl_dag_cntr,
@@ -658,12 +662,19 @@ class PropertyDatabase:
                     THEN ep_src.pendl_rush_mvv
                     ELSE ep.pendl_rush_mvv
                 END as "PENDL RUSH MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_rush_mvv_uni_rush IS NOT NULL
+                    THEN ep_src.pendl_rush_mvv_uni_rush
+                    ELSE ep.pendl_rush_mvv_uni_rush
+                END as "MVV UNI RUSH",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
                 COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
                 COALESCE(ep.bil_dag_cntr, ep_src.bil_dag_cntr) as "BIL DAG CNTR",
                 ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE",
-                ep.google_maps_url as "GOOGLE_MAPS_URL"
+                ep.google_maps_url as "GOOGLE_MAPS_URL",
+                e.scraped_at as "SCRAPED_AT"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
@@ -715,6 +726,12 @@ class PropertyDatabase:
                     THEN ep_src.pendl_rush_mvv
                     ELSE ep.pendl_rush_mvv
                 END as "PENDL RUSH MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_rush_mvv_uni_rush IS NOT NULL
+                    THEN ep_src.pendl_rush_mvv_uni_rush
+                    ELSE ep.pendl_rush_mvv_uni_rush
+                END as "MVV UNI RUSH",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
                 COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
@@ -837,12 +854,19 @@ class PropertyDatabase:
                     THEN ep_src.pendl_rush_mvv
                     ELSE ep.pendl_rush_mvv
                 END as "PENDL RUSH MVV",
+                CASE
+                    WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
+                         AND ep_src.pendl_rush_mvv_uni_rush IS NOT NULL
+                    THEN ep_src.pendl_rush_mvv_uni_rush
+                    ELSE ep.pendl_rush_mvv_uni_rush
+                END as "MVV UNI RUSH",
                 COALESCE(ep.pendl_morn_cntr, ep_src.pendl_morn_cntr) as "PENDL MORN CNTR",
                 COALESCE(ep.bil_morn_cntr, ep_src.bil_morn_cntr) as "BIL MORN CNTR",
                 COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
                 COALESCE(ep.bil_dag_cntr, ep_src.bil_dag_cntr) as "BIL DAG CNTR",
                 ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE",
-                ep.google_maps_url as "GOOGLE_MAPS_URL"
+                ep.google_maps_url as "GOOGLE_MAPS_URL",
+                e.scraped_at as "SCRAPED_AT"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
@@ -916,7 +940,8 @@ class PropertyDatabase:
                 COALESCE(ep.pendl_dag_cntr, ep_src.pendl_dag_cntr) as "PENDL DAG CNTR",
                 COALESCE(ep.bil_dag_cntr, ep_src.bil_dag_cntr) as "BIL DAG CNTR",
                 ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE",
-                ep.google_maps_url as "GOOGLE_MAPS_URL"
+                ep.google_maps_url as "GOOGLE_MAPS_URL",
+                e.scraped_at as "SCRAPED_AT"
             FROM eiendom e
             LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
             LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
@@ -1062,6 +1087,7 @@ class PropertyDatabase:
                                          lat: float = None, lng: float = None,
                                          pendl_rush_brj: str = None,
                                          pendl_rush_mvv: str = None,
+                                         pendl_rush_mvv_uni_rush: str = None,
                                          pendl_morn_cntr: str = None, bil_morn_cntr: str = None,
                                          pendl_dag_cntr: str = None, bil_dag_cntr: str = None,
                                          travel_copy_from_finnkode: str = None):
@@ -1091,12 +1117,13 @@ class PropertyDatabase:
                     lng = COALESCE(?, lng),
                     pendl_rush_brj = COALESCE(?, pendl_rush_brj),
                     pendl_rush_mvv = COALESCE(?, pendl_rush_mvv),
+                    pendl_rush_mvv_uni_rush = COALESCE(?, pendl_rush_mvv_uni_rush),
                     pendl_morn_cntr = ?, bil_morn_cntr = ?,
                     pendl_dag_cntr = ?, bil_dag_cntr = ?,
                     travel_copy_from_finnkode = ?,
                     google_maps_url = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE finnkode = ?
-            ''', (adresse_cleaned, lat_norm, lng_norm, pendl_rush_brj, pendl_rush_mvv,
+            ''', (adresse_cleaned, lat_norm, lng_norm, pendl_rush_brj, pendl_rush_mvv, pendl_rush_mvv_uni_rush,
                                     pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                     travel_copy_from_finnkode,
                   google_maps_url, finnkode))
@@ -1104,11 +1131,11 @@ class PropertyDatabase:
             cursor.execute('''
                 INSERT INTO eiendom_processed
                 (finnkode, adresse_cleaned, lat, lng,
-                                 pendl_rush_brj, pendl_rush_mvv,
+                                 pendl_rush_brj, pendl_rush_mvv, pendl_rush_mvv_uni_rush,
                                  pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                  travel_copy_from_finnkode, google_maps_url)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (finnkode, adresse_cleaned, lat_norm, lng_norm, pendl_rush_brj, pendl_rush_mvv,
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (finnkode, adresse_cleaned, lat_norm, lng_norm, pendl_rush_brj, pendl_rush_mvv, pendl_rush_mvv_uni_rush,
                                     pendl_morn_cntr, bil_morn_cntr, pendl_dag_cntr, bil_dag_cntr,
                                     travel_copy_from_finnkode, google_maps_url))
         
@@ -1145,6 +1172,7 @@ class PropertyDatabase:
                 ep.lng as "LNG",
                 ep.pendl_rush_brj as "PENDL RUSH BRJ",
                 ep.pendl_rush_mvv as "PENDL RUSH MVV",
+                ep.pendl_rush_mvv_uni_rush as "MVV UNI RUSH",
                 ep.travel_copy_from_finnkode as "TRAVEL_COPY_FROM_FINNKODE"
             FROM eiendom_processed ep
             WHERE ep.finnkode IS NOT NULL AND TRIM(ep.finnkode) != ''

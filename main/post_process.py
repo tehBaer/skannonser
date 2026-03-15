@@ -277,7 +277,7 @@ def post_process_eiendom(
         calculate_location_features: Backwards-compatible toggle for Google travel-time API calculations
         calculate_google_directions: Whether to run paid Google Directions calculations.
             If None, defaults to the value of calculate_location_features.
-        travel_targets: Which travel destination group to compute: "all", "brj", or "mvv".
+        travel_targets: Which travel destination group to compute: "all", "brj", "mvv", or "mvv_uni".
         donor_seed_df: Optional dataframe with additional donor candidates
             (Finnkode, LAT/LNG, travel columns) shared across runs/sources.
     
@@ -291,11 +291,12 @@ def post_process_eiendom(
         calculate_google_directions = calculate_location_features
 
     target_value = str(travel_targets or "all").strip().lower()
-    if target_value not in {"all", "brj", "mvv"}:
+    if target_value not in {"all", "brj", "mvv", "mvv_uni"}:
         print(f"⚠️  Unknown travel_targets='{travel_targets}', defaulting to 'all'")
         target_value = "all"
     run_brj = target_value in {"all", "brj"}
     run_mvv = target_value in {"all", "mvv"}
+    run_mvv_uni = target_value == "mvv_uni"
     updates_only_logging = str(os.getenv("TRAVEL_LOG_UPDATES_ONLY", "0")).strip().lower() in {"1", "true", "yes", "on"}
     force_api_for_missing = str(os.getenv("TRAVEL_FORCE_API_FOR_MISSING", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -326,7 +327,7 @@ def post_process_eiendom(
                 existing_data = db.get_eiendom_for_sheets()
             
             # Extract commute columns from existing database data (BRJ + CNTR + MVV)
-            commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV',
+            commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH',
                              'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
                              'TRAVEL_COPY_FROM_FINNKODE']
             existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_data.columns]
@@ -366,7 +367,7 @@ def post_process_eiendom(
                         existing_df.rename(columns={old_name: new_name}, inplace=True)
                 
                 # Extract commute columns from existing data (BRJ + CNTR + MVV)
-                commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV',
+                commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH',
                                  'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
                                  'TRAVEL_COPY_FROM_FINNKODE']
                 # Filter to only include columns that exist in existing data
@@ -437,6 +438,8 @@ def post_process_eiendom(
         df['PENDL RUSH BRJ'] = None
     if 'PENDL RUSH MVV' not in df.columns:
         df['PENDL RUSH MVV'] = None
+    if 'MVV UNI RUSH' not in df.columns:
+        df['MVV UNI RUSH'] = None
     if 'PENDL MORN CNTR' not in df.columns:
         df['PENDL MORN CNTR'] = None
     if 'BIL MORN CNTR' not in df.columns:
@@ -451,14 +454,54 @@ def post_process_eiendom(
     # Transit-only donor reuse. Driving columns remain in DB as legacy data but are no longer fetched.
     brj_travel_columns = ['PENDL RUSH BRJ']
     mvv_travel_columns = ['PENDL RUSH MVV']
-    transit_travel_columns = brj_travel_columns + mvv_travel_columns
+    mvv_uni_travel_columns = ['MVV UNI RUSH']
+    transit_travel_columns = brj_travel_columns + mvv_travel_columns + mvv_uni_travel_columns
 
     lat_col = 'LAT' if 'LAT' in df.columns else ('lat' if 'lat' in df.columns else None)
     lng_col = 'LNG' if 'LNG' in df.columns else ('lng' if 'lng' in df.columns else None)
 
     donor_cache_brj = _build_travel_donor_cache(df, brj_travel_columns, lat_col, lng_col, max_travel_minutes)
     donor_cache_mvv = _build_travel_donor_cache(df, mvv_travel_columns, lat_col, lng_col, max_travel_minutes)
+    donor_cache_mvv_uni = _build_travel_donor_cache(df, mvv_uni_travel_columns, lat_col, lng_col, max_travel_minutes)
     donor_cache_all = _build_travel_donor_cache(df, transit_travel_columns, lat_col, lng_col, max_travel_minutes)
+
+    # Fast donor-value lookup for MVV UNI, used to avoid false donor skips when
+    # a donor link exists but the donor has no MVV UNI value yet.
+    donor_value_mvv_uni = {}
+    donor_link_mvv_uni = {}
+
+    def _seed_mvv_uni_lookup(source_df: DataFrame | None):
+        if source_df is None or source_df.empty or 'Finnkode' not in source_df.columns:
+            return
+        for _, row in source_df.iterrows():
+            finnkode = _to_text_or_empty(row.get('Finnkode', ''))
+            if not finnkode:
+                continue
+            donor_fk = _to_text_or_empty(row.get('TRAVEL_COPY_FROM_FINNKODE', ''))
+            if donor_fk:
+                donor_link_mvv_uni[finnkode] = donor_fk
+            if 'MVV UNI RUSH' in source_df.columns:
+                value = row.get('MVV UNI RUSH')
+                if _is_valid_travel_value(value, max_travel_minutes) or is_travel_sentinel(value):
+                    donor_value_mvv_uni[finnkode] = int(float(value))
+
+    _seed_mvv_uni_lookup(donor_seed_df)
+    _seed_mvv_uni_lookup(df)
+
+    def _resolve_mvv_uni_donor_value(donor_finnkode: str):
+        """Resolve MVV UNI value from donor, following donor chains safely."""
+        current = _to_text_or_empty(donor_finnkode)
+        if not current:
+            return None
+
+        seen = set()
+        while current and current not in seen:
+            seen.add(current)
+            value = donor_value_mvv_uni.get(current)
+            if value is not None:
+                return value
+            current = _to_text_or_empty(donor_link_mvv_uni.get(current, ''))
+        return None
 
     if donor_seed_df is not None and not donor_seed_df.empty:
         seed_lat_col = 'LAT' if 'LAT' in donor_seed_df.columns else ('lat' if 'lat' in donor_seed_df.columns else None)
@@ -485,6 +528,7 @@ def post_process_eiendom(
 
         _merge_seed_cache(donor_cache_brj, brj_travel_columns)
         _merge_seed_cache(donor_cache_mvv, mvv_travel_columns)
+        _merge_seed_cache(donor_cache_mvv_uni, mvv_uni_travel_columns)
         _merge_seed_cache(donor_cache_all, transit_travel_columns)
 
     if travel_reuse_within_meters > 0:
@@ -493,9 +537,55 @@ def post_process_eiendom(
                 f"Using travel reuse radius: {travel_reuse_within_meters:.0f} m "
                 f"(nearby listings can reuse donor Finnkode)"
             )
+            # Pre-pass: assign donor links to ALL rows without an existing donor link
+            # that are within travel_reuse_within_meters of a complete root donor.
+            # Enforces strict one-way relationship: an acceptor cannot be a donor.
+            # Cascade: when B is assigned a donor (B→C), any A→B links collapse to A→C,
+            # preventing chains from forming within a single processing run.
+            if donor_cache_all:
+                _all_caches = [donor_cache_brj, donor_cache_mvv, donor_cache_mvv_uni, donor_cache_all]
+                _prepass_assigned = 0
+                _prepass_collapsed = 0
+                for _idx in df.index:
+                    if _to_text_or_empty(df.at[_idx, 'TRAVEL_COPY_FROM_FINNKODE']):
+                        continue  # already an acceptor
+                    _finnkode = _to_text_or_empty(df.at[_idx, 'Finnkode'])
+                    if not _finnkode:
+                        continue
+                    _lat, _lng = _get_row_coords(df.loc[_idx], lat_col, lng_col)
+                    if _lat is None or _lng is None:
+                        continue
+                    _nearest = _find_nearby_donor_finnkode(
+                        _lat, _lng,
+                        [(la, ln, f) for la, ln, f in donor_cache_all if f != _finnkode],
+                        travel_reuse_within_meters,
+                    )
+                    if not _nearest:
+                        continue
+                    # Assign donor link
+                    df.at[_idx, 'TRAVEL_COPY_FROM_FINNKODE'] = _nearest
+                    _prepass_assigned += 1
+                    # Cascade: collapse any A→B links (where B = this row) to A→(nearest)
+                    _mask_chain = (
+                        df['TRAVEL_COPY_FROM_FINNKODE'].notna()
+                        & (df['TRAVEL_COPY_FROM_FINNKODE'].fillna('').astype(str).str.strip() == _finnkode)
+                        & (df.index != _idx)
+                    )
+                    _n_chain = int(_mask_chain.sum())
+                    if _n_chain:
+                        df.loc[_mask_chain, 'TRAVEL_COPY_FROM_FINNKODE'] = _nearest
+                        _prepass_collapsed += _n_chain
+                    # Remove this row from all donor caches — it is now an acceptor
+                    for _cache in _all_caches:
+                        _cache[:] = [(la, ln, f) for la, ln, f in _cache if f != _finnkode]
+                if _prepass_assigned:
+                    print(
+                        f"  Pre-pass: assigned {_prepass_assigned} donor link(s)"
+                        + (f", collapsed {_prepass_collapsed} chain(s)" if _prepass_collapsed else "")
+                    )
         else:
             print("Travel reuse enabled in config, but no LAT/LNG columns found in dataframe.")
-    
+
     eligible_mask = pd.Series([True] * len(df), index=df.index)
     if SHEETS_MAX_PRICE is not None and 'Pris' in df.columns:
         eligible_mask = df['Pris'].fillna(0) <= SHEETS_MAX_PRICE
@@ -511,6 +601,7 @@ def post_process_eiendom(
     # Calculate transit commute columns only.
     pendl_rush_brj_missing, brj_rush_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL RUSH BRJ']) if run_brj else (0, Counter())
     pendl_rush_mvv_missing, mvv_rush_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'PENDL RUSH MVV']) if run_mvv else (0, Counter())
+    pendl_rush_mvv_uni_missing, mvv_uni_rush_sentinels = _count_missing_and_sentinels(df.loc[eligible_mask, 'MVV UNI RUSH']) if run_mvv_uni else (0, Counter())
 
     # Report sentinel (known-failure) totals — these won't be retried.
     brj_sentinels_total = brj_rush_sentinels
@@ -519,23 +610,171 @@ def post_process_eiendom(
         print(f"⚠️  BRJ has {sum(brj_sentinels_total.values())} failure-coded values (skipping re-calc): {_sentinel_summary(brj_sentinels_total)}")
     if run_mvv and mvv_sentinels_total:
         print(f"⚠️  MVV has {sum(mvv_sentinels_total.values())} failure-coded values (skipping re-calc): {_sentinel_summary(mvv_sentinels_total)}")
+    if run_mvv_uni and mvv_uni_rush_sentinels:
+        print(f"⚠️  MVV UNI has {sum(mvv_uni_rush_sentinels.values())} failure-coded values (skipping re-calc): {_sentinel_summary(mvv_uni_rush_sentinels)}")
 
     rows_missing_any = pd.Series(False, index=df.index)
     if run_brj:
         rows_missing_any = rows_missing_any | df['PENDL RUSH BRJ'].isna()
     if run_mvv:
         rows_missing_any = rows_missing_any | df['PENDL RUSH MVV'].isna()
+    if run_mvv_uni:
+        rows_missing_any = rows_missing_any | df['MVV UNI RUSH'].isna()
     rows_missing_count = int((eligible_mask & rows_missing_any).sum())
     
-    if pendl_rush_brj_missing > 0 or pendl_rush_mvv_missing > 0:
+    if pendl_rush_brj_missing > 0 or pendl_rush_mvv_missing > 0 or pendl_rush_mvv_uni_missing > 0:
         if run_brj:
             print(f"\n⚠️  {pendl_rush_brj_missing} properties missing PENDL RUSH BRJ (public transit rush-hour commute time)")
         if run_mvv:
             print(f"⚠️  {pendl_rush_mvv_missing} properties missing PENDL RUSH MVV (public transit to Lambertseter svømmeklubb)")
+        if run_mvv_uni:
+            print(f"⚠️  {pendl_rush_mvv_uni_missing} properties missing MVV UNI RUSH (public transit to Gaustadalléen 30, 0373 Oslo)")
         if SHEETS_MAX_PRICE is not None:
             print(f"⚠️  Price filter active: MAX_PRICE = {SHEETS_MAX_PRICE}")
         if updates_only_logging:
             print(f"ℹ️  Updates-only logging enabled: {rows_missing_count} rows need travel updates")
+
+        def _preview_api_calls(column_name: str, required_columns: list[str], donor_cache: list[tuple[float, float, str]]) -> tuple[int, int]:
+            """Estimate max API attempts from current donor seed (no in-run donor growth)."""
+            attempts = 0
+            donor_reuse = 0
+
+            for _, row0 in df.loc[eligible_mask].iterrows():
+                if not pd.isna(row0.get(column_name)):
+                    continue
+
+                donor0 = None
+                if travel_reuse_within_meters > 0:
+                    existing_donor = _to_text_or_empty(row0.get('TRAVEL_COPY_FROM_FINNKODE', ''))
+                    if existing_donor:
+                        donor0 = existing_donor
+                    else:
+                        self_finnkode = _to_text_or_empty(row0.get('Finnkode', ''))
+                        if self_finnkode:
+                            lat0, lng0 = _get_row_coords(row0, lat_col, lng_col)
+                            donor0 = _find_nearby_donor_finnkode(
+                                lat0,
+                                lng0,
+                                donor_cache,
+                                travel_reuse_within_meters,
+                            )
+                            if donor0 == self_finnkode:
+                                donor0 = None
+
+                if donor0 and not force_api_for_missing:
+                    donor_reuse += 1
+                    continue
+
+                attempts += 1
+
+            return attempts, donor_reuse
+
+        def _simulate_in_run_api_calls(column_name: str, donor_cache: list[tuple[float, float, str]]) -> tuple[int, int]:
+            """Simulate one pass where successful API rows become donors for later rows.
+
+            This is an optimistic estimate because it assumes each API attempt yields
+            a valid travel value that can seed subsequent donor reuse.
+            """
+            if force_api_for_missing:
+                attempts = int(df.loc[eligible_mask, column_name].isna().sum())
+                return attempts, 0
+
+            sim_cache = list(donor_cache)
+            attempts = 0
+            donor_reuse = 0
+
+            for _, row0 in df.loc[eligible_mask].iterrows():
+                if not pd.isna(row0.get(column_name)):
+                    continue
+
+                donor0 = None
+                if travel_reuse_within_meters > 0:
+                    existing_donor = _to_text_or_empty(row0.get('TRAVEL_COPY_FROM_FINNKODE', ''))
+                    if existing_donor:
+                        donor0 = existing_donor
+                    else:
+                        self_finnkode = _to_text_or_empty(row0.get('Finnkode', ''))
+                        if self_finnkode:
+                            lat0, lng0 = _get_row_coords(row0, lat_col, lng_col)
+                            donor0 = _find_nearby_donor_finnkode(
+                                lat0,
+                                lng0,
+                                sim_cache,
+                                travel_reuse_within_meters,
+                            )
+                            if donor0 == self_finnkode:
+                                donor0 = None
+
+                if donor0:
+                    donor_reuse += 1
+                    continue
+
+                attempts += 1
+
+                # Assume successful API response: this row becomes a donor candidate.
+                finnkode0 = _to_text_or_empty(row0.get('Finnkode', ''))
+                if finnkode0:
+                    lat0, lng0 = _get_row_coords(row0, lat_col, lng_col)
+                    if lat0 is not None and lng0 is not None and not any(c_f == finnkode0 for _, _, c_f in sim_cache):
+                        sim_cache.append((lat0, lng0, finnkode0))
+
+            return attempts, donor_reuse
+
+        preview_total_attempts = 0
+        preview_total_attempts_sim = 0
+        if run_brj:
+            brj_preview_attempts, brj_preview_reuse = _preview_api_calls('PENDL RUSH BRJ', brj_travel_columns, donor_cache_brj)
+            brj_preview_attempts_sim, brj_preview_reuse_sim = _simulate_in_run_api_calls('PENDL RUSH BRJ', donor_cache_brj)
+            preview_total_attempts += brj_preview_attempts
+            preview_total_attempts_sim += brj_preview_attempts_sim
+            print(f"[PREVIEW] BRJ max API attempts now: {brj_preview_attempts} (seed donor reuse: {brj_preview_reuse})")
+            print(f"[PREVIEW] BRJ simulated in-run API attempts: {brj_preview_attempts_sim} (in-run donor reuse: {brj_preview_reuse_sim})")
+        if run_mvv:
+            mvv_preview_attempts, mvv_preview_reuse = _preview_api_calls('PENDL RUSH MVV', mvv_travel_columns, donor_cache_mvv)
+            mvv_preview_attempts_sim, mvv_preview_reuse_sim = _simulate_in_run_api_calls('PENDL RUSH MVV', donor_cache_mvv)
+            preview_total_attempts += mvv_preview_attempts
+            preview_total_attempts_sim += mvv_preview_attempts_sim
+            print(f"[PREVIEW] MVV max API attempts now: {mvv_preview_attempts} (seed donor reuse: {mvv_preview_reuse})")
+            print(f"[PREVIEW] MVV simulated in-run API attempts: {mvv_preview_attempts_sim} (in-run donor reuse: {mvv_preview_reuse_sim})")
+        if run_mvv_uni:
+            # For MVV UNI, count donor reuse only when donor value is actually available.
+            mvv_uni_preview_attempts = 0
+            mvv_uni_preview_reuse = 0
+            for _, row0 in df.loc[eligible_mask].iterrows():
+                if not pd.isna(row0.get('MVV UNI RUSH')):
+                    continue
+                donor0 = None
+                if travel_reuse_within_meters > 0:
+                    existing_donor = _to_text_or_empty(row0.get('TRAVEL_COPY_FROM_FINNKODE', ''))
+                    if existing_donor:
+                        donor0 = existing_donor
+                    else:
+                        self_finnkode = _to_text_or_empty(row0.get('Finnkode', ''))
+                        if self_finnkode:
+                            lat0, lng0 = _get_row_coords(row0, lat_col, lng_col)
+                            donor0 = _find_nearby_donor_finnkode(
+                                lat0,
+                                lng0,
+                                donor_cache_mvv_uni,
+                                travel_reuse_within_meters,
+                            )
+                            if donor0 == self_finnkode:
+                                donor0 = None
+                donor_val0 = _resolve_mvv_uni_donor_value(donor0) if donor0 else None
+                if donor_val0 is not None and not force_api_for_missing:
+                    mvv_uni_preview_reuse += 1
+                else:
+                    mvv_uni_preview_attempts += 1
+
+            # Simulated in-run count: optimistic for MVV UNI as well.
+            mvv_uni_preview_attempts_sim = mvv_uni_preview_attempts
+            mvv_uni_preview_reuse_sim = mvv_uni_preview_reuse
+            preview_total_attempts += mvv_uni_preview_attempts
+            preview_total_attempts_sim += mvv_uni_preview_attempts_sim
+            print(f"[PREVIEW] MVV UNI RUSH max API attempts now: {mvv_uni_preview_attempts} (seed donor reuse: {mvv_uni_preview_reuse})")
+            print(f"[PREVIEW] MVV UNI RUSH simulated in-run API attempts: {mvv_uni_preview_attempts_sim} (in-run donor reuse: {mvv_uni_preview_reuse_sim})")
+        print(f"[PREVIEW] Total max API attempts before run: {preview_total_attempts}")
+        print(f"[PREVIEW] Total simulated in-run API attempts: {preview_total_attempts_sim}")
         
         proceed, requests_per_minute = confirm_with_rate_limit("Calculate location features for these properties?")
         
@@ -572,20 +811,18 @@ def post_process_eiendom(
             donor_api_skipped_count = 0
             brj_api_attempted_count = 0
 
-            # If target=all, donor must cover all transit columns (BRJ+MVV).
-            donor_required_cols = transit_travel_columns if (run_brj and run_mvv) else brj_travel_columns
-            donor_cache_for_assignment = donor_cache_all if (run_brj and run_mvv) else donor_cache_brj
+            # BRJ run reuses only BRJ-complete donors.
+            donor_required_cols = brj_travel_columns
+            donor_cache_for_assignment = donor_cache_brj
 
             def _maybe_assign_donor(row_data, required_columns, donor_cache):
                 if travel_reuse_within_meters <= 0:
                     return None
 
-                # All-or-nothing donor rule: existing donor links are only valid when
-                # that donor is known-complete for the required travel columns.
-                allowed_donors = {cand_finnkode for _, _, cand_finnkode in donor_cache}
                 existing_donor = _to_text_or_empty(row_data.get('TRAVEL_COPY_FROM_FINNKODE', ''))
                 if existing_donor:
-                    return existing_donor if existing_donor in allowed_donors else None
+                    # Listing-wide donor semantics: existing link always wins.
+                    return existing_donor
 
                 self_finnkode = _to_text_or_empty(row_data.get('Finnkode', ''))
                 if not self_finnkode:
@@ -843,14 +1080,146 @@ def post_process_eiendom(
                     )
                 if donor_assigned_count > 0 or donor_assigned_mvv_count > 0:
                     print(f"✓ Linked {donor_assigned_count + donor_assigned_mvv_count} rows to nearby donor Finnkoder")
+
+            if run_mvv_uni:
+                mvv_uni_address = "Gaustadalléen 30, 0373 Oslo"
+                transit_commute_calculator_mvv_uni = PublicTransitCommuteTime(mvv_uni_address)
+
+                calculated_transit_mvv_uni = 0
+                donor_assigned_mvv_uni_count = 0
+                donor_existing_reuse_mvv_uni_count = 0
+                donor_api_skipped_mvv_uni_count = 0
+                mvv_uni_api_attempted_count = 0
+
+                donor_required_cols_mvv_uni = mvv_uni_travel_columns
+                donor_cache_for_assignment_mvv_uni = donor_cache_mvv_uni
+
+                # Run order matters: compute donor candidates first, then rows that
+                # already point to a donor, so same-run reuse can kick in.
+                mvv_uni_rows = df.loc[eligible_mask].copy()
+                mvv_uni_rows['_has_donor_link'] = mvv_uni_rows['TRAVEL_COPY_FROM_FINNKODE'].apply(
+                    lambda v: _to_text_or_empty(v) != ''
+                )
+                mvv_uni_rows = mvv_uni_rows.sort_values(by=['_has_donor_link'])
+                mvv_uni_row_items = list(mvv_uni_rows.iterrows())
+
+                mvv_uni_api_calls_needed = 0
+                sim_donor_value_mvv_uni = dict(donor_value_mvv_uni)
+                for _, row0 in mvv_uni_row_items:
+                    if not pd.isna(row0.get('MVV UNI RUSH')):
+                        continue
+                    donor0 = _maybe_assign_donor(row0, donor_required_cols_mvv_uni, donor_cache_for_assignment_mvv_uni)
+                    donor_val0 = sim_donor_value_mvv_uni.get(_to_text_or_empty(donor0)) if donor0 else None
+                    if donor_val0 is not None and not force_api_for_missing:
+                        continue
+                    mvv_uni_api_calls_needed += 1
+                    finnkode0 = _to_text_or_empty(row0.get('Finnkode', ''))
+                    if finnkode0:
+                        # Assume successful API response for planning purposes.
+                        sim_donor_value_mvv_uni[finnkode0] = 1
+                print(f"\n🚀 MVV UNI RUSH: scanning {eligible_total} eligible properties, {mvv_uni_api_calls_needed} API candidate(s)...\n")
+
+                try:
+                    for loop_pos, (idx, row) in enumerate(mvv_uni_row_items, start=1):
+                        address = row['Adresse']
+                        postnummer = row.get('Postnummer')
+                        existing_donor_before = _to_text_or_empty(row.get('TRAVEL_COPY_FROM_FINNKODE', ''))
+                        mvv_uni_api_attempted = False
+                        mvv_uni_attempt_status = None
+
+                        if not updates_only_logging:
+                            print(f"⏳ Processing property {loop_pos}/{eligible_total}: {address}")
+
+                        row_changed = False
+
+                        donor_finnkode = _maybe_assign_donor(row, donor_required_cols_mvv_uni, donor_cache_for_assignment_mvv_uni)
+                        donor_mvv_uni_value = _resolve_mvv_uni_donor_value(donor_finnkode) if donor_finnkode else None
+                        can_use_donor_value = donor_mvv_uni_value is not None and not force_api_for_missing
+
+                        if donor_finnkode and can_use_donor_value and not existing_donor_before:
+                            df.at[idx, 'TRAVEL_COPY_FROM_FINNKODE'] = donor_finnkode
+                            donor_assigned_mvv_uni_count += 1
+                            row_changed = True
+                            if not updates_only_logging:
+                                print(f"   🔁 Using donor travel values from #{donor_finnkode}")
+
+                        if pd.isna(row.get('MVV UNI RUSH')):
+                            if can_use_donor_value:
+                                df.at[idx, 'MVV UNI RUSH'] = int(donor_mvv_uni_value)
+                                row_changed = True
+                                donor_api_skipped_mvv_uni_count += 1
+                                if existing_donor_before:
+                                    donor_existing_reuse_mvv_uni_count += 1
+                                if not updates_only_logging:
+                                    print(f"   🔁 Reused donor MVV UNI RUSH: {int(donor_mvv_uni_value)} min")
+                            else:
+                                mvv_uni_api_attempted = True
+                                mvv_uni_api_attempted_count += 1
+                                try:
+                                    if not updates_only_logging:
+                                        print(f"   📍 Calculating public transit to Gaustadalléen 30, 0373 Oslo...", end='', flush=True)
+                                    minutes = transit_commute_calculator_mvv_uni.calculate(address, postnummer)
+                                    if minutes is not None and _is_valid_travel_value(minutes, max_travel_minutes):
+                                        df.at[idx, 'MVV UNI RUSH'] = int(minutes)
+                                        finnkode_now = _to_text_or_empty(row.get('Finnkode', ''))
+                                        if finnkode_now:
+                                            donor_value_mvv_uni[finnkode_now] = int(minutes)
+                                        calculated_transit_mvv_uni += 1
+                                        row_changed = True
+                                        mvv_uni_attempt_status = f"OK {int(minutes)} min"
+                                        if not updates_only_logging:
+                                            print(f" ✓ {minutes} min")
+                                    elif is_travel_sentinel(minutes):
+                                        df.at[idx, 'MVV UNI RUSH'] = int(minutes)
+                                        finnkode_now = _to_text_or_empty(row.get('Finnkode', ''))
+                                        if finnkode_now:
+                                            donor_value_mvv_uni[finnkode_now] = int(minutes)
+                                        row_changed = True
+                                        mvv_uni_attempt_status = f"FAIL {_sentinel_label(minutes)}"
+                                        if not updates_only_logging:
+                                            print(f" ✗ {_sentinel_label(minutes)}")
+                                    else:
+                                        mvv_uni_attempt_status = f"FAIL rejected ({minutes})"
+                                        if not updates_only_logging:
+                                            print(f" ✗ Rejected/failed value ({minutes})")
+                                    if minutes is not None and delay_between_requests > 0:
+                                        time.sleep(delay_between_requests)
+                                except Exception as e:
+                                    mvv_uni_attempt_status = f"ERROR {str(e)}"
+                                    print(f" ✗ Error: {str(e)}")
+
+                        _add_row_as_donor_if_complete(idx, mvv_uni_travel_columns, donor_cache_mvv_uni)
+                        _add_row_as_donor_if_complete(idx, transit_travel_columns, donor_cache_all)
+
+                        if row_changed:
+                            _checkpoint_row(idx)
+
+                        if updates_only_logging and mvv_uni_api_attempted:
+                            status = mvv_uni_attempt_status or "DONE"
+                            print(f"[{mvv_uni_api_attempted_count}/{mvv_uni_api_calls_needed}] MVV UNI API: {address} -> {status}")
+                except KeyboardInterrupt:
+                    print("\n⚠️  Interrupted during MVV UNI RUSH travel calculations. Returning partial results and preserving saved progress.")
+
+                print(
+                    f"\n✓ Successfully calculated {calculated_transit_mvv_uni} RUSH transit times to Gaustadalléen 30, 0373 Oslo"
+                )
+                if donor_api_skipped_mvv_uni_count > 0 or donor_assigned_mvv_uni_count > 0:
+                    print(
+                        "✓ MVV UNI donor usage: "
+                        f"{donor_api_skipped_mvv_uni_count} API call(s) skipped via donor "
+                        f"({donor_assigned_mvv_uni_count} newly linked, {donor_existing_reuse_mvv_uni_count} existing links reused)"
+                    )
         else:
             print("Skipped location features calculation")
     else:
-        print(f"✓ All properties already have transit commute data for BRJ and MVV")
+        if run_mvv_uni:
+            print("✓ All properties already have transit commute data for MVV UNI RUSH")
+        else:
+            print("✓ All properties already have transit commute data for BRJ and MVV")
 
     # Ensure commute time columns are integers without decimals
     commute_cols = [
-        'PENDL RUSH BRJ', 'PENDL RUSH MVV',
+        'PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH',
         'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
     ]
     for col in commute_cols:

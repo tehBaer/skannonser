@@ -170,6 +170,75 @@ def get_sheet_id(service, sheet_name: str):
     return None
 
 
+def prune_duplicate_finnkode_rows(service, sheet_name: str) -> bool:
+    """Delete duplicate Finnkode rows, keeping the latest (bottom-most) row.
+
+    Duplicate rows can keep stale/corrupted values visible even when the latest
+    row for that Finnkode is correct.
+    """
+    sheet_data = get_sheet_data_with_row_numbers(service, sheet_name)
+    if not sheet_data:
+        return True
+
+    header_row = sheet_data.get(1, [])
+    if not header_row:
+        return True
+
+    header_row_normalized = [canonicalize_header_name(col) for col in header_row]
+    if 'Finnkode' in header_row_normalized:
+        finnkode_col_idx = header_row_normalized.index('Finnkode')
+    else:
+        finnkode_col_idx = 0
+
+    seen_bottom_up = set()
+    rows_to_delete = []
+    for row_num in sorted(sheet_data.keys(), reverse=True):
+        if row_num == 1:
+            continue
+        row_data = sheet_data.get(row_num, [])
+        if not row_data or len(row_data) <= finnkode_col_idx:
+            continue
+        finnkode = normalize_finnkode_for_compare(row_data[finnkode_col_idx])
+        if not finnkode:
+            continue
+        if finnkode in seen_bottom_up:
+            rows_to_delete.append(row_num)
+        else:
+            seen_bottom_up.add(finnkode)
+
+    if not rows_to_delete:
+        return True
+
+    sheet_id = get_sheet_id(service, sheet_name)
+    if sheet_id is None:
+        print(f"Could not resolve sheetId for '{sheet_name}', skipping duplicate prune")
+        return False
+
+    requests = []
+    for row_num in sorted(rows_to_delete, reverse=True):
+        requests.append({
+            "deleteDimension": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": row_num - 1,
+                    "endIndex": row_num,
+                }
+            }
+        })
+
+    try:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"requests": requests}
+        ).execute()
+        print(f"✓ Removed {len(rows_to_delete)} duplicate Finnkode rows from {sheet_name}")
+        return True
+    except HttpError as e:
+        print(f"Error pruning duplicate Finnkode rows from {sheet_name}: {e}")
+        return False
+
+
 def prune_non_visible_rows(service, sheet_name: str, visible_finnkodes: Set[str]) -> bool:
     """Delete rows from sheet where Finnkode is not in current visible set."""
     sheet_data = get_sheet_data_with_row_numbers(service, sheet_name)
@@ -271,6 +340,9 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
     except Exception as e:
         print(f"Error connecting to Google Sheets: {e}")
         return False
+
+    if not prune_duplicate_finnkode_rows(service, sheet_name):
+        return False
     
     # Get all listings and apply temporary sheet visibility rules.
     df = db.get_eiendom_for_sheets()
@@ -318,7 +390,7 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
         if row_num == 1:  # Skip header
             continue
         if row_data and len(row_data) > finnkode_col_idx:
-            finnkode = str(row_data[finnkode_col_idx]).strip()
+            finnkode = normalize_finnkode_for_compare(row_data[finnkode_col_idx])
             finnkode_to_row[finnkode] = row_num
     
     print(f"Found {len(finnkode_to_row)} existing listings in sheet\n")

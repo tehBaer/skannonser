@@ -27,6 +27,7 @@ HEADER_ALIASES = {
     'lng': 'LNG',
     'latitude': 'LAT',
     'longitude': 'LNG',
+    'pendl rush mvv uni rush': 'MVV UNI RUSH',
 }
 
 
@@ -153,7 +154,7 @@ def dedupe_and_canonicalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
 def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
     """Clean data for Google Sheets export."""
     # Convert commute columns to integers without decimals before fillna
-    commute_cols = ['PENDL RUSH BRJ', 'PENDL RUSH MVV']
+    commute_cols = ['PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH']
     area_cols = [
         'Bruksareal',
         'Internt bruksareal (BRA-i)',
@@ -199,10 +200,11 @@ def sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -> List[str]:
-    """Ensure sheet header is canonical and aligned to desired column order.
+    """Ensure sheet header is canonical and includes all desired columns.
 
-    Known desired columns are ordered exactly as provided. Any unknown existing
-    columns are preserved and appended to the end.
+    Important: preserve existing sheet column order to avoid row-value drift.
+    We only canonicalize/de-duplicate existing header names and append missing
+    desired columns to the end.
     """
     range_name = f"{sheet_name}!A1:AZ1"
     result = service.spreadsheets().values().get(
@@ -235,9 +237,11 @@ def ensure_sheet_headers(service, sheet_name: str, desired_columns: List[str]) -
             desired_canonical.append(canon)
             seen_desired.add(canon)
 
-    # Keep unknown columns (if any) but move them to the end.
-    extras = [col for col in updated_header if col not in seen_desired]
-    updated_header = desired_canonical + extras
+    # Preserve current order; append only truly missing desired columns.
+    for col in desired_canonical:
+        if col not in seen:
+            updated_header.append(col)
+            seen.add(col)
 
     if updated_header != header:
         service.spreadsheets().values().update(

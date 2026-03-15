@@ -15,6 +15,7 @@ import pandas as pd
 TRAVEL_EXPORT_COLS = [
     'PENDL RUSH BRJ',
     'PENDL RUSH MVV',
+    'MVV UNI RUSH',
 ]
 
 BASE_EXPORT_COLS = ['Adresse', 'Postnummer', 'Pris', 'Boligtype', 'URL', 'LAT', 'LNG']
@@ -32,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        choices=["all", "brj", "mvv"],
+        choices=["all", "brj", "mvv", "mvv_uni"],
         default="all",
         help="Select which transit destination group to calculate",
     )
@@ -156,6 +157,7 @@ def _persist_shared_travel_seed(db: PropertyDatabase, processed: pd.DataFrame) -
             lng=_db_value(row.get('LNG', None)),
             pendl_rush_brj=_db_value(row.get('PENDL RUSH BRJ', None)),
             pendl_rush_mvv=_db_value(row.get('PENDL RUSH MVV', None)),
+            pendl_rush_mvv_uni_rush=_db_value(row.get('MVV UNI RUSH', None)),
             travel_copy_from_finnkode=_db_value(row.get('TRAVEL_COPY_FROM_FINNKODE', None)),
         )
 

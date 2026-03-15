@@ -30,6 +30,7 @@ TARGET_COLUMNS = {
     "all": ["PENDL RUSH BRJ", "PENDL RUSH MVV"],
     "brj": ["PENDL RUSH BRJ"],
     "mvv": ["PENDL RUSH MVV"],
+    "mvv_uni": ["MVV UNI RUSH"],
 }
 
 
@@ -49,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Estimate process-step travel API candidates")
     parser.add_argument(
         "--target",
-        choices=["all", "brj", "mvv"],
+        choices=["all", "brj", "mvv", "mvv_uni"],
         default="all",
         help="Which travel destination group to estimate",
     )
@@ -99,6 +100,7 @@ def main() -> int:
         "Finnkode",
         "PENDL RUSH BRJ",
         "PENDL RUSH MVV",
+        "MVV UNI RUSH",
         "PENDL MORN CNTR",
         "BIL MORN CNTR",
         "PENDL DAG CNTR",

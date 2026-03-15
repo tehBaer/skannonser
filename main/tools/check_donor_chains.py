@@ -58,7 +58,51 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Exit with code 1 when any integrity issue is found",
     )
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="Flatten multi-hop chains and clear invalid links in the database.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --repair: show what would be changed without writing to the DB.",
+    )
     return parser.parse_args()
+
+
+def _flatten_to_root(
+    start: str,
+    link_map: dict[str, str],
+    all_finnkodes: set[str],
+) -> tuple[str, int, str]:
+    """Walk the donor chain from ``start`` to its terminal node.
+
+    Returns:
+        (end_node, hops, kind)  where kind is one of:
+        - 'ok':     reached a valid root (not in link_map, exists in DB)
+        - 'self':   self-link (start -> start)
+        - 'cycle':  cycle detected
+        - 'broken': donor finnkode does not exist in eiendom_processed at all
+    """
+    if link_map.get(start) == start:
+        return start, 0, "self"
+
+    current = start
+    visited_list: list[str] = [current]
+    visited_set: set[str] = {current}
+
+    while current in link_map:
+        donor = link_map[current]
+        if donor not in all_finnkodes:
+            return donor, len(visited_list) - 1, "broken"
+        if donor in visited_set:
+            return donor, len(visited_list) - 1, "cycle"
+        visited_list.append(donor)
+        visited_set.add(donor)
+        current = donor
+
+    return current, len(visited_list) - 1, "ok"
 
 
 def _resolve_chain(start: str, link_map: dict[str, str]) -> tuple[list[str], str]:
@@ -170,9 +214,60 @@ def main() -> int:
 
     if issue_count == 0:
         print("\nNo donor chain integrity issues found.")
-        return 0
+        if not args.repair:
+            return 0
 
-    if args.fail_on_findings:
+    if args.repair:
+        all_finnkodes = set(work["Finnkode"])
+        updates: dict[str, str | None] = {}  # finnkode -> new_donor (None = clear)
+
+        for listing in sorted(link_map.keys()):
+            root, hops, kind = _flatten_to_root(listing, link_map, all_finnkodes)
+            if kind == "ok" and hops <= 1:
+                continue  # valid single-hop or already a root — nothing to do
+            elif kind == "ok" and hops >= 2:
+                updates[listing] = root  # flatten A->B->...->root to A->root
+            else:  # self, cycle, broken
+                updates[listing] = None  # clear invalid link
+
+        n_updates = len(updates)
+        if n_updates == 0:
+            print("\nNo repairs needed.")
+        else:
+            n_flatten = sum(1 for v in updates.values() if v is not None)
+            n_clear = sum(1 for v in updates.values() if v is None)
+            action = "Would repair" if args.dry_run else "Repairing"
+            print(f"\n{action} {n_updates} link(s): {n_flatten} to flatten, {n_clear} to clear.")
+            for fk, new_donor in sorted(updates.items()):
+                old = link_map.get(fk, "")
+                if new_donor:
+                    print(f"  flatten  {fk:<20}  {old!r} -> {new_donor!r}")
+                else:
+                    print(f"  clear    {fk:<20}  {old!r} -> NULL")
+            if not args.dry_run:
+                _conn = db.get_connection()
+                _cursor = _conn.cursor()
+                for fk, new_donor in updates.items():
+                    if new_donor:
+                        _cursor.execute(
+                            "UPDATE eiendom_processed SET travel_copy_from_finnkode = ?"
+                            " WHERE finnkode = ?",
+                            (new_donor, fk),
+                        )
+                    else:
+                        _cursor.execute(
+                            "UPDATE eiendom_processed SET travel_copy_from_finnkode = NULL"
+                            " WHERE finnkode = ?",
+                            (fk,),
+                        )
+                _conn.commit()
+                _conn.close()
+                print(f"✓ Repaired {n_updates} donor link(s).")
+
+        if not args.dry_run and n_updates > 0:
+            return 0  # repairs applied — not a failure
+
+    if args.fail_on_findings and issue_count > 0:
         print("\nIntegrity issues found (failing due to --fail-on-findings).")
         return 1
 

@@ -34,15 +34,19 @@ except ImportError:
 TARGET_MAP = {
     "PENDL RUSH BRJ": "brj",
     "PENDL RUSH MVV": "mvv",
+    "MVV UNI RUSH": "mvv_uni",
     "BRJ": "brj",
     "MVV": "mvv",
+    "MVV_UNI": "mvv_uni",
     "brj": "brj",
     "mvv": "mvv",
+    "mvv_uni": "mvv_uni",
 }
 
 TRAVEL_COLUMN_BY_TARGET = {
     "brj": "PENDL RUSH BRJ",
     "mvv": "PENDL RUSH MVV",
+    "mvv_uni": "MVV UNI RUSH",
 }
 
 
@@ -75,6 +79,7 @@ def _print_update_differences(
             "Adresse": "Adresse_before",
             "PENDL RUSH BRJ": "old_brj",
             "PENDL RUSH MVV": "old_mvv",
+            "MVV UNI RUSH": "old_mvv_uni",
         }
     )
     after = after.rename(
@@ -82,6 +87,7 @@ def _print_update_differences(
             "Adresse": "Adresse_after",
             "PENDL RUSH BRJ": "new_brj",
             "PENDL RUSH MVV": "new_mvv",
+            "MVV UNI RUSH": "new_mvv_uni",
         }
     )
 
@@ -106,8 +112,12 @@ def _print_update_differences(
 
         for col in sorted(requested_cols):
             requested_cell_count += 1
-            old_col = "old_brj" if col == "PENDL RUSH BRJ" else "old_mvv"
-            new_col = "new_brj" if col == "PENDL RUSH BRJ" else "new_mvv"
+            if col == "PENDL RUSH BRJ":
+                old_col, new_col, label = "old_brj", "new_brj", "BRJ"
+            elif col == "PENDL RUSH MVV":
+                old_col, new_col, label = "old_mvv", "new_mvv", "MVV"
+            else:
+                old_col, new_col, label = "old_mvv_uni", "new_mvv_uni", "MVV_UNI"
             old_value = _to_int_or_none(row.get(old_col))
             new_value = _to_int_or_none(row.get(new_col))
             if old_value != new_value:
@@ -116,7 +126,7 @@ def _print_update_differences(
                     {
                         "Finnkode": finnkode,
                         "Adresse": adresse,
-                        "Target": "BRJ" if col == "PENDL RUSH BRJ" else "MVV",
+                        "Target": label,
                         "Old": old_value,
                         "New": new_value,
                         "Delta": None
@@ -152,7 +162,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        choices=["all", "brj", "mvv"],
+        choices=["all", "brj", "mvv", "mvv_uni"],
         default="all",
         help="Which suspicious targets to re-request",
     )
@@ -239,7 +249,7 @@ def _build_representative_map(db: PropertyDatabase) -> dict[str, str]:
 def _load_requested_finnkodes(args: argparse.Namespace, representative_map: dict[str, str]) -> dict[str, set[str]]:
     df = pd.read_csv(args.findings_csv)
     if df.empty:
-        return {"brj": set(), "mvv": set()}
+        return {"brj": set(), "mvv": set(), "mvv_uni": set()}
 
     if "Finnkode" not in df.columns:
         raise ValueError("Findings CSV is missing required column: Finnkode")
@@ -251,7 +261,7 @@ def _load_requested_finnkodes(args: argparse.Namespace, representative_map: dict
         df = df.loc[scores >= float(args.score_threshold)].copy()
 
     if df.empty:
-        return {"brj": set(), "mvv": set()}
+        return {"brj": set(), "mvv": set(), "mvv_uni": set()}
 
     df["_target_norm"] = df["target"].apply(_normalize_target)
     df["_finnkode_norm"] = df["Finnkode"].apply(_normalize_finnkode)
@@ -266,10 +276,10 @@ def _load_requested_finnkodes(args: argparse.Namespace, representative_map: dict
     df.loc[donor_reason_mask, "_request_finnkode"] = df.loc[donor_reason_mask, "_finnkode_norm"]
     df = df.loc[df["_target_norm"].notna() & (df["_finnkode_norm"] != "")].copy()
 
-    if args.target in {"brj", "mvv"}:
+    if args.target in {"brj", "mvv", "mvv_uni"}:
         df = df.loc[df["_target_norm"] == args.target].copy()
 
-    grouped = {"brj": set(), "mvv": set()}
+    grouped = {"brj": set(), "mvv": set(), "mvv_uni": set()}
     for _, row in df.iterrows():
         grouped[row["_target_norm"]].add(row["_request_finnkode"])
 
@@ -323,7 +333,7 @@ def _run_combined_refresh(
         return 0
 
     before_values = work[[
-        col for col in ["Finnkode", "Adresse", "PENDL RUSH BRJ", "PENDL RUSH MVV"] if col in work.columns
+        col for col in ["Finnkode", "Adresse", "PENDL RUSH BRJ", "PENDL RUSH MVV", "MVV UNI RUSH"] if col in work.columns
     ]].copy()
 
     work["_requested_columns"] = work["Finnkode"].map(requested_columns_by_finnkode)
@@ -336,9 +346,16 @@ def _run_combined_refresh(
     print(f"Rows eligible for re-request: {len(work)}")
     print(f"  BRJ target Finnkoder: {len(requested['brj'])}")
     print(f"  MVV target Finnkoder: {len(requested['mvv'])}")
+    print(f"  MVV UNI target Finnkoder: {len(requested['mvv_uni'])}")
 
     if dry_run:
         return len(work)
+
+    non_empty_targets = [name for name, values in requested.items() if values]
+    if len(non_empty_targets) == 1:
+        travel_target = non_empty_targets[0]
+    else:
+        travel_target = "all"
 
     processed = post_process_eiendom(
         work,
@@ -346,7 +363,7 @@ def _run_combined_refresh(
         db=db,
         calculate_location_features=True,
         calculate_google_directions=True,
-        travel_targets="all",
+        travel_targets=travel_target,
         skip_db_merge=True,
     )
 
@@ -372,10 +389,11 @@ def main() -> int:
         print(f"Failed to parse findings CSV: {exc}")
         return 1
 
-    total_flagged = len(requested["brj"] | requested["mvv"])
+    total_flagged = len(requested["brj"] | requested["mvv"] | requested["mvv_uni"])
     print(f"Flagged Finnkoder after score filter: {total_flagged}")
     print(f"  BRJ flagged: {len(requested['brj'])}")
     print(f"  MVV flagged: {len(requested['mvv'])}")
+    print(f"  MVV UNI flagged: {len(requested['mvv_uni'])}")
 
     if total_flagged == 0:
         print("No suspicious rows to re-request.")
@@ -389,6 +407,7 @@ def main() -> int:
     targeted_request = {
         "brj": requested["brj"] if args.target in {"all", "brj"} else set(),
         "mvv": requested["mvv"] if args.target in {"all", "mvv"} else set(),
+        "mvv_uni": requested["mvv_uni"] if args.target in {"all", "mvv_uni"} else set(),
     }
 
     touched_total = _run_combined_refresh(

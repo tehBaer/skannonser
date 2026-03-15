@@ -18,6 +18,7 @@ TRAVEL_COLS_BY_TARGET = {
     "all": ["PENDL RUSH BRJ", "PENDL RUSH MVV"],
     "brj": ["PENDL RUSH BRJ"],
     "mvv": ["PENDL RUSH MVV"],
+    "mvv_uni": ["MVV UNI RUSH"],
 }
 
 FULL_DNB_COL_ORDER = [
@@ -30,6 +31,7 @@ FULL_DNB_COL_ORDER = [
     "LNG",
     "PENDL RUSH BRJ",
     "PENDL RUSH MVV",
+    "MVV UNI RUSH",
 ]
 
 
@@ -39,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        choices=["all", "brj", "mvv"],
+        choices=["all", "brj", "mvv", "mvv_uni"],
         default="all",
         help="Which travel destination group to compute/update",
     )
@@ -119,6 +121,7 @@ def _build_work_df(df: pd.DataFrame, travel_cols: list[str]) -> pd.DataFrame:
     existing_col_map = {
         "PENDL RUSH BRJ": "existing_pendl_rush_brj",
         "PENDL RUSH MVV": "existing_pendl_rush_mvv",
+        "MVV UNI RUSH": "existing_pendl_rush_mvv_uni_rush",
     }
     for col in travel_cols:
         src_col = existing_col_map.get(col)
@@ -141,8 +144,9 @@ def _build_shared_donor_seed(db: PropertyDatabase) -> pd.DataFrame:
         "Finnkode",
         "LAT",
         "LNG",
-            "PENDL RUSH BRJ",
-            "PENDL RUSH MVV",
+        "PENDL RUSH BRJ",
+        "PENDL RUSH MVV",
+        "MVV UNI RUSH",
     ]
     for col in needed_cols:
         if col not in seed.columns:
@@ -214,8 +218,9 @@ def _persist_shared_travel_seed(db: PropertyDatabase, processed: pd.DataFrame) -
             postnummer=str(row.get("Postnummer", "") or ""),
             lat=_db_value(row.get("LAT", None)),
             lng=_db_value(row.get("LNG", None)),
-                pendl_rush_brj=_db_value(row.get("PENDL RUSH BRJ", None)),
-                pendl_rush_mvv=_db_value(row.get("PENDL RUSH MVV", None)),
+            pendl_rush_brj=_db_value(row.get("PENDL RUSH BRJ", None)),
+            pendl_rush_mvv=_db_value(row.get("PENDL RUSH MVV", None)),
+            pendl_rush_mvv_uni_rush=_db_value(row.get("MVV UNI RUSH", None)),
             travel_copy_from_finnkode=_db_value(row.get("TRAVEL_COPY_FROM_FINNKODE", None)),
         )
 
@@ -234,6 +239,7 @@ def main() -> int:
                                 d.*,
                                 ep.pendl_rush_brj AS existing_pendl_rush_brj,
                                 ep.pendl_rush_mvv AS existing_pendl_rush_mvv,
+                                ep.pendl_rush_mvv_uni_rush AS existing_pendl_rush_mvv_uni_rush,
                                 ep.travel_copy_from_finnkode AS existing_travel_copy_from_finnkode
                         FROM dnbeiendom d
                         LEFT JOIN eiendom_processed ep

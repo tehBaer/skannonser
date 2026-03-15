@@ -28,6 +28,7 @@ except ImportError:
 TARGET_COLUMNS = {
     "brj": ["PENDL RUSH BRJ"],
     "mvv": ["PENDL RUSH MVV"],
+    "mvv_uni": ["MVV UNI RUSH"],
     "all": ["PENDL RUSH BRJ", "PENDL RUSH MVV"],
 }
 
@@ -146,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        choices=["all", "brj", "mvv"],
+        choices=["all", "brj", "mvv", "mvv_uni"],
         default="all",
         help="Which travel target(s) to validate",
     )
@@ -256,6 +257,7 @@ def _print_findings_table(findings: pd.DataFrame, top: int, full_table: bool) ->
     show["target"] = show["target"].map({
         "PENDL RUSH BRJ": "BRJ",
         "PENDL RUSH MVV": "MVV",
+        "MVV UNI RUSH": "MVV_UNI",
     }).fillna(show["target"])
     show["Adresse"] = show["Adresse"].apply(lambda v: _truncate_text(v, 28))
     if "GOOGLE_MAPS_URL" in show.columns:
