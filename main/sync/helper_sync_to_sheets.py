@@ -666,14 +666,7 @@ def sync_stale_eiendom_to_sheets(db_path: str = None, sheet_name: str = "Sold"):
                 f"Filters: SHEETS_MAX_PRICE={SHEETS_MAX_PRICE}, MIN_BRA_I={MIN_BRA_I}"
             )
 
-            confirm_drop = os.getenv("SOLD_FILTER_CONFIRM", "1").strip().lower() in {"1", "true", "yes", "y"}
-            if confirm_drop:
-                response = input(
-                    "Remove these out-of-filter rows from Sold sheet now? (yes/no): "
-                ).strip().lower()
-                if response not in {"yes", "y"}:
-                    print("Sold sync cancelled. No changes were made to Sold sheet.")
-                    return True
+
 
         df = df.loc[include_mask].copy()
 

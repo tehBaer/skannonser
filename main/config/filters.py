@@ -51,7 +51,7 @@ def get_dnb_search_filter_params():
 # Finnkode (TRAVEL_COPY_FROM_FINNKODE) instead of making duplicate API calls.
 # Example: if set to 120, listings within 120 meters can share one donor listing.
 # Set to 0 to disable proximity-based reuse.
-TRAVEL_REUSE_WITHIN_METERS = 750
+TRAVEL_REUSE_WITHIN_METERS = 300
 
 # Guard rails for coordinate quality (defaults target Norway envelope).
 COORD_LAT_MIN = 57.0

@@ -68,6 +68,16 @@ def _to_float_or_none(value):
         return None
 
 
+def _to_text_or_empty(value) -> str:
+    """Return a trimmed string, treating None/NaN/pd.NA as empty."""
+    try:
+        if value is None or pd.isna(value):
+            return ''
+    except Exception:
+        pass
+    return str(value).strip()
+
+
 def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Return distance in meters between two latitude/longitude pairs."""
     radius_m = 6371000.0
@@ -119,11 +129,11 @@ def _build_travel_donor_cache(
         lat, lng = _get_row_coords(row, lat_col, lng_col)
         if lat is None or lng is None:
             continue
-        if str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
+        if _to_text_or_empty(row.get('TRAVEL_COPY_FROM_FINNKODE', '')):
             continue
         if not _row_has_all_travel_values(row, columns, max_travel_minutes):
             continue
-        finnkode = str(row.get('Finnkode', '')).strip()
+        finnkode = _to_text_or_empty(row.get('Finnkode', ''))
         if not finnkode:
             continue
         cache.append((lat, lng, finnkode))
@@ -255,6 +265,7 @@ def post_process_eiendom(
     calculate_google_directions: bool = None,
     travel_targets: str = "all",
     donor_seed_df: DataFrame | None = None,
+    skip_db_merge: bool = False,
 ) -> DataFrame:
     """
     Post-process eiendom data by calculating location features and cleaning data.
@@ -307,7 +318,7 @@ def post_process_eiendom(
     max_travel_minutes = max(float(MAX_TRAVEL_MINUTES), 1.0)
 
     # Load existing commute data from database if available
-    if db is not None:
+    if db is not None and not skip_db_merge:
         try:
             if hasattr(db, 'get_eiendom_commute_data'):
                 existing_data = db.get_eiendom_commute_data()
@@ -337,7 +348,7 @@ def post_process_eiendom(
                 print("✓ Merged existing commute data from database")
         except Exception as e:
             print(f"⚠️  Could not load existing data from database: {e}")
-    else:
+    elif not skip_db_merge:
         # Fallback to CSV if no database provided (backwards compatibility)
         processed_file_path = f'{projectName}/AB_processed.csv'
         if os.path.exists(processed_file_path):
@@ -545,8 +556,8 @@ def post_process_eiendom(
                     return
                 try:
                     row = df.loc[row_idx]
-                    finnkode = str(row.get('Finnkode', '') or '').strip()
-                    donor = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
+                    finnkode = _to_text_or_empty(row.get('Finnkode', ''))
+                    donor = _to_text_or_empty(row.get('TRAVEL_COPY_FROM_FINNKODE', ''))
                     ctx = finnkode + (f" [donor→{donor}]" if donor else "")
                     db.insert_or_update_eiendom(df.loc[[row_idx]].copy(), context=ctx)
                 except Exception as checkpoint_error:
@@ -572,11 +583,11 @@ def post_process_eiendom(
                 # All-or-nothing donor rule: existing donor links are only valid when
                 # that donor is known-complete for the required travel columns.
                 allowed_donors = {cand_finnkode for _, _, cand_finnkode in donor_cache}
-                existing_donor = str(row_data.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
+                existing_donor = _to_text_or_empty(row_data.get('TRAVEL_COPY_FROM_FINNKODE', ''))
                 if existing_donor:
                     return existing_donor if existing_donor in allowed_donors else None
 
-                self_finnkode = str(row_data.get('Finnkode', '') or '').strip()
+                self_finnkode = _to_text_or_empty(row_data.get('Finnkode', ''))
                 if not self_finnkode:
                     return None
 
@@ -593,11 +604,11 @@ def post_process_eiendom(
 
             def _add_row_as_donor_if_complete(row_idx, required_columns, donor_cache):
                 row_now = df.loc[row_idx]
-                if str(row_now.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip():
+                if _to_text_or_empty(row_now.get('TRAVEL_COPY_FROM_FINNKODE', '')):
                     return
                 if not _row_has_all_travel_values(row_now, required_columns, max_travel_minutes):
                     return
-                finnkode = str(row_now.get('Finnkode', '') or '').strip()
+                finnkode = _to_text_or_empty(row_now.get('Finnkode', ''))
                 if not finnkode:
                     return
                 lat, lng = _get_row_coords(row_now, lat_col, lng_col)
@@ -629,7 +640,7 @@ def post_process_eiendom(
                 for loop_pos, (idx, row) in enumerate(df.loc[eligible_mask].iterrows(), start=1):
                     address = row['Adresse']
                     postnummer = row.get('Postnummer')
-                    existing_donor_before = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
+                    existing_donor_before = _to_text_or_empty(row.get('TRAVEL_COPY_FROM_FINNKODE', ''))
                     brj_api_attempted = False
                     brj_attempt_status = None
 
@@ -753,7 +764,7 @@ def post_process_eiendom(
                     for loop_pos, (idx, row) in enumerate(df.loc[eligible_mask].iterrows(), start=1):
                         address = row['Adresse']
                         postnummer = row.get('Postnummer')
-                        existing_donor_before = str(row.get('TRAVEL_COPY_FROM_FINNKODE', '') or '').strip()
+                        existing_donor_before = _to_text_or_empty(row.get('TRAVEL_COPY_FROM_FINNKODE', ''))
                         mvv_api_attempted = False
                         mvv_attempt_status = None
 

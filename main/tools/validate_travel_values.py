@@ -11,6 +11,7 @@ import argparse
 import math
 import os
 import sys
+from pathlib import Path
 
 import pandas as pd
 
@@ -29,6 +30,8 @@ TARGET_COLUMNS = {
     "mvv": ["PENDL RUSH MVV"],
     "all": ["PENDL RUSH BRJ", "PENDL RUSH MVV"],
 }
+
+DEFAULT_LIVE_SCOPE_CSV = "data/eiendom/A_live.csv"
 
 
 def _load_defaults() -> tuple[float, float | None]:
@@ -67,6 +70,21 @@ def _normalize_postnummer(value) -> str:
     if len(digits) <= 4:
         return digits.zfill(4)
     return digits
+
+
+def _normalize_finnkode(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        num = float(text)
+        if num.is_integer():
+            return str(int(num))
+    except Exception:
+        pass
+    return text
 
 
 def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -142,6 +160,19 @@ def parse_args() -> argparse.Namespace:
         "--include-inactive",
         action="store_true",
         help="Include inactive listings in validation",
+    )
+    parser.add_argument(
+        "--live-scope-csv",
+        default=DEFAULT_LIVE_SCOPE_CSV,
+        help=(
+            "CSV used to constrain validation to current live FINN scope "
+            f"(default: {DEFAULT_LIVE_SCOPE_CSV})"
+        ),
+    )
+    parser.add_argument(
+        "--disable-live-scope",
+        action="store_true",
+        help="Disable live-scope filtering and validate all DB-backed sheet rows",
     )
     parser.add_argument(
         "--min-neighbors",
@@ -242,11 +273,56 @@ def _print_findings_table(findings: pd.DataFrame, top: int, full_table: bool) ->
     print(show[existing_cols].to_string(index=False))
 
 
+def _load_live_scope_finnkodes(csv_path: str) -> set[str] | None:
+    """Load current live FINN ids from CSV; return None when unavailable."""
+    if not csv_path:
+        return None
+
+    path = Path(csv_path)
+    if not path.exists():
+        print(f"[WARN] Live scope CSV not found: {path}. Continuing without live-scope filtering.")
+        return None
+
+    try:
+        source = pd.read_csv(path, dtype=str)
+    except Exception as exc:
+        print(f"[WARN] Could not read live scope CSV {path}: {exc}. Continuing without live-scope filtering.")
+        return None
+
+    finnkode_col = None
+    for col in source.columns:
+        if str(col).strip().lower() == "finnkode":
+            finnkode_col = col
+            break
+
+    if not finnkode_col:
+        print(f"[WARN] Live scope CSV {path} has no 'Finnkode' column. Continuing without live-scope filtering.")
+        return None
+
+    normalized = {
+        _normalize_finnkode(value)
+        for value in source[finnkode_col].tolist()
+        if _normalize_finnkode(value)
+    }
+    if not normalized:
+        print(f"[WARN] Live scope CSV {path} has no usable finnkoder. Continuing without live-scope filtering.")
+        return None
+    return normalized
+
+
 def _prepare_source_dataframe(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, tuple[float | None, float | None]]]:
     db = PropertyDatabase()
     df = db.get_eiendom_for_sheets()
     if df.empty:
         return df, {}
+
+    # Default behavior: keep validation aligned with latest crawl/search scope.
+    # This avoids analyzing rows that are outside current URL filters/polygon.
+    if not args.disable_live_scope and not args.include_inactive and "Finnkode" in df.columns:
+        live_scope_ids = _load_live_scope_finnkodes(args.live_scope_csv)
+        if live_scope_ids is not None:
+            finnkode_norm = df["Finnkode"].apply(_normalize_finnkode)
+            df = df.loc[finnkode_norm.isin(live_scope_ids)].copy()
 
     if not args.include_inactive and "active" in df.columns:
         active_mask = pd.to_numeric(df["active"], errors="coerce").fillna(1).astype(int) == 1
@@ -270,15 +346,48 @@ def _prepare_source_dataframe(args: argparse.Namespace) -> tuple[pd.DataFrame, d
 
     donor_seed = db.get_travel_donor_seed()
     donor_coords: dict[str, tuple[float | None, float | None]] = {}
+    donor_links: dict[str, str] = {}
     if donor_seed is not None and not donor_seed.empty:
         for _, row in donor_seed.iterrows():
-            finnkode = str(row.get("Finnkode", "") or "").strip()
+            finnkode = _normalize_finnkode(row.get("Finnkode"))
             if not finnkode:
                 continue
             donor_coords[finnkode] = (
                 _to_float_or_none(row.get("LAT")),
                 _to_float_or_none(row.get("LNG")),
             )
+            donor_finnkode = _normalize_finnkode(row.get("TRAVEL_COPY_FROM_FINNKODE"))
+            if donor_finnkode and donor_finnkode != finnkode:
+                donor_links[finnkode] = donor_finnkode
+
+    representative_cache: dict[str, str] = {}
+
+    def _resolve_representative(finnkode: object) -> str:
+        start = _normalize_finnkode(finnkode)
+        if not start:
+            return ""
+        if start in representative_cache:
+            return representative_cache[start]
+
+        current = start
+        seen: set[str] = set()
+        while True:
+            donor = donor_links.get(current, "")
+            donor = _normalize_finnkode(donor)
+            if not donor or donor == current or donor in seen:
+                break
+            seen.add(current)
+            current = donor
+
+        representative = current
+        representative_cache[start] = representative
+        for item in seen:
+            representative_cache[item] = representative
+        return representative
+
+    df["_finnkode_norm"] = df.get("Finnkode", pd.Series(index=df.index, dtype="object")).apply(_normalize_finnkode)
+    df["_group_representative"] = df["_finnkode_norm"].apply(_resolve_representative)
+    df["_is_group_representative"] = df["_finnkode_norm"] == df["_group_representative"]
     return df, donor_coords
 
 
@@ -360,6 +469,16 @@ def _build_findings(
         work_df = df.loc[valid_mask].copy()
         if work_df.empty:
             continue
+
+        if "_group_representative" in work_df.columns:
+            work_df["_group_sort_key"] = work_df.get("Finnkode", pd.Series(index=work_df.index, dtype="object")).astype(str)
+            work_df.sort_values(
+                by=["_group_representative", "_is_group_representative", "_group_sort_key"],
+                ascending=[True, False, True],
+                inplace=True,
+            )
+            work_df = work_df.drop_duplicates(subset=["_group_representative"], keep="first").copy()
+            work_df.drop(columns=["_group_sort_key"], inplace=True, errors="ignore")
 
         records = work_df.to_dict("records")
         buckets, lat_step, lng_step = _build_spatial_buckets(work_df, args.radius_meters)
@@ -448,6 +567,7 @@ def _build_findings(
                     "suspicion_score": score,
                     "target": travel_col,
                     "Finnkode": row.get("Finnkode"),
+                    "GROUP_REPRESENTATIVE_FINNKODE": row.get("_group_representative") or row.get("Finnkode"),
                     "Adresse": row.get("Adresse") or row.get("ADRESSE"),
                     "Postnummer": row.get("Postnummer"),
                     "GOOGLE_MAPS_URL": row.get("GOOGLE_MAPS_URL"),

@@ -1,0 +1,150 @@
+Finding suspicious travel rows (target=all, score>=2)...
+.venv/bin/python main/tools/validate_travel_values.py \
+		--target "all" \
+		 \
+		 \
+		--score-threshold "2" \
+		--min-abs-diff "15" \
+		--min-relative-diff "0.25" \
+		 \
+		 \
+		 \
+		 \
+		--csv "tmp/travel_suspicious_findings.csv"
+========================================================================
+Travel Value Validation Report
+========================================================================
+Listings scanned: 1325
+Targets: PENDL RUSH BRJ, PENDL RUSH MVV
+Nearby radius: 300 m
+Score threshold: 2
+Flagged findings: 12
+
+ suspicion_score target                  Adresse                                          GOOGLE_MAPS_URL                                    reason
+               3    BRJ          Ingeniørveien 8    https://www.google.com/maps/place/Ingeniørveien+8+196            Donor: 620m > 300m (454110793)
+               3    BRJ Bertrand Narvesens Vei 5 https://www.google.com/maps/place/Bertrand+Narvesens+...            Donor: 679m > 300m (452559198)
+               3    MVV          Ingeniørveien 8    https://www.google.com/maps/place/Ingeniørveien+8+196            Donor: 620m > 300m (454110793)
+               3    MVV Bertrand Narvesens Vei 5 https://www.google.com/maps/place/Bertrand+Narvesens+...            Donor: 679m > 300m (452559198)
+               2    BRJ         Solberg Østli 40  https://www.google.com/maps/place/Solberg+Østli+40+2020  Postnr: 136m (72m higher vs med 64, n=9)
+               2    BRJ          Sandumshaugen 1   https://www.google.com/maps/place/Sandumshaugen+1+2022 Postnr: 129m (42m higher vs med 86, n=14)
+               2    BRJ            Gjerivegen 93     https://www.google.com/maps/place/Gjerivegen+93+2022 Postnr: 111m (24m higher vs med 86, n=14)
+               2    BRJ         Hektnerhagan 182  https://www.google.com/maps/place/Hektnerhagan+182+2008    Postnr: 33m (30m lower vs med 62, n=8)
+               2    MVV          Sandumshaugen 1   https://www.google.com/maps/place/Sandumshaugen+1+2022 Postnr: 150m (74m higher vs med 76, n=14)
+               2    MVV         Solberg Østli 40  https://www.google.com/maps/place/Solberg+Østli+40+2020  Postnr: 146m (81m higher vs med 65, n=9)
+               2    MVV            Gjerivegen 93     https://www.google.com/maps/place/Gjerivegen+93+2022 Postnr: 111m (36m higher vs med 76, n=14)
+               2    MVV         Hektnerhagan 182  https://www.google.com/maps/place/Hektnerhagan+182+2008    Postnr: 39m (41m lower vs med 80, n=8)
+
+Saved full findings to: tmp/travel_suspicious_findings.csv
+Flagged Finnkoder after score filter: 6
+  BRJ flagged: 6
+  MVV flagged: 6
+Requested donor-group representatives: 6
+Rows eligible for re-request: 4
+  BRJ representatives: 6
+  MVV representatives: 6
+Done. Total targeted listings: 4
+Dry-run mode: no API calls and no DB writes.
+[TRAVEL] suspicious re-request candidates=4
+Run suspicious re-request now? [y/N]: Flagged Finnkoder after score filter: 6
+  BRJ flagged: 6
+  MVV flagged: 6
+Requested donor-group representatives: 6
+Rows eligible for re-request: 4
+  BRJ representatives: 6
+  MVV representatives: 6
+Using travel reuse radius: 300 m (nearby listings can reuse donor Finnkode)
+
+⚠️  4 properties missing PENDL RUSH BRJ (public transit rush-hour commute time)
+⚠️  4 properties missing PENDL RUSH MVV (public transit to Lambertseter svømmeklubb)
+⚠️  Price filter active: MAX_PRICE = 7500000
+Auto-confirmed travel calculations via TRAVEL_AUTO_CONFIRM=1 (rpm=60)
+
+🚀 BRJ: scanning 4 eligible properties, 4 API candidate(s)...
+   Running at 60.0 requests/minute
+
+⏳ Processing property 1/4: Solberg Østli 40
+   📍 Calculating public transit time... ✓ 136 min
+  Saved #448079199: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+⏳ Processing property 2/4: Hektnerhagan 182
+   📍 Calculating public transit time... ✓ 33 min
+  Saved #455298470: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+⏳ Processing property 3/4: Sandumshaugen 1
+   📍 Calculating public transit time... ✓ 129 min
+  Saved #408139658: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+⏳ Processing property 4/4: Gjerivegen 93
+   📍 Calculating public transit time... ✓ 111 min
+  Saved #453767347: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+
+🚀 MVV: scanning 4 eligible properties, 4 API candidate(s)...
+
+⏳ Processing property 1/4: Solberg Østli 40
+   📍 Calculating public transit to Lambertseter svømmeklubb... ✓ 146 min
+  Saved #448079199: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+⏳ Processing property 2/4: Hektnerhagan 182
+   📍 Calculating public transit to Lambertseter svømmeklubb... ✓ 39 min
+  Saved #455298470: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+⏳ Processing property 3/4: Sandumshaugen 1
+   📍 Calculating public transit to Lambertseter svømmeklubb... ✓ 150 min
+  Saved #408139658: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+⏳ Processing property 4/4: Gjerivegen 93
+   📍 Calculating public transit to Lambertseter svømmeklubb... ✓ 111 min
+  Saved #453767347: checkpoint (0 inserted, 1 updated, 0 skipped excluded URL)
+
+✓ Successfully calculated 4 RUSH transit times to Lambertseter svømmeklubb
+Database updated: 0 inserted, 4 updated, 0 skipped excluded URL
+Database rows touched: 0 inserted, 4 updated
+Travel diff summary (requested targets):
+  Changed cells: 0/8
+  Listings with at least one change: 0
+  No requested values changed.
+Done. Total targeted listings: 4
+/Library/Developer/CommandLineTools/usr/bin/make validate-travel \
+		TARGET="all" \
+		RADIUS="" \
+		INCLUDE_INACTIVE="" \
+		SCORE_THRESHOLD="2" \
+		MIN_ABS_DIFF="15" \
+		MIN_REL_DIFF="0.25" \
+		MAD_MULT="" \
+		MIN_NEIGHBORS="" \
+		MIN_POSTCODE_GROUP="" \
+		MAX_TRAVEL_MINUTES="" \
+		FULL_TABLE="" \
+		TOP="" \
+		CSV=""
+.venv/bin/python main/tools/validate_travel_values.py \
+		--target "all" \
+		 \
+		 \
+		--score-threshold "2" \
+		--min-abs-diff "15" \
+		--min-relative-diff "0.25" \
+		 \
+		 \
+		 \
+		 \
+		 \
+		 \
+		
+========================================================================
+Travel Value Validation Report
+========================================================================
+Listings scanned: 1325
+Targets: PENDL RUSH BRJ, PENDL RUSH MVV
+Nearby radius: 300 m
+Score threshold: 2
+Flagged findings: 12
+
+ suspicion_score target                  Adresse                                          GOOGLE_MAPS_URL                                    reason
+               3    BRJ          Ingeniørveien 8    https://www.google.com/maps/place/Ingeniørveien+8+196            Donor: 620m > 300m (454110793)
+               3    BRJ Bertrand Narvesens Vei 5 https://www.google.com/maps/place/Bertrand+Narvesens+...            Donor: 679m > 300m (452559198)
+               3    MVV          Ingeniørveien 8    https://www.google.com/maps/place/Ingeniørveien+8+196            Donor: 620m > 300m (454110793)
+               3    MVV Bertrand Narvesens Vei 5 https://www.google.com/maps/place/Bertrand+Narvesens+...            Donor: 679m > 300m (452559198)
+               2    BRJ         Solberg Østli 40  https://www.google.com/maps/place/Solberg+Østli+40+2020  Postnr: 136m (72m higher vs med 64, n=9)
+               2    BRJ          Sandumshaugen 1   https://www.google.com/maps/place/Sandumshaugen+1+2022 Postnr: 129m (42m higher vs med 86, n=14)
+               2    BRJ            Gjerivegen 93     https://www.google.com/maps/place/Gjerivegen+93+2022 Postnr: 111m (24m higher vs med 86, n=14)
+               2    BRJ         Hektnerhagan 182  https://www.google.com/maps/place/Hektnerhagan+182+2008    Postnr: 33m (30m lower vs med 62, n=8)
+               2    MVV          Sandumshaugen 1   https://www.google.com/maps/place/Sandumshaugen+1+2022 Postnr: 150m (74m higher vs med 76, n=14)
+               2    MVV         Solberg Østli 40  https://www.google.com/maps/place/Solberg+Østli+40+2020  Postnr: 146m (81m higher vs med 65, n=9)
+               2    MVV            Gjerivegen 93     https://www.google.com/maps/place/Gjerivegen+93+2022 Postnr: 111m (36m higher vs med 76, n=14)
+               2    MVV         Hektnerhagan 182  https://www.google.com/maps/place/Hektnerhagan+182+2008    Postnr: 39m (41m lower vs med 80, n=8)

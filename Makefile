@@ -15,7 +15,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest validate-travel-rerequest-suspicious
+.PHONY: help sheets travel brj mvv dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun check-donor-chains check-donor-chains-strict full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious
 
 help:
 	@echo "Available targets:"
@@ -48,15 +48,17 @@ help:
 	@echo "  make coords-count - Count coordinate geocode candidates (no API calls)"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
 	@echo "  make validate-travel - Flag suspicious stored travel values without API calls"
-	@echo "  make validate-travel-rerequest - Re-request travel values for active listings, then validate"
-	@echo "                     Optional: TARGET=all TRAVEL_AUTO_CONFIRM=1 TRAVEL_REQUESTS_PER_MINUTE=60"
 	@echo "  make validate-travel-rerequest-suspicious - Validate and re-request only high-suspicion listings"
 	@echo "                     Optional: TARGET=all SCORE_THRESHOLD=2 MIN_ABS_DIFF=15 MIN_REL_DIFF=0.25"
 	@echo "                     Optional: TRAVEL_AUTO_CONFIRM=1 TRAVEL_REQUESTS_PER_MINUTE=60 SUSPICIOUS_CSV=tmp/travel_suspicious_findings.csv"
+	@echo "                     Note: uses forced API mode for targeted rows (ignores donor reuse during re-request)"
 	@echo "                     Optional: TARGET=all RADIUS=750 INCLUDE_INACTIVE=1 TOP=100 CSV=tmp/travel_validation.csv"
 	@echo "                     Thresholds: SCORE_THRESHOLD=2 MIN_ABS_DIFF=15 MIN_REL_DIFF=0.25 MAD_MULT=2.0"
 	@echo "                     Groups: MIN_NEIGHBORS=4 MIN_POSTCODE_GROUP=5 MAX_TRAVEL_MINUTES=360"
 	@echo "                     Display: FULL_TABLE=1 (show full untruncated reasons)"
+	@echo "  make check-donor-chains - Report donor-of-donor chains/cycles/self-links/broken refs"
+	@echo "                     Optional: TOP=50 CSV=tmp/donor_chain_findings.csv"
+	@echo "  make check-donor-chains-strict - Same check, exits non-zero if findings exist"
 	@echo "  make travel-count-process - Estimate process-step travel API candidates (no API calls)"
 	@echo "  make addr-overrides - Manage address overrides (set/list/remove)"
 	@echo "  make map-guide - Open setup guide for interactive map"
@@ -98,6 +100,23 @@ dnb-backfill-travel:
 
 dnb-backfill-travel-dryrun:
 	$(PYTHON) scripts/backfill_dnbeiendom_travel_to_sheet.py --target all --dry-run
+
+backfill-donor-links:
+	$(PYTHON) scripts/backfill_donor_links.py
+
+backfill-donor-links-dryrun:
+	$(PYTHON) scripts/backfill_donor_links.py --dry-run
+
+check-donor-chains:
+	$(PYTHON) main/tools/check_donor_chains.py \
+		$(if $(TOP),--top "$(TOP)",) \
+		$(if $(CSV),--csv "$(CSV)",)
+
+check-donor-chains-strict:
+	$(PYTHON) main/tools/check_donor_chains.py \
+		$(if $(TOP),--top "$(TOP)",) \
+		$(if $(CSV),--csv "$(CSV)",) \
+		--fail-on-findings
 
 full:
 	# 1) FINN crawling
@@ -287,27 +306,8 @@ validate-travel:
 		$(if $(TOP),--top "$(TOP)",) \
 		$(if $(CSV),--csv "$(CSV)",)
 
-validate-travel-rerequest:
-	@echo "Force-refreshing stored travel values for active listings (target=$(if $(TARGET),$(TARGET),all))..."
-	$(PYTHON) -c "from main.database.db import PropertyDatabase; db=PropertyDatabase(); conn=db.get_connection(); cur=conn.cursor(); target='$(if $(TARGET),$(TARGET),all)'.strip().lower(); cols=[]; cols += ['pendl_rush_brj'] if target in ('all','brj') else []; cols += ['pendl_rush_mvv'] if target in ('all','mvv') else []; cols = cols or ['pendl_rush_brj','pendl_rush_mvv']; set_clause = ', '.join([f'{c} = NULL' for c in cols] + ['travel_copy_from_finnkode = NULL', 'updated_at = CURRENT_TIMESTAMP']); sql = f'UPDATE eiendom_processed SET {set_clause} WHERE finnkode IN (SELECT finnkode FROM eiendom WHERE active = 1)'; cur.execute(sql); print('Cleared travel fields for %s active row(s): %s + travel_copy_from_finnkode' % (cur.rowcount, ', '.join(cols))); conn.commit(); conn.close()"
-	TRAVEL_AUTO_CONFIRM="$(if $(TRAVEL_AUTO_CONFIRM),$(TRAVEL_AUTO_CONFIRM),1)" TRAVEL_REQUESTS_PER_MINUTE="$(if $(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_REQUESTS_PER_MINUTE),60)" $(PYTHON) main/tools/manual_fill_missing_travel_times.py --target "$(if $(TARGET),$(TARGET),all)"
-	$(MAKE) validate-travel \
-		TARGET="$(if $(TARGET),$(TARGET),all)" \
-		RADIUS="$(RADIUS)" \
-		INCLUDE_INACTIVE="$(INCLUDE_INACTIVE)" \
-		SCORE_THRESHOLD="$(SCORE_THRESHOLD)" \
-		MIN_ABS_DIFF="$(MIN_ABS_DIFF)" \
-		MIN_REL_DIFF="$(MIN_REL_DIFF)" \
-		MAD_MULT="$(MAD_MULT)" \
-		MIN_NEIGHBORS="$(MIN_NEIGHBORS)" \
-		MIN_POSTCODE_GROUP="$(MIN_POSTCODE_GROUP)" \
-		MAX_TRAVEL_MINUTES="$(MAX_TRAVEL_MINUTES)" \
-		FULL_TABLE="$(FULL_TABLE)" \
-		TOP="$(TOP)" \
-		CSV="$(CSV)"
-
 validate-travel-rerequest-suspicious:
-	@mkdir -p tmp
+	@mkdir -p "$(dir $(SUSPICIOUS_CSV))"
 	@echo "Finding suspicious travel rows (target=$(if $(TARGET),$(TARGET),all), score>=$(SCORE_THRESHOLD))..."
 	$(PYTHON) main/tools/validate_travel_values.py \
 		--target "$(if $(TARGET),$(TARGET),all)" \
@@ -321,11 +321,38 @@ validate-travel-rerequest-suspicious:
 		$(if $(MIN_POSTCODE_GROUP),--min-postcode-group "$(MIN_POSTCODE_GROUP)",) \
 		$(if $(MAX_TRAVEL_MINUTES),--max-travel-minutes "$(MAX_TRAVEL_MINUTES)",) \
 		--csv "$(SUSPICIOUS_CSV)"
-	TRAVEL_AUTO_CONFIRM="$(if $(TRAVEL_AUTO_CONFIRM),$(TRAVEL_AUTO_CONFIRM),1)" TRAVEL_REQUESTS_PER_MINUTE="$(if $(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_RPM))" $(PYTHON) main/tools/rerequest_suspicious_travel.py \
+	@PREVIEW_OUT="$$(TRAVEL_FORCE_API_FOR_MISSING=1 $(PYTHON) main/tools/rerequest_suspicious_travel.py \
 		--findings-csv "$(SUSPICIOUS_CSV)" \
 		--target "$(if $(TARGET),$(TARGET),all)" \
 		--score-threshold "$(if $(SCORE_THRESHOLD),$(SCORE_THRESHOLD),2)" \
-		$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,)
+		$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,) \
+		--dry-run)"; \
+	echo "$$PREVIEW_OUT"; \
+	TRAVEL_CAND="$$(printf '%s\n' "$$PREVIEW_OUT" | awk -F': ' '/^Rows eligible for re-request:/ {print $$2}' | tail -n 1)"; \
+	if [ -z "$$TRAVEL_CAND" ]; then TRAVEL_CAND="0"; fi; \
+	echo "[TRAVEL] suspicious re-request candidates=$$TRAVEL_CAND"; \
+	if [ "$$TRAVEL_CAND" = "0" ]; then \
+		echo "[TRAVEL] skip API calls (no suspicious candidates)"; \
+	elif [ "$(TRAVEL_CONFIRM)" = "1" ]; then \
+		printf "Run suspicious re-request now? [y/N]: "; \
+		read ans; \
+		case "$$ans" in \
+			y|Y|yes|YES) \
+				TRAVEL_FORCE_API_FOR_MISSING=1 TRAVEL_AUTO_CONFIRM="$(if $(TRAVEL_AUTO_CONFIRM),$(TRAVEL_AUTO_CONFIRM),1)" TRAVEL_REQUESTS_PER_MINUTE="$(if $(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_RPM))" $(PYTHON) main/tools/rerequest_suspicious_travel.py \
+					--findings-csv "$(SUSPICIOUS_CSV)" \
+					--target "$(if $(TARGET),$(TARGET),all)" \
+					--score-threshold "$(if $(SCORE_THRESHOLD),$(SCORE_THRESHOLD),2)" \
+					$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,);; \
+			*) \
+				echo "[TRAVEL] skip API calls (user declined)";; \
+		esac; \
+	else \
+		TRAVEL_FORCE_API_FOR_MISSING=1 TRAVEL_AUTO_CONFIRM="$(if $(TRAVEL_AUTO_CONFIRM),$(TRAVEL_AUTO_CONFIRM),1)" TRAVEL_REQUESTS_PER_MINUTE="$(if $(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_REQUESTS_PER_MINUTE),$(TRAVEL_RPM))" $(PYTHON) main/tools/rerequest_suspicious_travel.py \
+			--findings-csv "$(SUSPICIOUS_CSV)" \
+			--target "$(if $(TARGET),$(TARGET),all)" \
+			--score-threshold "$(if $(SCORE_THRESHOLD),$(SCORE_THRESHOLD),2)" \
+			$(if $(filter 1 yes true,$(INCLUDE_INACTIVE)),--include-inactive,); \
+	fi
 	$(MAKE) validate-travel \
 		TARGET="$(if $(TARGET),$(TARGET),all)" \
 		RADIUS="$(RADIUS)" \

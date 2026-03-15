@@ -168,6 +168,8 @@ def main() -> int:
 
     print("You will be prompted for confirmation and optional request rate.")
 
+    donor_seed_df = db.get_travel_donor_seed()
+
     processed = post_process_eiendom(
         df_missing,
         projectName='data/eiendom',
@@ -175,6 +177,7 @@ def main() -> int:
         calculate_location_features=True,
         calculate_google_directions=True,
         travel_targets=args.target,
+        donor_seed_df=donor_seed_df,
     )
 
     inserted, updated = db.insert_or_update_eiendom(processed)
