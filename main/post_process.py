@@ -327,7 +327,7 @@ def post_process_eiendom(
                 existing_data = db.get_eiendom_for_sheets()
             
             # Extract commute columns from existing database data (BRJ + CNTR + MVV)
-            commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH',
+            commute_columns = ['Finnkode', 'LAT', 'LNG', 'PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH',
                              'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
                              'TRAVEL_COPY_FROM_FINNKODE']
             existing_commute_cols = ['Finnkode'] + [col for col in commute_columns[1:] if col in existing_data.columns]
@@ -367,7 +367,7 @@ def post_process_eiendom(
                         existing_df.rename(columns={old_name: new_name}, inplace=True)
                 
                 # Extract commute columns from existing data (BRJ + CNTR + MVV)
-                commute_columns = ['Finnkode', 'PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH',
+                commute_columns = ['Finnkode', 'LAT', 'LNG', 'PENDL RUSH BRJ', 'PENDL RUSH MVV', 'MVV UNI RUSH',
                                  'PENDL MORN CNTR', 'BIL MORN CNTR', 'PENDL DAG CNTR', 'BIL DAG CNTR',
                                  'TRAVEL_COPY_FROM_FINNKODE']
                 # Filter to only include columns that exist in existing data

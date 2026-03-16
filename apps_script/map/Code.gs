@@ -11,6 +11,13 @@ const DEFAULT_DNB_SHEET = 'DNB';
 const DEFAULT_STATIONS_SHEET = 'Stations';
 const DEFAULT_FINN_POLYGON_SHEET = 'Finn Polygon Coords';
 const SEARCH_POLYGON_BUFFER_KM = 2;
+const HEADER_ALIASES = {
+  'lat': 'LAT',
+  'lng': 'LNG',
+  'latitude': 'LAT',
+  'longitude': 'LNG',
+  'pendl rush mvv uni rush': 'MVV UNI RUSH',
+};
 const NORWAY_BOUNDS = {
   minLat: 57,
   maxLat: 72,
@@ -620,7 +627,11 @@ function getStations_(sheet) {
 }
 
 function normalizeHeader_(value) {
-  return String(value || '').trim();
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return raw;
+  }
+  return HEADER_ALIASES[String(raw).toLowerCase()] || raw;
 }
 
 function normalizeFinnkode_(value) {

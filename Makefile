@@ -15,7 +15,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv mvv-uni-rush dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun populate-travel-from-donors populate-travel-from-donors-dryrun check-donor-chains check-donor-chains-strict repair-donor-chains repair-donor-chains-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious
+.PHONY: help sheets travel brj mvv mvv-uni-rush dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun populate-travel-from-donors populate-travel-from-donors-dryrun check-donor-chains check-donor-chains-strict repair-donor-chains repair-donor-chains-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-url map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious
 
 help:
 	@echo "Available targets:"
@@ -69,8 +69,9 @@ help:
 	@echo "  make finn-url - Print generated FINN search URL from current polygon points"
 	@echo "  make polygon-sync - Sync finn_polygon_points to 'Finn Polygon Coords' sheet"
 	@echo "  make map-push  - Push Apps Script map files via clasp"
-	@echo "  make map-deploy - Deploy Apps Script web app via clasp"
-	@echo "  make map-live-url - Print live Apps Script web app URL (/exec)"
+	@echo "  make map-deploy - Deploy Apps Script web app via clasp and print the /exec URL"
+	@echo "  make map-url - Print live Apps Script web app URL (/exec)"
+	@echo "  make map-live-url - Alias for map-url"
   
 
 
@@ -154,24 +155,6 @@ full:
 	@echo ""
 	@echo "== [4/7] DNB extract =="
 	@$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
-	# Coords preflight count (no API calls), then skip prompt/run when no candidates.
-	@COORD_CAND="$$(COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,) | awk -F': ' '/^Candidates:/ {print $$2}' | tail -n 1)"; \
-	if [ -z "$$COORD_CAND" ]; then COORD_CAND="0"; fi; \
-	echo "[COORDS] candidates=$$COORD_CAND"; \
-	if [ "$$COORD_CAND" = "0" ]; then \
-		echo "[COORDS] skip (no missing LAT/LNG)"; \
-	elif [ "$(COORDS_CONFIRM)" = "1" ]; then \
-		printf "Run coords fill now (geocode missing LAT/LNG)? [y/N]: "; \
-		read ans; \
-		case "$$ans" in \
-			y|Y|yes|YES) \
-				COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,);; \
-			*) \
-				echo "[COORDS] skip (user declined)";; \
-		esac; \
-	else \
-		COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,); \
-	fi
 	@echo ""
 	@echo "== [5/7] DNB filter/load + sheet sync =="
 	# Continue existing DB/sheet pipeline steps after extraction
@@ -214,24 +197,6 @@ full-no-scrape:
 	@echo ""
 	@echo "== [2/5] DNB extract =="
 	@$(PYTHON) main/extractors/extract_dnbeiendom_ads.py --input data/dnbeiendom/0_URLs.csv --output-folder data/dnbeiendom
-	# Coords preflight count (no API calls), then skip prompt/run when no candidates.
-	@COORD_CAND="$$(COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --count-only $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,) | awk -F': ' '/^Candidates:/ {print $$2}' | tail -n 1)"; \
-	if [ -z "$$COORD_CAND" ]; then COORD_CAND="0"; fi; \
-	echo "[COORDS] candidates=$$COORD_CAND"; \
-	if [ "$$COORD_CAND" = "0" ]; then \
-		echo "[COORDS] skip (no missing LAT/LNG)"; \
-	elif [ "$(COORDS_CONFIRM)" = "1" ]; then \
-		printf "Run coords fill now (geocode missing LAT/LNG)? [y/N]: "; \
-		read ans; \
-		case "$$ans" in \
-			y|Y|yes|YES) \
-				COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,);; \
-			*) \
-				echo "[COORDS] skip (user declined)";; \
-		esac; \
-	else \
-		COORDS_LIMIT="0" COORDS_RPM="$(COORDS_RPM)" $(PYTHON) main/tools/fill_missing_coordinates.py --limit "0" --rpm "$(COORDS_RPM)" --allow-failures $(if $(filter 1 yes true,$(COORDS_INCLUDE_INACTIVE)),--include-inactive,); \
-	fi
 	@echo ""
 	@echo "== [3/5] DNB filter/load + sheet sync =="
 	# Continue existing DB/sheet pipeline steps after extraction
@@ -290,7 +255,16 @@ map-push:
 	@cd apps_script/map && clasp push
 
 map-deploy:
-	@cd apps_script/map && clasp deploy --description "Interactive map update"
+	@cd apps_script/map && clasp deploy --description "Interactive map update" && \
+	DEPLOY_ID="$$(clasp deployments 2>/dev/null | sed -nE 's/.*(AKfy[a-zA-Z0-9_-]+).*@([0-9]+).*/\2 \1/p' | sort -nr | head -n 1 | awk '{print $$2}')"; \
+	if [ -z "$$DEPLOY_ID" ]; then \
+		DEPLOY_ID="$$(clasp deployments 2>/dev/null | sed -nE 's/.*(AKfy[a-zA-Z0-9_-]+).*/\1/p' | head -n 1)"; \
+	fi; \
+	if [ -z "$$DEPLOY_ID" ]; then \
+		echo "No deployment ID found after deploy."; \
+		exit 1; \
+	fi; \
+	echo "https://script.google.com/macros/s/$$DEPLOY_ID/exec"
 
 map-url:
 	@cd apps_script/map && DEPLOY_ID="$$(clasp deployments 2>/dev/null | sed -nE 's/.*(AKfy[a-zA-Z0-9_-]+).*@([0-9]+).*/\2 \1/p' | sort -nr | head -n 1 | awk '{print $$2}')"; \
@@ -302,6 +276,8 @@ map-url:
 		exit 1; \
 	fi; \
 	echo "https://script.google.com/macros/s/$$DEPLOY_ID/exec"
+
+map-live-url: map-url
 
 coords-missing:
 	$(PYTHON) main/tools/report_missing_coordinates.py

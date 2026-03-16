@@ -7,6 +7,7 @@ import sys
 import os
 import argparse
 import subprocess
+import re
 from urllib.parse import urlencode
 
 
@@ -21,6 +22,85 @@ def _env_bool(name: str):
     if value in {'0', 'false', 'no', 'n', 'off'}:
         return False
     return None
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(str(raw).strip())
+    except Exception:
+        return default
+    return value if value > 0 else default
+
+
+def _env_wants_true(name: str) -> bool:
+    return str(os.getenv(name, '')).strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
+
+def _run_coords_fill_if_needed() -> int:
+    coords_script = os.path.join(project_root, 'main', 'tools', 'fill_missing_coordinates.py')
+    rpm = _env_float('COORDS_RPM', 120.0)
+    include_inactive = _env_wants_true('COORDS_INCLUDE_INACTIVE')
+    require_confirm = _env_bool('COORDS_CONFIRM')
+    if require_confirm is None:
+        require_confirm = True
+
+    count_cmd = [
+        sys.executable,
+        coords_script,
+        '--limit',
+        '0',
+        '--rpm',
+        f'{rpm:g}',
+        '--count-only',
+    ]
+    if include_inactive:
+        count_cmd.append('--include-inactive')
+
+    count_proc = subprocess.run(
+        count_cmd,
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+        check=False,
+    )
+    count_output = (count_proc.stdout or '') + (count_proc.stderr or '')
+    match = re.search(r'^Candidates:\s*(\d+)\s*$', count_output, flags=re.MULTILINE)
+    candidate_count = int(match.group(1)) if match else 0
+
+    print(f'[COORDS] candidates={candidate_count}')
+    if candidate_count == 0:
+        print('[COORDS] skip (no missing LAT/LNG)')
+        return 0
+
+    if require_confirm:
+        answer = input('Run coords fill now (geocode missing LAT/LNG)? [y/N]: ').strip().lower()
+        if answer not in {'y', 'yes'}:
+            print('[COORDS] skip (user declined)')
+            return 0
+
+    fill_cmd = [
+        sys.executable,
+        coords_script,
+        '--limit',
+        '0',
+        '--rpm',
+        f'{rpm:g}',
+        '--allow-failures',
+    ]
+    if include_inactive:
+        fill_cmd.append('--include-inactive')
+
+    subprocess.run(
+        fill_cmd,
+        cwd=project_root,
+        env=os.environ.copy(),
+        check=True,
+    )
+    return candidate_count
 
 
 def build_finn_polylocation(points):
@@ -109,7 +189,7 @@ def run_eiendom_postprocess_and_store(
 
     project_name, _, _ = get_finn_scrape_config()
     print("\n" + "=" * 60)
-    print("FINN Post-processing data")
+    print("FINN Store base data")
     print("=" * 60)
     live_data = pd.read_csv(f'{project_name}/A_live.csv')
     donor_seed_df = db.get_travel_donor_seed()
@@ -118,17 +198,38 @@ def run_eiendom_postprocess_and_store(
         project_name,
         db,
         calculate_location_features=calculate_location_features,
-        calculate_google_directions=calculate_google_directions,
+        calculate_google_directions=False,
         donor_seed_df=donor_seed_df,
     )
 
-    print("\n" + "=" * 60)
-    print("FINN Store data in database")
-    print("=" * 60)
     inserted, updated = db.insert_or_update_eiendom(processed_data)
-
     active_finnkodes = [str(fk).strip() for fk in processed_data['Finnkode'].tolist()]
     db.mark_inactive('eiendom', active_finnkodes)
+
+    print(f"Inserted/Updated base rows: {inserted}/{updated}")
+
+    print("\n" + "=" * 60)
+    print("FINN Fill missing coordinates")
+    print("=" * 60)
+    _run_coords_fill_if_needed()
+
+    if calculate_google_directions:
+        print("\n" + "=" * 60)
+        print("FINN Post-processing travel data")
+        print("=" * 60)
+        donor_seed_df = db.get_travel_donor_seed()
+        processed_data = post_process_eiendom(
+            live_data,
+            project_name,
+            db,
+            calculate_location_features=calculate_location_features,
+            calculate_google_directions=True,
+            donor_seed_df=donor_seed_df,
+        )
+        inserted, updated = db.insert_or_update_eiendom(processed_data)
+        active_finnkodes = [str(fk).strip() for fk in processed_data['Finnkode'].tolist()]
+        db.mark_inactive('eiendom', active_finnkodes)
+        print(f"Inserted/Updated after travel pass: {inserted}/{updated}")
 
     print("\n" + "=" * 60)
     print("Database Statistics")

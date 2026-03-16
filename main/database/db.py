@@ -714,6 +714,8 @@ class PropertyDatabase:
         query = '''
             SELECT
                 e.finnkode as "Finnkode",
+                ep.lat as "LAT",
+                ep.lng as "LNG",
                 CASE
                     WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
                          AND ep_src.pendl_rush_brj IS NOT NULL
