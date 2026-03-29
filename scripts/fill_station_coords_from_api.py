@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Fill missing station LAT/LNG in the stations CSV using Google Geocoding API."""
+"""Fill missing station LAT/LNG using Google Geocoding API.
+
+By default reads candidates from the SQLite DB (source of truth) and writes
+results back there.  Pass --csv to fall back to the legacy CSV-only workflow.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-# Allow importing main.config when executed from the scripts folder.
+# Allow importing main.* when executed from the scripts folder.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -94,12 +98,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Fill missing station coordinates from Google Geocoding API")
     parser.add_argument(
         "--csv",
-        default="Systematiserte Finn-annonser - Stations (2).csv",
-        help="Path to stations CSV",
+        default=None,
+        help=(
+            "Legacy: path to stations CSV. When supplied, reads/writes that CSV "
+            "instead of the DB. Defaults to DB mode."
+        ),
     )
     parser.add_argument("--api-key", help="Override Google Maps API key")
     parser.add_argument("--rpm", type=float, default=60.0, help="Rate limit requests per minute")
-    parser.add_argument("--dry-run", action="store_true", help="Do not write CSV changes")
+    parser.add_argument("--dry-run", action="store_true", help="Do not persist any changes")
     parser.add_argument(
         "--report",
         default="tmp/stations_geocode_report.csv",
@@ -112,8 +119,66 @@ def main() -> int:
         print("Missing Google Maps API key. Use --api-key or set GOOGLE_MAPS_API_KEY.")
         return 1
 
-    csv_path = Path(args.csv)
     report_path = Path(args.report)
+    delay_sec = 60.0 / max(args.rpm, 1.0)
+
+    # ------------------------------------------------------------------ #
+    # DB mode (default)                                                    #
+    # ------------------------------------------------------------------ #
+    if args.csv is None:
+        from main.database.stations import StationDatabase
+
+        db = StationDatabase()
+        candidates_db = db.get_stations_missing_coords()
+        print(f"Missing station coordinates (DB): {len(candidates_db)}")
+
+        report_rows: List[Dict[str, str]] = []
+        updated = 0
+        failed = 0
+
+        for idx, (station_id, name) in enumerate(candidates_db, start=1):
+            lat = None
+            lng = None
+            final_status = "NO_RESULTS"
+            chosen_query = ""
+
+            for query in candidate_queries(name):
+                q_lat, q_lng, status = geocode_query(query, api_key)
+                chosen_query = query
+                final_status = status
+                if status == "OK" and q_lat is not None and q_lng is not None:
+                    lat, lng = q_lat, q_lng
+                    break
+                time.sleep(delay_sec)
+
+            if lat is not None and lng is not None:
+                updated += 1
+                report_rows.append({"Name": name, "Status": "OK", "Query": chosen_query})
+                print(f"[{idx}/{len(candidates_db)}] OK    {name} -> {lat:.6f}, {lng:.6f}")
+                if not args.dry_run:
+                    db.set_station_coords(name, lat, lng)
+            else:
+                failed += 1
+                report_rows.append({"Name": name, "Status": final_status, "Query": chosen_query})
+                print(f"[{idx}/{len(candidates_db)}] FAIL  {name} -> {final_status}")
+
+            time.sleep(delay_sec)
+
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        with report_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["Name", "Status", "Query"])
+            writer.writeheader()
+            writer.writerows(report_rows)
+
+        if args.dry_run:
+            print("Dry run complete. DB not modified.")
+        print(f"Updated: {updated} | Failed: {failed} | Report: {report_path}")
+        return 0
+
+    # ------------------------------------------------------------------ #
+    # Legacy CSV mode                                                      #
+    # ------------------------------------------------------------------ #
+    csv_path = Path(args.csv)
 
     if not csv_path.exists():
         print(f"Stations CSV not found: {csv_path}")
@@ -129,20 +194,18 @@ def main() -> int:
         print(f"CSV must contain headers: {sorted(required)}")
         return 1
 
-    delay_sec = 60.0 / max(args.rpm, 1.0)
-    report_rows: List[Dict[str, str]] = []
-
+    report_rows_csv: List[Dict[str, str]] = []
     candidates = [r for r in rows if not (str(r.get("LAT", "")).strip() and str(r.get("LNG", "")).strip())]
-    print(f"Missing station coordinates: {len(candidates)}")
+    print(f"Missing station coordinates (CSV): {len(candidates)}")
 
-    updated = 0
-    failed = 0
+    updated_csv = 0
+    failed_csv = 0
 
     for idx, row in enumerate(candidates, start=1):
         name = str(row.get("Name") or "").strip()
         if not name:
-            failed += 1
-            report_rows.append({"Name": "", "Status": "MISSING_NAME", "Query": ""})
+            failed_csv += 1
+            report_rows_csv.append({"Name": "", "Status": "MISSING_NAME", "Query": ""})
             continue
 
         lat = None
@@ -162,12 +225,12 @@ def main() -> int:
         if lat is not None and lng is not None:
             row["LAT"] = str(lat)
             row["LNG"] = str(lng)
-            updated += 1
-            report_rows.append({"Name": name, "Status": "OK", "Query": chosen_query})
+            updated_csv += 1
+            report_rows_csv.append({"Name": name, "Status": "OK", "Query": chosen_query})
             print(f"[{idx}/{len(candidates)}] OK    {name} -> {lat:.6f}, {lng:.6f}")
         else:
-            failed += 1
-            report_rows.append({"Name": name, "Status": final_status, "Query": chosen_query})
+            failed_csv += 1
+            report_rows_csv.append({"Name": name, "Status": final_status, "Query": chosen_query})
             print(f"[{idx}/{len(candidates)}] FAIL  {name} -> {final_status}")
 
         time.sleep(delay_sec)
@@ -176,7 +239,7 @@ def main() -> int:
     with report_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["Name", "Status", "Query"])
         writer.writeheader()
-        writer.writerows(report_rows)
+        writer.writerows(report_rows_csv)
 
     if args.dry_run:
         print("Dry run complete. CSV not modified.")
@@ -187,7 +250,7 @@ def main() -> int:
             writer.writerows(rows)
         print(f"Updated CSV: {csv_path}")
 
-    print(f"Updated: {updated} | Failed: {failed} | Report: {report_path}")
+    print(f"Updated: {updated_csv} | Failed: {failed_csv} | Report: {report_path}")
     return 0
 
 

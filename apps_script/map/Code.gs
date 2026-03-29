@@ -16,8 +16,10 @@ const HEADER_ALIASES = {
   'lng': 'LNG',
   'latitude': 'LAT',
   'longitude': 'LNG',
-  'to skoyen min': 'TO_SKOYEN_MIN',
-  'to_skoyen_min': 'TO_SKOYEN_MIN',
+  'to sandvika min': 'TO_SANDVIKA_MIN',
+  'to_sandvika_min': 'TO_SANDVIKA_MIN',
+  'to sandvika': 'TO_SANDVIKA_MIN',
+  'to_sandvika': 'TO_SANDVIKA_MIN',
   'pendl rush mvv uni rush': 'MVV UNI RUSH',
   'lines': 'Lines',
   'line': 'Lines',
@@ -607,7 +609,7 @@ function getStations_(sheet) {
   const idxRadius = headers.indexOf('RadiusM');
   const idxType = headers.indexOf('Type');
   const idxLines = headers.indexOf('Lines');
-  const idxToSkoyen = headers.indexOf('TO_SKOYEN_MIN');
+  const idxToSandvika = headers.indexOf('TO_SANDVIKA_MIN');
 
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -627,7 +629,7 @@ function getStations_(sheet) {
       RadiusM: radiusValue != null && radiusValue > 0 ? radiusValue : null,
       Type: idxType >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxType])) : 'train',
       Lines: idxLines >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxLines])) : '',
-      TO_SKOYEN_MIN: idxToSkoyen >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxToSkoyen])) : '',
+      TO_SANDVIKA_MIN: idxToSandvika >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxToSandvika])) : '',
     });
   }
 

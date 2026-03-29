@@ -29,18 +29,26 @@ The sync safeguard prevents DB update sync from overwriting sheet-only columns i
    - `LNG`
    - `RadiusM`
    - `Type`
-  - `Lines` (optional, comma-separated line IDs like `L1, R14, RE11`)
+   - `Lines` (optional, comma-separated line IDs like `L1, R14, RE11`)
+   - Travel time columns (optional):
+     - `to skoyen min` (or `to_skoyen_min`, `TO_SKOYEN_MIN`)
+     - `to sandvika min` (or `to_sandvika_min`, `TO_SANDVIKA_MIN`, `to sandvika`, `to_sandvika`)
+
+   Column names are case-insensitive and support common aliases (e.g., `Latitude` = `LAT`, `lines` = `Lines`).
+
 4. Add train stations (example rows):
-  - `Oslo S`, `59.9109`, `10.7531`, `1200`, `train`, `L1, L2, R10, R11, R12, R13, R14, R21, RE11`
-  - `Nationaltheatret`, `59.9146`, `10.7303`, `900`, `train`, `L1, L2, R10, R11, R12, R14, RE11`
-  - `Skoyen`, `59.9226`, `10.6795`, `900`, `train`, `L1, L2, R10, R11, R12, R14, RE11`
+  - `Oslo S`, `59.9109`, `10.7531`, `1200`, `train`, `L1, L2, R10, R11, R12, R13, R14, R21, RE11`, `15`, `25`
+  - `Nationaltheatret`, `59.9146`, `10.7303`, `900`, `train`, `L1, L2, R10, R11, R12, R14, RE11`, `10`, `20`
+  - `Skoyen`, `59.9226`, `10.6795`, `900`, `train`, `L1, L2, R10, R11, R12, R14, RE11`, `5`, `10`
 
 Notes:
-- `RadiusM` controls immediate vicinity for that station.
-- `Lines` enables line-specific station toggles/colors in the map sidebar.
+- `RadiusM` controls immediate vicinity for that station and the default radius shown on the map when Station Radius Overlays is enabled.
+- `Lines` enables line-specific station toggles/colors in the map sidebar; if omitted, defaults to `UNASSIGNED`.
 - If a station has multiple lines, the map creates one station overlay per line.
-- Disabling a line hides that line's station overlays and removes it from `Only near station` filtering.
+- Travel time columns (`to skoyen min`, `to sandvika min`, etc.) enable filtering stations by max travel time in the sidebar.
+- When a travel time filter is enabled in the sidebar, stations with missing values are excluded from display.
 - Listings inside station radius are highlighted on the map.
+- New in UI: Separate "Show stations" toggle to control all station visuals independent of proximity filtering.
 
 ## 3. Keep repo sync workflow as-is
 
@@ -146,6 +154,14 @@ This reports listings still missing DB coordinates.
 - Plots listings and station overlays with radius circles.
 - Highlights listings in immediate station vicinity.
 - Does not geocode in browser and does not write coordinates from map UI.
+- **Station controls** (new):
+  - Show/hide all station visuals (independent toggle)
+  - Show/hide proximity radius overlays for stations
+  - Adjust station opacity
+  - Include station names as labels on the map
+  - Filter stations by max commute time to **Skoyen** (+ other transit destinations if available in Stations sheet)
+  - Adjust default station radius
+  - Customize station line colors and visibility per line
 - Listing popup:
   - Clickable `Open FINN ad` link (`URL` column)
   - Clickable `Open Google Maps` link (`GOOGLE_MAPS_URL`)
@@ -153,6 +169,8 @@ This reports listings still missing DB coordinates.
 - Missing coordinate visibility:
   - Sidebar shows visible rows that are missing `LAT/LNG`
   - `make coords-missing` reports missing coordinates directly from DB
+- Map boundary:
+  - Show/hide FINN search boundary polygon (moved from Station controls to Data Sources)
 
 ## 9. Important implementation notes
 
