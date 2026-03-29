@@ -186,7 +186,14 @@ full:
 	@$(PYTHON) main/sync/update_rows_in_sheet.py
 	@echo ""
 	@echo "== [7/7] Refresh stale open =="
-	@$(MAKE) refresh-stale-open
+	@printf "Refresh stale open listings? [y/N]: "; \
+	read ans; \
+	case "$$ans" in \
+		y|Y|yes|YES) \
+			$(MAKE) refresh-stale-open;; \
+		*) \
+			echo "Skipped refresh stale open";; \
+	esac
 
 full-no-scrape:
 	# 1) FINN extraction
@@ -228,7 +235,14 @@ full-no-scrape:
 	@$(PYTHON) main/sync/update_rows_in_sheet.py
 	@echo ""
 	@echo "== [5/5] Refresh stale open =="
-	@$(MAKE) refresh-stale-open
+	@printf "Refresh stale open listings? [y/N]: "; \
+	read ans; \
+	case "$$ans" in \
+		y|Y|yes|YES) \
+			$(MAKE) refresh-stale-open;; \
+		*) \
+			echo "Skipped refresh stale open";; \
+	esac
 
 refresh:
 	$(PYTHON) main/sync/refresh_listings.py

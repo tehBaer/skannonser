@@ -23,7 +23,7 @@ Set to None to disable BRA-i filtering.
 
 SHEETS_MAX_PRICE = 7500000
 URL_MAX_PRICE = 7500000
-MIN_BRA_I = 50
+MIN_BRA_I = 70
 INCLUDE_UNLISTED = True
 
 

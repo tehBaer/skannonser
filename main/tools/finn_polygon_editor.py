@@ -3,7 +3,7 @@
 
 This generates a local HTML file with a Leaflet map where you can:
 - Drag vertices
-- Add vertices by clicking the map
+- Add a vertex only when explicitly armed (next click)
 - Remove a vertex with right-click
 - Copy updated polylocation / full FINN URL / Python tuple list
 
@@ -150,7 +150,11 @@ def build_html(url_base: str, points: list[tuple[float, float]]) -> str:
     <div class=\"layout\">
       <aside class=\"panel\">
         <h1>FINN Polygon Editor</h1>
-        <p class=\"hint\">Drag points to tweak. Click map to add point at end. Right-click a point to remove it (min 3).</p>
+        <p class=\"hint\">Drag points to tweak. Right-click a point to remove it (min 3). Use \"Add vertex on next click\" before clicking the map to append a point.</p>
+
+        <div class=\"row\">
+          <div class=\"btns\"><button id=\"arm-add\">Add vertex on next click</button></div>
+        </div>
 
         <div class=\"row\">
           <label class=\"label\">Vertex count</label>
@@ -193,6 +197,16 @@ def build_html(url_base: str, points: list[tuple[float, float]]) -> str:
 
       let polygonLayer = null;
       let markerLayer = null;
+      let addVertexArmed = false;
+      let isDraggingPoint = false;
+
+      function lockMapDrag() {{
+        map.dragging.disable();
+      }}
+
+      function unlockMapDrag() {{
+        map.dragging.enable();
+      }}
 
       function formatPythonPoints() {{
         const rows = points.map(([lat, lng]) => `    (${{lng.toFixed(12)}}, ${{lat.toFixed(12)}}),`);
@@ -225,12 +239,27 @@ def build_html(url_base: str, points: list[tuple[float, float]]) -> str:
         document.getElementById('python-points').value = formatPythonPoints();
       }}
 
-      function render() {{
+      function setAddButtonState() {{
+        const btn = document.getElementById('arm-add');
+        btn.textContent = addVertexArmed ? 'Cancel add vertex' : 'Add vertex on next click';
+        btn.style.background = addVertexArmed ? '#dbeafe' : '#fff';
+        btn.style.borderColor = addVertexArmed ? '#2563eb' : '#94a3b8';
+      }}
+
+      function render(shouldFit = false) {{
         if (polygonLayer) map.removeLayer(polygonLayer);
         if (markerLayer) map.removeLayer(markerLayer);
 
         polygonLayer = L.polygon(points, {{ color: '#2563eb', weight: 3, fillOpacity: 0.1 }}).addTo(map);
         markerLayer = L.layerGroup().addTo(map);
+
+        // If a user grabs an edge/line segment, keep the map fixed during the drag gesture.
+        polygonLayer.on('mousedown', (ev) => {{
+          if (ev.originalEvent && ev.originalEvent.button === 0) {{
+            lockMapDrag();
+          }}
+        }});
+        polygonLayer.on('mouseup', () => unlockMapDrag());
 
         points.forEach((pt, idx) => {{
           const marker = L.circleMarker(pt, {{
@@ -243,9 +272,6 @@ def build_html(url_base: str, points: list[tuple[float, float]]) -> str:
 
           marker.bindTooltip(String(idx + 1), {{ permanent: true, direction: 'top', offset: [0, -8] }});
 
-          marker.on('mousedown', () => map.dragging.disable());
-          marker.on('mouseup', () => map.dragging.enable());
-
           marker.on('contextmenu', (e) => {{
             e.originalEvent.preventDefault();
             if (points.length <= 3) {{
@@ -257,19 +283,25 @@ def build_html(url_base: str, points: list[tuple[float, float]]) -> str:
           }});
 
           marker.on('mousedown', (ev) => {{
+            if (ev.originalEvent) {{
+              L.DomEvent.stopPropagation(ev.originalEvent);
+            }}
+            isDraggingPoint = true;
+            lockMapDrag();
             const start = ev.latlng;
             const startPoint = points[idx].slice();
 
             function onMove(moveEv) {{
               const ll = moveEv.latlng;
               points[idx] = [ll.lat, ll.lng];
-              render();
+              render(false);
             }}
 
             function onUp() {{
               map.off('mousemove', onMove);
               map.off('mouseup', onUp);
-              map.dragging.enable();
+              unlockMapDrag();
+              isDraggingPoint = false;
               if (start.lat !== startPoint[0] || start.lng !== startPoint[1]) {{
                 setStatus(`Moved point ${{idx + 1}}.`);
               }}
@@ -280,7 +312,7 @@ def build_html(url_base: str, points: list[tuple[float, float]]) -> str:
           }});
         }});
 
-        if (points.length > 0) {{
+        if (shouldFit && points.length > 0) {{
           map.fitBounds(polygonLayer.getBounds(), {{ padding: [30, 30] }});
         }}
 
@@ -305,16 +337,38 @@ def build_html(url_base: str, points: list[tuple[float, float]]) -> str:
       }}
 
       map.on('click', (e) => {{
+        if (isDraggingPoint) {{
+          return;
+        }}
+        if (!addVertexArmed) {{
+          return;
+        }}
         points.push([e.latlng.lat, e.latlng.lng]);
+        addVertexArmed = false;
+        setAddButtonState();
         setStatus('Added new vertex at end.');
         render();
+      }});
+
+      document.getElementById('arm-add').addEventListener('click', () => {{
+        addVertexArmed = !addVertexArmed;
+        setAddButtonState();
+        setStatus(addVertexArmed ? 'Click the map once to add a new vertex.' : 'Add vertex canceled.');
       }});
 
       document.getElementById('copy-polylocation').addEventListener('click', () => copyFromTextarea('polylocation', 'Copied polylocation.'));
       document.getElementById('copy-url').addEventListener('click', () => copyFromTextarea('full-url', 'Copied URL.'));
       document.getElementById('copy-python').addEventListener('click', () => copyFromTextarea('python-points', 'Copied Python points.'));
 
-      render();
+      // Fallback unlock when mouse is released outside map layers.
+      document.addEventListener('mouseup', () => {{
+        if (!isDraggingPoint) {{
+          unlockMapDrag();
+        }}
+      }});
+
+      setAddButtonState();
+      render(true);
     </script>
   </body>
 </html>
@@ -387,7 +441,8 @@ def main() -> int:
     print(f"Wrote editor: {out_file}")
     print(f"Preview URL (from current points):\n{preview_url}\n")
     print("How to use:")
-    print("1. Drag points on the map. Click map to add vertex. Right-click a point to remove.")
+    print("1. Drag points on the map. Right-click a point to remove.")
+    print("   Use 'Add vertex on next click', then click map once to append a vertex.")
     print("2. Copy either 'Full FINN URL' or 'Python finn_polygon_points snippet'.")
     print("3. Paste back into main/runners/run_eiendom_db.py and run your scraper.")
 
