@@ -17,6 +17,8 @@ const HEADER_ALIASES = {
   'latitude': 'LAT',
   'longitude': 'LNG',
   'pendl rush mvv uni rush': 'MVV UNI RUSH',
+  'lines': 'Lines',
+  'line': 'Lines',
 };
 const NORWAY_BOUNDS = {
   minLat: 57,
@@ -602,6 +604,7 @@ function getStations_(sheet) {
   const idxLng = headers.indexOf('LNG');
   const idxRadius = headers.indexOf('RadiusM');
   const idxType = headers.indexOf('Type');
+  const idxLines = headers.indexOf('Lines');
 
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -620,6 +623,7 @@ function getStations_(sheet) {
       LNG: lng,
       RadiusM: radiusValue != null && radiusValue > 0 ? radiusValue : null,
       Type: idxType >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxType])) : 'train',
+      Lines: idxLines >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxLines])) : '',
     });
   }
 

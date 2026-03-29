@@ -29,13 +29,17 @@ The sync safeguard prevents DB update sync from overwriting sheet-only columns i
    - `LNG`
    - `RadiusM`
    - `Type`
+  - `Lines` (optional, comma-separated line IDs like `L1, R14, RE11`)
 4. Add train stations (example rows):
-   - `Oslo S`, `59.9109`, `10.7531`, `1200`, `train`
-   - `Nationaltheatret`, `59.9146`, `10.7303`, `900`, `train`
-   - `Skoyen`, `59.9226`, `10.6795`, `900`, `train`
+  - `Oslo S`, `59.9109`, `10.7531`, `1200`, `train`, `L1, L2, R10, R11, R12, R13, R14, R21, RE11`
+  - `Nationaltheatret`, `59.9146`, `10.7303`, `900`, `train`, `L1, L2, R10, R11, R12, R14, RE11`
+  - `Skoyen`, `59.9226`, `10.6795`, `900`, `train`, `L1, L2, R10, R11, R12, R14, RE11`
 
 Notes:
 - `RadiusM` controls immediate vicinity for that station.
+- `Lines` enables line-specific station toggles/colors in the map sidebar.
+- If a station has multiple lines, the map creates one station overlay per line.
+- Disabling a line hides that line's station overlays and removes it from `Only near station` filtering.
 - Listings inside station radius are highlighted on the map.
 
 ## 3. Keep repo sync workflow as-is
