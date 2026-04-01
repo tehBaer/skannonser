@@ -782,9 +782,21 @@ class PropertyDatabase:
     def get_stale_eiendom_for_status_refresh(self, require_url: bool = True) -> pd.DataFrame:
         """Get inactive listings (active=0) for FINN status refresh checks.
 
+        Uses the same preference scope as sheet-visible listings by applying
+        optional SHEETS_MAX_PRICE and MIN_BRA_I filters when configured.
+
         Args:
             require_url: If True, only include rows with a non-empty URL.
         """
+        try:
+            from main.config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+        except ImportError:
+            try:
+                from config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+            except ImportError:
+                SHEETS_MAX_PRICE = None
+                MIN_BRA_I = None
+
         conn = self.get_connection()
         query = '''
             SELECT
@@ -798,12 +810,22 @@ class PropertyDatabase:
             WHERE e.active = 0
         '''
 
+        params = []
+
         if require_url:
             query += " AND e.url IS NOT NULL AND TRIM(e.url) != ''"
 
+        if SHEETS_MAX_PRICE is not None:
+            query += " AND e.pris <= ?"
+            params.append(SHEETS_MAX_PRICE)
+
+        if MIN_BRA_I is not None:
+            query += " AND CAST(e.info_usable_i_area AS REAL) >= ?"
+            params.append(MIN_BRA_I)
+
         query += " ORDER BY e.scraped_at DESC"
 
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         return df
 

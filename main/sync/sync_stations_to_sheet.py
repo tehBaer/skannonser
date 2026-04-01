@@ -51,15 +51,24 @@ def sync_stations_to_sheet(
     Returns True on success, False on failure.
     """
     db = StationDatabase()
-    export_rows = db.get_all_for_export(destination=destination)
+    destination_key = _destination_column_name(destination)
+    extra_destinations: List[str] = []
+    if destination_key == "TO_SANDVIKA":
+        extra_destinations.append("Sandvika Transfer")
+
+    export_rows = db.get_all_for_export(
+        destination=destination,
+        extra_destinations=extra_destinations,
+    )
 
     if not export_rows:
         print("No station data in DB; Stations sheet not updated.")
         return True  # Not an error — DB may simply be empty
 
-    # Deterministic row-per-line schema with one destination travel column.
+    # Deterministic row-per-line schema with destination travel columns.
     travel_col = _destination_column_name(destination)
-    headers = ["Name", "LAT", "LNG", "Line", travel_col]
+    transfer_cols = [_destination_column_name(dest) for dest in extra_destinations]
+    headers = ["Name", "LAT", "LNG", "Line", travel_col, *transfer_cols]
 
     # Build 2-D list of values (header row + data rows)
     data: List[List[Any]] = [headers]

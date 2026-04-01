@@ -20,6 +20,14 @@ const HEADER_ALIASES = {
   'to_sandvika_min': 'TO_SANDVIKA_MIN',
   'to sandvika': 'TO_SANDVIKA_MIN',
   'to_sandvika': 'TO_SANDVIKA_MIN',
+  'to oslo s min': 'TO_OSLO_S_MIN',
+  'to_oslo_s_min': 'TO_OSLO_S_MIN',
+  'to oslo s': 'TO_OSLO_S_MIN',
+  'to_oslo_s': 'TO_OSLO_S_MIN',
+  'to oslo min': 'TO_OSLO_MIN',
+  'to_oslo_min': 'TO_OSLO_MIN',
+  'to oslo': 'TO_OSLO_MIN',
+  'to_oslo': 'TO_OSLO_MIN',
   'pendl rush mvv uni rush': 'MVV UNI RUSH',
   'lines': 'Lines',
   'line': 'Lines',
@@ -610,6 +618,14 @@ function getStations_(sheet) {
   const idxType = headers.indexOf('Type');
   const idxLines = headers.indexOf('Lines');
   const idxToSandvika = headers.indexOf('TO_SANDVIKA_MIN');
+  const idxToSandvikaAlt = idxToSandvika >= 0 ? idxToSandvika : headers.indexOf('TO_SANDVIKA');
+  const idxToOsloSMin = headers.indexOf('TO_OSLO_S_MIN');
+  const idxToOsloSAlt = idxToOsloSMin >= 0 ? idxToOsloSMin : headers.indexOf('TO_OSLO_S');
+  const idxToOsloMin = headers.indexOf('TO_OSLO_MIN');
+  const idxToOsloAlt = idxToOsloMin >= 0 ? idxToOsloMin : headers.indexOf('TO_OSLO');
+  const travelHeaderNames = headers.filter(function(h) {
+    return /^TO_[A-Z0-9_]+$/.test(String(h || ''));
+  });
 
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -622,15 +638,28 @@ function getStations_(sheet) {
 
     const radiusValue = idxRadius >= 0 ? toNumberOrNull_(row[idxRadius]) : null;
 
-    out.push({
+    const station = {
       Name: idxName >= 0 ? valueOrEmpty_(row[idxName]) : 'Station',
       LAT: lat,
       LNG: lng,
       RadiusM: radiusValue != null && radiusValue > 0 ? radiusValue : null,
       Type: idxType >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxType])) : 'train',
       Lines: idxLines >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxLines])) : '',
-      TO_SANDVIKA_MIN: idxToSandvika >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxToSandvika])) : '',
-    });
+      TO_SANDVIKA_MIN: idxToSandvikaAlt >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxToSandvikaAlt])) : '',
+      TO_OSLO_S_MIN: idxToOsloSAlt >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxToOsloSAlt])) : '',
+      TO_OSLO_MIN: idxToOsloAlt >= 0 ? sanitizeForClientValue_(valueOrEmpty_(row[idxToOsloAlt])) : '',
+    };
+
+    for (let t = 0; t < travelHeaderNames.length; t++) {
+      const fieldName = travelHeaderNames[t];
+      const idxField = headers.indexOf(fieldName);
+      if (idxField < 0) {
+        continue;
+      }
+      station[fieldName] = sanitizeForClientValue_(valueOrEmpty_(row[idxField]));
+    }
+
+    out.push(station);
   }
 
   return out;

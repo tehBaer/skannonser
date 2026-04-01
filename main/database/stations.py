@@ -30,6 +30,15 @@ def _destination_column_name(destination: str) -> str:
     return f"TO_{text or 'DESTINATION'}"
 
 
+def _destination_key(destination: str) -> str:
+    text = " ".join((destination or "").strip().split())
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.casefold()
+    text = re.sub(r"[^a-z0-9]+", "", text)
+    return text
+
+
 class StationDatabase:
     """CRUD for the stations / station_lines / station_travel tables."""
 
@@ -176,6 +185,143 @@ class StationDatabase:
         conn.commit()
         conn.close()
 
+    def count_station_travel_for_destination(self, destination: str) -> int:
+        """Count station_travel rows for a destination (case/spacing-insensitive)."""
+        key = _destination_key(destination)
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute("SELECT destination FROM station_travel")
+        n = 0
+        for row in cur.fetchall():
+            if _destination_key(row["destination"]) == key:
+                n += 1
+        conn.close()
+        return n
+
+    def delete_station_travel_for_destination(self, destination: str) -> int:
+        """Delete station_travel rows for a destination (case/spacing-insensitive)."""
+        key = _destination_key(destination)
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute("SELECT id, destination FROM station_travel")
+        ids = [row["id"] for row in cur.fetchall() if _destination_key(row["destination"]) == key]
+        if not ids:
+            conn.close()
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        cur.execute(f"DELETE FROM station_travel WHERE id IN ({placeholders})", ids)
+        conn.commit()
+        conn.close()
+        return len(ids)
+
+    def backfill_transfer_destination(
+        self,
+        from_destination: str,
+        via_station_name: str,
+        to_destination: str,
+        transfer_destination: str,
+        overwrite: bool = False,
+    ) -> Dict[str, int]:
+        """
+        Fill transfer destination minutes per station_line using:
+        station->from_destination + via_station(from same line)->to_destination.
+        """
+        conn = self._connect()
+        cur = conn.cursor()
+
+        # Resolve via station id by normalized name.
+        cur.execute("SELECT id, name FROM stations")
+        via_station_id = None
+        via_key = _destination_key(via_station_name)
+        for row in cur.fetchall():
+            if _destination_key(row["name"]) == via_key:
+                via_station_id = row["id"]
+                break
+
+        if via_station_id is None:
+            conn.close()
+            raise ValueError(f"Via station not found: {via_station_name}")
+
+        # Build line->minutes map for via station to destination.
+        cur.execute(
+            """
+            SELECT sl.line, st.minutes
+            FROM station_lines sl
+            JOIN station_travel st
+              ON st.station_line_id = sl.id
+            WHERE sl.station_id = ?
+              AND st.destination = ?
+              AND st.minutes IS NOT NULL
+            """,
+            (via_station_id, to_destination),
+        )
+        via_line_minutes: Dict[str, int] = {}
+        for row in cur.fetchall():
+            via_line_minutes[row["line"]] = int(row["minutes"])
+
+        if not via_line_minutes:
+            conn.close()
+            return {"updated": 0, "skipped_missing_via_leg": 0, "skipped_existing": 0}
+
+        cur.execute(
+            """
+            SELECT
+                sl.id AS station_line_id,
+                sl.line AS line,
+                st_from.minutes AS from_minutes,
+                st_transfer.minutes AS existing_transfer
+            FROM station_lines sl
+            LEFT JOIN station_travel st_from
+              ON st_from.station_line_id = sl.id
+             AND st_from.destination = ?
+            LEFT JOIN station_travel st_transfer
+              ON st_transfer.station_line_id = sl.id
+             AND st_transfer.destination = ?
+            """,
+            (from_destination, transfer_destination),
+        )
+
+        updated = 0
+        skipped_missing_via_leg = 0
+        skipped_existing = 0
+
+        for row in cur.fetchall():
+            station_line_id = row["station_line_id"]
+            line = row["line"]
+            from_minutes = row["from_minutes"]
+            existing_transfer = row["existing_transfer"]
+
+            if from_minutes is None:
+                continue
+            if line not in via_line_minutes:
+                skipped_missing_via_leg += 1
+                continue
+            if existing_transfer is not None and not overwrite:
+                skipped_existing += 1
+                continue
+
+            transfer_minutes = int(from_minutes) + int(via_line_minutes[line])
+            cur.execute(
+                """
+                INSERT INTO station_travel (station_line_id, destination, minutes, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(station_line_id, destination) DO UPDATE SET
+                    minutes    = excluded.minutes,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (station_line_id, transfer_destination, transfer_minutes),
+            )
+            updated += 1
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "updated": updated,
+            "skipped_missing_via_leg": skipped_missing_via_leg,
+            "skipped_existing": skipped_existing,
+        }
+
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------
@@ -244,50 +390,78 @@ class StationDatabase:
         conn.close()
         return result
 
-    def get_all_for_export(self, destination: str = "Sandvika") -> List[Dict[str, Any]]:
+    def get_all_for_export(
+        self,
+        destination: str = "Sandvika",
+        extra_destinations: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Return a flat list of dicts suitable for writing to the Stations sheet.
 
-        Columns: Name, LAT, LNG, Line, TO_<DESTINATION>
+        Columns: Name, LAT, LNG, Line, TO_<DESTINATION>, TO_<EXTRA_DESTINATION>...
 
         One row is returned per (station, line) tuple.
         """
+        destinations: List[str] = [destination]
+        for extra in extra_destinations or []:
+            if not extra:
+                continue
+            if extra not in destinations:
+                destinations.append(extra)
+
         conn = self._connect()
         cur = conn.cursor()
-        travel_col = _destination_column_name(destination)
 
         cur.execute(
             """
             SELECT
+                sl.id AS station_line_id,
                 s.name AS station_name,
                 s.lat AS lat,
                 s.lng AS lng,
-                sl.line AS line,
-                st.minutes AS minutes
+                sl.line AS line
             FROM station_lines sl
             JOIN stations s
               ON s.id = sl.station_id
-            LEFT JOIN station_travel st
-              ON st.station_line_id = sl.id
-             AND st.destination = ?
             ORDER BY s.name, sl.line
             """,
-            (destination,),
         )
-        rows = cur.fetchall()
+        line_rows = cur.fetchall()
+
+        line_ids = [int(r["station_line_id"]) for r in line_rows]
+        travel_by_line_and_destination: Dict[Tuple[int, str], Optional[int]] = {}
+        if line_ids:
+            placeholders = ",".join("?" for _ in line_ids)
+            cur.execute(
+                f"""
+                SELECT station_line_id, destination, minutes
+                FROM station_travel
+                WHERE station_line_id IN ({placeholders})
+                """,
+                line_ids,
+            )
+            for row in cur.fetchall():
+                travel_by_line_and_destination[(
+                    int(row["station_line_id"]),
+                    str(row["destination"]),
+                )] = row["minutes"]
+
         conn.close()
 
         export_rows: List[Dict[str, Any]] = []
-        for r in rows:
-            export_rows.append(
-                {
-                    "Name": r["station_name"],
-                    "LAT": r["lat"] if r["lat"] is not None else "",
-                    "LNG": r["lng"] if r["lng"] is not None else "",
-                    "Line": r["line"],
-                    travel_col: r["minutes"] if r["minutes"] is not None else "",
-                }
-            )
+        for r in line_rows:
+            row: Dict[str, Any] = {
+                "Name": r["station_name"],
+                "LAT": r["lat"] if r["lat"] is not None else "",
+                "LNG": r["lng"] if r["lng"] is not None else "",
+                "Line": r["line"],
+            }
+            station_line_id = int(r["station_line_id"])
+            for dest in destinations:
+                travel_col = _destination_column_name(dest)
+                minutes = travel_by_line_and_destination.get((station_line_id, dest))
+                row[travel_col] = minutes if minutes is not None else ""
+            export_rows.append(row)
 
         return export_rows
 

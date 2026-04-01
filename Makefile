@@ -23,7 +23,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets travel brj mvv mvv-uni-rush dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun populate-travel-from-donors populate-travel-from-donors-dryrun check-donor-chains check-donor-chains-strict repair-donor-chains repair-donor-chains-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-url map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious station-travel station-travel-dryrun stations-pull
+.PHONY: help sheets travel brj mvv mvv-uni-rush dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun populate-travel-from-donors populate-travel-from-donors-dryrun check-donor-chains check-donor-chains-strict repair-donor-chains repair-donor-chains-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-url map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious station-travel station-travel-dryrun station-transfer-backfill stations-pull
 
 help:
 	@echo "Available targets:"
@@ -53,7 +53,7 @@ help:
 
 	@echo "  make refresh  - Re-download listing pages and refresh statuses"
 	@echo "  make refresh-inactive - Re-download only listings with active=0"
-	@echo "  make refresh-stale-open - Re-download active=0 listings except Tilgjengelighet=Solgt/Inaktiv"
+	@echo "  make refresh-stale-open - Re-download active=0 listings except Tilgjengelighet=Solgt/Inaktiv (within SHEETS_MAX_PRICE/MIN_BRA_I)"
 	@echo "  make coords-count - Count coordinate geocode candidates (no API calls)"
 	@echo "  make coords-missing - Report listings missing LAT/LNG in DB"
 	@echo "  make validate-travel - Flag suspicious stored travel values without API calls"
@@ -87,6 +87,7 @@ help:
 	@echo "                     Optional: STATION_DEST=Sandvika STATION_COLUMN=TO_SANDVIKA STATION_SHEET=Stations"
 	@echo "                     Optional: STATION_PER_LINE=1 writes line columns named L1/R21/RE10 etc (default enabled)"
 	@echo "  make station-travel-dryrun - Same computation without CSV/sheet writes"
+	@echo "  make station-transfer-backfill - Optional legacy destination cleanup + backfill TO_SANDVIKA_TRANSFER via Oslo S"
 	@echo "  make stations-pull - Pull Google Sheets 'Stations' tab into DB (source of truth)"
 	@echo "                     Optional: STATION_SHEET=Stations STATION_DEST=Sandvika"
   
@@ -122,6 +123,9 @@ station-travel-dryrun:
 		$(if $(STATION_LINE_PDF_LIST),--line-pdf-list-file "$(STATION_LINE_PDF_LIST)",) \
 		$(foreach m,$(STATION_LINE_PDFS),--line-pdf "$(m)") \
 		$(foreach u,$(STATION_PDF_URLS),--pdf-url "$(u)")
+
+station-transfer-backfill:
+	$(PYTHON) scripts/backfill_station_transfer.py --stations-sheet "$(STATION_SHEET)"
 
 stations-pull:
 	$(PYTHON) scripts/sync_stations_from_sheet.py \
