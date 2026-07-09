@@ -144,6 +144,7 @@ def refresh_all_listings(
             
             # Update database
             db.update_eiendom_status(finnkode, new_status)
+            db.record_status_change_if_changed(finnkode, old_norm, new_norm)
             updated_count += 1
             
             # Check if status changed

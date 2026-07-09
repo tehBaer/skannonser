@@ -295,7 +295,19 @@ class PropertyDatabase:
                 cursor.execute(f"ALTER TABLE manual_overrides ADD COLUMN {column_name} {column_type}")
         
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_manual_overrides_finnkode ON manual_overrides(finnkode)')
-        
+
+        # Append-only log of status changes, for later time-series analysis.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS eiendom_status_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finnkode TEXT NOT NULL,
+                old_status TEXT,
+                new_status TEXT,
+                observed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status_history_finnkode ON eiendom_status_history(finnkode)')
+
         conn.commit()
         conn.close()
 
@@ -605,10 +617,50 @@ class PropertyDatabase:
             SET tilgjengelighet = ?, updated_at = CURRENT_TIMESTAMP
             WHERE finnkode = ?
         ''', (new_status, finnkode))
-        
+
         conn.commit()
         conn.close()
-    
+
+    def record_status_change_if_changed(self, finnkode: str, old_status, new_status) -> bool:
+        """Append a row to eiendom_status_history when the status actually changed.
+
+        Statuses are compared after stripping whitespace. Returns True when a
+        history row was written, False when the status was unchanged.
+        """
+        old_norm = str(old_status or "").strip()
+        new_norm = str(new_status or "").strip()
+        if old_norm == new_norm:
+            return False
+        conn = self.get_connection()
+        try:
+            conn.execute(
+                'INSERT INTO eiendom_status_history (finnkode, old_status, new_status) '
+                'VALUES (?, ?, ?)',
+                (str(finnkode).strip(), old_norm, new_norm),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+
+    def get_status_history(self, finnkode: str):
+        """Return the status-change history for a finnkode as a list of dicts, oldest first."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT finnkode, old_status, new_status, observed_at '
+                'FROM eiendom_status_history WHERE finnkode = ? ORDER BY id',
+                (str(finnkode).strip(),),
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+        return [
+            {"finnkode": r[0], "old_status": r[1], "new_status": r[2], "observed_at": r[3]}
+            for r in rows
+        ]
+
     def get_eiendom_for_sheets(self) -> pd.DataFrame:
         """Get property listings formatted for Google Sheets export (includes all listings: active, unlisted/inactive, and sold)."""
         conn = self.get_connection()
