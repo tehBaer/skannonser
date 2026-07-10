@@ -308,6 +308,22 @@ class PropertyDatabase:
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_status_history_finnkode ON eiendom_status_history(finnkode)')
 
+        # Notification support: daily active-set snapshot + per-day metrics.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS daily_listing_snapshot (
+                finnkode TEXT PRIMARY KEY
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS daily_metrics (
+                metric_date TEXT PRIMARY KEY,
+                added INTEGER NOT NULL DEFAULT 0,
+                removed_sold INTEGER NOT NULL DEFAULT 0,
+                removed_delisted INTEGER NOT NULL DEFAULT 0,
+                total_active INTEGER NOT NULL DEFAULT 0
+            )
+        ''')
+
         conn.commit()
         conn.close()
 
@@ -660,6 +676,114 @@ class PropertyDatabase:
             {"finnkode": r[0], "old_status": r[1], "new_status": r[2], "observed_at": r[3]}
             for r in rows
         ]
+
+    def _sheet_filters(self):
+        try:
+            from main.config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+        except ImportError:
+            try:
+                from config.filters import SHEETS_MAX_PRICE, MIN_BRA_I
+            except ImportError:
+                SHEETS_MAX_PRICE, MIN_BRA_I = None, None
+        return SHEETS_MAX_PRICE, MIN_BRA_I
+
+    def get_active_tracked_finnkodes(self) -> set:
+        """Active listings passing the sheet price/area filters (the tracked set)."""
+        max_price, min_brai = self._sheet_filters()
+        query = "SELECT finnkode FROM eiendom WHERE active = 1"
+        params = []
+        if max_price is not None:
+            query += " AND pris <= ?"
+            params.append(max_price)
+        if min_brai is not None:
+            query += " AND CAST(info_usable_i_area AS REAL) >= ?"
+            params.append(min_brai)
+        conn = self.get_connection()
+        try:
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+        return {str(r[0]).strip() for r in rows}
+
+    def get_finnkodes_with_status(self, finnkodes, status: str) -> set:
+        """Subset of finnkodes whose current tilgjengelighet == status."""
+        fk = [str(f).strip() for f in finnkodes]
+        if not fk:
+            return set()
+        conn = self.get_connection()
+        try:
+            result = set()
+            for i in range(0, len(fk), 500):
+                chunk = fk[i:i + 500]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT finnkode FROM eiendom WHERE tilgjengelighet = ? "
+                    f"AND finnkode IN ({placeholders})",
+                    [status, *chunk],
+                ).fetchall()
+                result.update(str(r[0]).strip() for r in rows)
+            return result
+        finally:
+            conn.close()
+
+    def get_previous_active_snapshot(self) -> set:
+        conn = self.get_connection()
+        try:
+            rows = conn.execute("SELECT finnkode FROM daily_listing_snapshot").fetchall()
+        finally:
+            conn.close()
+        return {str(r[0]).strip() for r in rows}
+
+    def replace_active_snapshot(self, finnkodes) -> None:
+        conn = self.get_connection()
+        try:
+            conn.execute("DELETE FROM daily_listing_snapshot")
+            conn.executemany(
+                "INSERT OR IGNORE INTO daily_listing_snapshot (finnkode) VALUES (?)",
+                [(str(f).strip(),) for f in finnkodes],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def record_daily_metrics(self, metric_date, added, removed_sold, removed_delisted, total_active) -> None:
+        conn = self.get_connection()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO daily_metrics "
+                "(metric_date, added, removed_sold, removed_delisted, total_active) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (metric_date, added, removed_sold, removed_delisted, total_active),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def sum_daily_metrics_between(self, start_date, end_date) -> dict:
+        conn = self.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(added),0), COALESCE(SUM(removed_sold),0), "
+                "COALESCE(SUM(removed_delisted),0) FROM daily_metrics "
+                "WHERE metric_date >= ? AND metric_date <= ?",
+                (start_date, end_date),
+            ).fetchone()
+        finally:
+            conn.close()
+        return {"added": row[0], "removed_sold": row[1], "removed_delisted": row[2]}
+
+    def count_sold_between(self, start_date, end_date) -> int:
+        """Count status->Solgt transitions with observed_at date in [start_date, end_date]."""
+        conn = self.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM eiendom_status_history "
+                "WHERE new_status = 'Solgt' AND date(observed_at) >= ? AND date(observed_at) <= ?",
+                (start_date, end_date),
+            ).fetchone()
+        finally:
+            conn.close()
+        return row[0]
 
     def get_eiendom_for_sheets(self) -> pd.DataFrame:
         """Get property listings formatted for Google Sheets export (includes all listings: active, unlisted/inactive, and sold)."""
