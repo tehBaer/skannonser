@@ -7,7 +7,7 @@ drive_token.json
 main/config/thumbnail-service-key.json
 main/config/service_account.json
 main/config/*service*-key*.json
-config.py
+main/config/config.py
 .venv
 .idea
 main/temp/
