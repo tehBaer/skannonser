@@ -23,7 +23,7 @@ COORDS_RPM ?= 120
 COORDS_INCLUDE_INACTIVE ?= 0
 COORDS_CONFIRM ?= 1
 
-.PHONY: help sheets sold-sync travel brj mvv mvv-uni-rush dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun populate-travel-from-donors populate-travel-from-donors-dryrun check-donor-chains check-donor-chains-strict repair-donor-chains repair-donor-chains-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-url map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious station-travel station-travel-dryrun station-transfer-backfill stations-pull
+.PHONY: help sheets sold-sync notify-daily notify-weekly notify-battery travel brj mvv mvv-uni-rush dnb-url dnb-sync dnb-export-travel dnb-backfill-travel dnb-backfill-travel-dryrun backfill-donor-links backfill-donor-links-dryrun populate-travel-from-donors populate-travel-from-donors-dryrun check-donor-chains check-donor-chains-strict repair-donor-chains repair-donor-chains-dryrun full full-no-scrape refresh refresh-inactive refresh-stale-open map-guide map-push map-deploy map-url map-live-url coords-count coords-missing coords-fill coords-import-sheet addr-overrides polygon-edit finn-url polygon-sync find-grouped-address-count find-grouped-adress-count api-calls-new-address validate-travel validate-travel-rerequest-suspicious station-travel station-travel-dryrun station-transfer-backfill stations-pull
 
 help:
 	@echo "Available targets:"
@@ -100,6 +100,15 @@ sheets:
 sold-sync:
 	@echo "Syncing sold/inactive listings to the 'Sold' sheet tab (feeds the map's sold layer)"
 	@$(PYTHON) -c "from main.sync.helper_sync_to_sheets import sync_stale_eiendom_to_sheets; import sys; sys.exit(0 if sync_stale_eiendom_to_sheets() else 1)"
+
+notify-daily:
+	@$(PYTHON) -m main.notify.daily_summary
+
+notify-weekly:
+	@$(PYTHON) -m main.notify.weekly_summary
+
+notify-battery:
+	@$(PYTHON) -m main.notify.battery
 
 travel:
 	$(PYTHON) main/tools/manual_fill_missing_travel_times.py
