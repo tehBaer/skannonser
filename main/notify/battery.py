@@ -2,6 +2,7 @@
 import json
 import os
 from collections import namedtuple
+from datetime import datetime
 
 from main.notify import pushover
 
@@ -74,6 +75,16 @@ def decide_alerts(current: BatteryState, prev: dict, thresholds=(50, 20, 10)):
     return alerts, {"power": new_power, "last_threshold_alerted": last}
 
 
+def format_reading_line(when: str, state: BatteryState) -> str:
+    return f"{when} percent={state.percent} status={state.status} on_ac={state.on_ac}"
+
+
+def _append_history(history_path, line):
+    os.makedirs(os.path.dirname(history_path) or ".", exist_ok=True)
+    with open(history_path, "a") as f:
+        f.write(line + "\n")
+
+
 def _load_state(state_path):
     try:
         with open(state_path) as f:
@@ -88,8 +99,12 @@ def _save_state(state_path, state):
         json.dump(state, f)
 
 
-def run(state_path, power_supply_dir="/sys/class/power_supply", send=pushover.send) -> bool:
+def run(state_path, power_supply_dir="/sys/class/power_supply", send=pushover.send,
+        history_path=None) -> bool:
     current = read_battery(power_supply_dir)
+    if history_path:
+        _append_history(history_path,
+                        format_reading_line(datetime.now().isoformat(timespec="seconds"), current))
     prev = _load_state(state_path)
     alerts, new_state = decide_alerts(current, prev)
     for a in alerts:
@@ -100,5 +115,6 @@ def run(state_path, power_supply_dir="/sys/class/power_supply", send=pushover.se
 
 if __name__ == "__main__":
     import sys
-    default_state = os.path.expanduser("~/skannonser-notify-state/battery.json")
-    sys.exit(0 if run(default_state) else 1)
+    base = os.path.expanduser("~/skannonser-notify-state")
+    sys.exit(0 if run(os.path.join(base, "battery.json"),
+                      history_path=os.path.join(base, "battery-history.log")) else 1)

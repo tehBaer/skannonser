@@ -72,5 +72,30 @@ class ReadBatteryTests(unittest.TestCase):
             self.assertFalse(st.on_ac)
 
 
+class HistoryLoggingTests(unittest.TestCase):
+    def test_format_reading_line(self):
+        line = battery.format_reading_line("2026-07-11T14:30:00", BatteryState(52, True, "Charging"))
+        self.assertEqual(line, "2026-07-11T14:30:00 percent=52 status=Charging on_ac=True")
+
+    def test_run_appends_reading_line_to_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supply = os.path.join(tmp, "supply")
+            os.makedirs(os.path.join(supply, "BAT0"))
+            os.makedirs(os.path.join(supply, "AC"))
+            open(os.path.join(supply, "BAT0", "type"), "w").write("Battery\n")
+            open(os.path.join(supply, "BAT0", "capacity"), "w").write("73\n")
+            open(os.path.join(supply, "BAT0", "status"), "w").write("Discharging\n")
+            open(os.path.join(supply, "AC", "type"), "w").write("Mains\n")
+            open(os.path.join(supply, "AC", "online"), "w").write("0\n")
+            history_path = os.path.join(tmp, "hist.log")
+            battery.run(os.path.join(tmp, "state.json"), power_supply_dir=supply,
+                        send=lambda *a, **k: True, history_path=history_path)
+            with open(history_path) as f:
+                content = f.read()
+        self.assertIn("percent=73", content)
+        self.assertIn("status=Discharging", content)
+        self.assertIn("on_ac=False", content)
+
+
 if __name__ == "__main__":
     unittest.main()
