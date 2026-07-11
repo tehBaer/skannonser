@@ -2,11 +2,11 @@
 from datetime import date
 
 from main.database.db import PropertyDatabase
-from main.notify import pushover
+from main.notify.send import send as default_send
 from main.notify.listing_metrics import compute_daily_metrics, format_daily_message
 
 
-def run(db_path=None, today=None, send=pushover.send) -> bool:
+def run(db_path=None, today=None, send=default_send) -> bool:
     db = PropertyDatabase(db_path)
     today = today or date.today().isoformat()
     previous = db.get_previous_active_snapshot()

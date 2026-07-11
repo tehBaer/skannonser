@@ -2,14 +2,14 @@
 from datetime import date, timedelta
 
 from main.database.db import PropertyDatabase
-from main.notify import pushover
+from main.notify.send import send as default_send
 
 
 def format_weekly_message(added: int, sold: int) -> str:
     return f"\U0001F4C5 This week: +{added} added, {sold} sold."
 
 
-def run(db_path=None, today=None, send=pushover.send) -> bool:
+def run(db_path=None, today=None, send=default_send) -> bool:
     db = PropertyDatabase(db_path)
     end = date.fromisoformat(today) if today else date.today()
     start = end - timedelta(days=6)  # inclusive 7-day window
