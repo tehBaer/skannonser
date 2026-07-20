@@ -14,6 +14,10 @@ def _applied(conn: sqlite3.Connection) -> set[str]:
 
 
 def pending(conn: sqlite3.Connection) -> list[Path]:
+    if not MIGRATIONS_DIR.is_dir():
+        raise FileNotFoundError(
+            f"migrations directory missing: {MIGRATIONS_DIR} (broken install?)"
+        )
     applied = _applied(conn)
     return [p for p in sorted(MIGRATIONS_DIR.glob("*.sql")) if p.stem not in applied]
 

@@ -1,0 +1,13 @@
+.git/
+.venv/
+.env
+*.egg-info/
+backups/
+main/database/
+data/
+tmp/
+tests/
+docs/
+.superpowers/
+.idea/
+rutetabeller tog/

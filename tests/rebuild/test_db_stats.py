@@ -15,5 +15,6 @@ def test_stats_lists_tables_with_counts(tmp_path, monkeypatch):
     result = CliRunner().invoke(app, ["db", "stats"])
 
     assert result.exit_code == 0, result.output
-    assert "stations: 1" in result.output
-    assert "eiendom: 0" in result.output
+    lines = result.output.splitlines()
+    assert "eiendom: 0" in lines
+    assert "stations: 1" in lines

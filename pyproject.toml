@@ -22,5 +22,8 @@ skannonser = "skannonser.cli:main"
 [tool.setuptools.packages.find]
 include = ["skannonser*"]
 
+[tool.setuptools.package-data]
+"skannonser.store" = ["migrations/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests/rebuild"]

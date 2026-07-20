@@ -1,3 +1,5 @@
+import pytest
+
 from skannonser.store import connection, migrations
 
 EXPECTED_TABLES = {
@@ -54,3 +56,10 @@ def test_migrate_cli_fails_loud_when_db_missing(tmp_path, monkeypatch):
     result = CliRunner().invoke(app, ["db", "migrate"])
     assert result.exit_code == 1
     assert not missing.exists()
+
+
+def test_pending_fails_loud_when_migrations_dir_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(migrations, "MIGRATIONS_DIR", tmp_path / "nope")
+    conn = connection.connect(tmp_path / "x.db")
+    with pytest.raises(FileNotFoundError):
+        migrations.pending(conn)
