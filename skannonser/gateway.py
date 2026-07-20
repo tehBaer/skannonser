@@ -4,7 +4,7 @@ import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TypeVar
 
 from skannonser.config.domain import Budget
@@ -33,7 +33,8 @@ def _default_notify(message: str) -> None:
 
 
 def _default_clock() -> str:
-    return datetime.now().strftime("%Y-%m")
+    # UTC to match the api_usage.called_at SQL default (datetime('now') is UTC in SQLite).
+    return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
 class Gateway:

@@ -150,3 +150,13 @@ def test_gateway_unknown_api_raises_value_error(conn):
 
     with pytest.raises(ValueError):
         gw.month_usage("weather")
+
+
+def test_default_clock_is_utc_matching_sql_default(conn):
+    """Regression: _default_clock() must return UTC to match SQL's datetime('now')."""
+    conn.execute("INSERT INTO api_usage (api, outcome) VALUES ('routes', 'ok')")
+    conn.commit()
+    sql_month = conn.execute("SELECT strftime('%Y-%m', called_at) FROM api_usage").fetchone()[0]
+
+    from skannonser.gateway import _default_clock
+    assert _default_clock() == sql_month
