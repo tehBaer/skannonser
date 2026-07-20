@@ -591,6 +591,113 @@ def test_run_enrich_missing_price_is_eligible(conn, domain, gateway):
 
 
 # ==========================================================================
+# 13. Metadata refresh pass (legacy bulk-write parity, run_eiendom_db.py:
+#     196-229 -> db.py:508): legacy unconditionally called
+#     insert_or_update_eiendom_processed for EVERY row of the post-processed
+#     frame every run; _run_destination alone only ever touches price-
+#     eligible rows it actually assigns/writes something to.
+# ==========================================================================
+
+
+def test_run_enrich_metadata_refresh_persists_prepass_link_on_ineligible_row(conn, domain, gateway):
+    # A is a complete donor for ALL THREE columns (lands in the "all" cache
+    # the pre-pass searches). B is nearby but PRICE-INELIGIBLE -- the
+    # destination loop below skips ineligible rows outright (never calls
+    # maybe_assign_donor / never upserts them), but the pre-pass (which runs
+    # over the FULL row set, unfiltered by price, inside `_prepare`) still
+    # assigns B -> A in memory. Only the end-of-run refresh pass persists it.
+    over_price = domain.filters.sheets_max_price + 1
+    _seed_listing(conn, "A", adresse="A gate 1")
+    _seed_listing(conn, "B", adresse="B gate 2", pris=over_price)
+    _seed_processed(
+        conn, "A", lat=OSLO_LAT, lng=OSLO_LNG,
+        travel={"pendl_rush_brj": 30, "pendl_rush_mvv": 31, "pendl_rush_mvv_uni_rush": 32},
+    )
+    _seed_processed(conn, "B", lat=_north(50), lng=OSLO_LNG)  # no stored link
+
+    post = FakePost()
+    stats = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert post.calls == []  # B never became a run-loop candidate (price-ineligible)
+    assert stats["donor_skipped"] == 0  # the loop never saw B at all
+    assert stats["metadata_refreshed"] >= 1
+    b = _processed_row(conn, "B")
+    assert b["travel_copy_from_finnkode"] == "A"  # persisted by the refresh pass
+    assert b["pendl_rush_brj"] is None  # never a run-loop candidate, still empty
+
+
+def test_run_enrich_metadata_refresh_picks_up_manual_address_correction(conn, domain, gateway):
+    # C is already enrich-complete (has a BRJ value, no candidacy, no donor
+    # activity) -- the destination loop below never upserts it. Simulate a
+    # manual correction to the source listing's address between two runs;
+    # only the refresh pass notices adresse_cleaned/google_maps_url are stale.
+    _seed_listing(conn, "C", adresse="Gamle Gate 1", pris=1_000_000)
+    _seed_processed(
+        conn, "C", lat=OSLO_LAT, lng=OSLO_LNG,
+        travel={"pendl_rush_brj": 30}, adresse="Gamle Gate 1",
+    )
+    post = FakePost()
+    run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+    assert post.calls == []  # already complete -> no API call
+    assert _processed_row(conn, "C")["adresse_cleaned"] == "Gamle Gate 1"
+
+    conn.execute("UPDATE eiendom SET adresse = ? WHERE finnkode = 'C'", ("Ny Gate 2",))
+    conn.commit()
+
+    stats2 = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert post.calls == []  # still complete -> still no API call
+    c = _processed_row(conn, "C")
+    assert c["adresse_cleaned"] == "Ny Gate 2"
+    assert c["google_maps_url"] == "https://www.google.com/maps/place/Ny+Gate+2+0575"
+    assert c["pendl_rush_brj"] == 30  # travel value untouched (no travel dict passed)
+    assert stats2["metadata_refreshed"] >= 1
+
+
+def test_run_enrich_metadata_refresh_skips_fully_stable_row(conn, domain, gateway):
+    # Once a row's stored adresse_cleaned/google_maps_url/link match what a
+    # run would compute, a further run must not re-upsert it (no needless
+    # write, no updated_at bump).
+    _seed_listing(conn, "Z", adresse="Z gate 9", pris=1_000_000)
+    _seed_processed(
+        conn, "Z", lat=OSLO_LAT, lng=OSLO_LNG,
+        travel={"pendl_rush_brj": 20}, adresse="Z gate 9",
+    )
+    post = FakePost()
+
+    # First run titles "Z gate 9" -> "Z Gate 9" and refreshes the stored
+    # (still-untitled) adresse_cleaned to match; only the SECOND run is
+    # guaranteed fully stable.
+    run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+    stats2 = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert post.calls == []
+    assert stats2["metadata_refreshed"] == 0
+
+
+def test_run_enrich_metadata_refresh_creates_processed_row_for_new_ineligible_listing(
+    conn, domain, gateway
+):
+    # W is brand new and price-ineligible -- it has NO eiendom_processed row
+    # at all. Legacy's bulk write still gives every listing a processed row
+    # with a cleaned address/maps URL; the refresh pass must too.
+    over_price = domain.filters.sheets_max_price + 1
+    _seed_listing(conn, "W", adresse="W gate 7", pris=over_price)
+    post = FakePost()
+
+    stats = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert post.calls == []
+    w = _processed_row(conn, "W")
+    assert w is not None
+    assert w["adresse_cleaned"] == "W Gate 7"
+    assert w["google_maps_url"] == "https://www.google.com/maps/place/W+Gate+7+0575"
+    assert w["pendl_rush_brj"] is None
+    assert w["travel_copy_from_finnkode"] is None
+    assert stats["metadata_refreshed"] >= 1
+
+
+# ==========================================================================
 # CLI
 # ==========================================================================
 

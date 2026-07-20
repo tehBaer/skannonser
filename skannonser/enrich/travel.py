@@ -64,7 +64,7 @@ from skannonser.enrich.sentinels import is_travel_sentinel
 from skannonser.enrich.travel_api import TransitCommute
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.store.repositories.listings import ListingsRepo
-from skannonser.store.repositories.processed import ProcessedRepo
+from skannonser.store.repositories.processed import ProcessedRepo, clean_address, google_maps_url
 
 VALID_TARGETS = frozenset({"all", "brj", "mvv", "mvv_uni"})
 
@@ -201,7 +201,7 @@ def _build_rows(conn: sqlite3.Connection, col_map: dict[str, str]) -> list[dict]
                ep.lat AS lat, ep.lng AS lng,
                ep.pendl_rush_brj, ep.pendl_rush_mvv, ep.pendl_rush_mvv_uni_rush,
                ep.pendl_morn_cntr, ep.bil_morn_cntr, ep.pendl_dag_cntr, ep.bil_dag_cntr,
-               ep.travel_copy_from_finnkode
+               ep.travel_copy_from_finnkode, ep.adresse_cleaned, ep.google_maps_url
         FROM eiendom e
         LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
         WHERE e.active = 1
@@ -234,6 +234,11 @@ def _build_rows(conn: sqlite3.Connection, col_map: dict[str, str]) -> list[dict]
                 # run (pre-pass or in-loop) and must be persisted -- legacy
                 # relied on a final bulk df write for that; we persist per-row.
                 "_stored_link": _clean(r["travel_copy_from_finnkode"]),
+                # Snapshot adresse_cleaned/google_maps_url AS STORED, for the
+                # end-of-run metadata refresh pass (legacy's unconditional
+                # per-row bulk write, run_eiendom_db.py:196-229 -> db.py:508).
+                "_stored_adresse_cleaned": r["adresse_cleaned"],
+                "_stored_maps_url": r["google_maps_url"],
             }
         )
     return rows
@@ -433,6 +438,54 @@ def _run_destination(
         add_row_as_donor_if_complete(row, add_caches, add_required, max_min)
 
 
+def _refresh_processed_metadata(prep: _Prep, processed: ProcessedRepo, stats: dict) -> None:
+    """End-of-run metadata refresh pass -- legacy bulk-write parity.
+
+    Port of the fact that ``run_eiendom_db.py:196-229`` unconditionally calls
+    ``db.py:508``'s ``insert_or_update_eiendom_processed`` for EVERY row of
+    the post-processed frame, every run -- not just the rows the destination
+    loops above happened to touch. Three consequences the per-row upserts in
+    ``_run_destination`` alone can't reproduce (that loop only ever iterates
+    price-eligible rows, and only upserts when a value/link actually
+    changes): a pre-pass-assigned donor link on a price-INELIGIBLE row is
+    never persisted; ``adresse_cleaned``/``google_maps_url`` never refresh
+    when the underlying ``eiendom.adresse`` changed but no travel state did;
+    a price-ineligible listing with no prior ``eiendom_processed`` row never
+    gets one.
+
+    Runs over ALL rows in ``prep.rows`` (the full active set, unfiltered by
+    price -- mirrors legacy iterating the whole frame). For each row, compare
+    the freshly computed ``adresse_cleaned``/``google_maps_url`` (from the
+    row's current, possibly-titled ``adresse``) and the in-memory
+    ``donor_link`` against what was stored in ``eiendom_processed`` at the
+    START of this run (``_build_rows``' snapshot); write only on a diff, so
+    an untouched row costs no write and no ``updated_at`` bump. No ``travel``
+    dict (COALESCE protects existing travel values anyway) and no lat/lng
+    (also COALESCE-safe to omit).
+    """
+    for row in prep.rows:
+        computed_cleaned = clean_address(row["adresse"])
+        computed_url = google_maps_url(computed_cleaned, row["postnummer"])
+        link = _clean(row.get("donor_link")) or None
+        stored_link = row.get("_stored_link") or None
+
+        if (
+            computed_cleaned == row.get("_stored_adresse_cleaned")
+            and computed_url == row.get("_stored_maps_url")
+            and link == stored_link
+        ):
+            continue
+
+        processed.upsert(
+            row["finnkode"],
+            row["adresse"],
+            row["postnummer"],
+            cntr=row["cntr"],
+            travel_copy_from_finnkode=link,
+        )
+        stats["metadata_refreshed"] += 1
+
+
 def run_enrich(
     conn: sqlite3.Connection,
     domain: DomainConfig,
@@ -456,6 +509,7 @@ def run_enrich(
         "donor_skipped": 0,
         "mvv_uni_donor_written": 0,
         "sentinels_written": 0,
+        "metadata_refreshed": 0,
         "budget_exhausted": False,
     }
 
@@ -488,6 +542,12 @@ def run_enrich(
             )
     except BudgetExceeded:
         stats["budget_exhausted"] = True
+
+    # 5. End-of-run metadata refresh (legacy bulk-write parity, see the
+    # function docstring). No API calls -- runs unconditionally, even after
+    # BudgetExceeded, mirroring legacy's bulk write happening after
+    # post-processing completes regardless of how far the API loop got.
+    _refresh_processed_metadata(prep, processed, stats)
 
     return stats
 

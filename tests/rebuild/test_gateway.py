@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -6,7 +6,7 @@ from skannonser.config.domain import Budget
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.store import connection, migrations
 
-CURRENT_MONTH = datetime.now().strftime("%Y-%m")
+CURRENT_MONTH = datetime.now(timezone.utc).strftime("%Y-%m")
 
 
 def fixed_clock() -> str:

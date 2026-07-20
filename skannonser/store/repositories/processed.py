@@ -47,9 +47,6 @@ from typing import Any, Optional
 _LAT_MIN, _LAT_MAX = 57.0, 72.0
 _LNG_MIN, _LNG_MAX = 4.0, 32.0
 
-_TRAVEL_COLUMNS = ("pendl_rush_brj", "pendl_rush_mvv", "pendl_rush_mvv_uni_rush")
-_CNTR_COLUMNS = ("pendl_morn_cntr", "bil_morn_cntr", "pendl_dag_cntr", "bil_dag_cntr")
-
 
 def _to_float_or_none(value: Any) -> Optional[float]:
     """Port of the module-level ``db.py:_to_float_or_none`` (13-19)."""

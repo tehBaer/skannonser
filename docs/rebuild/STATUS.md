@@ -1,6 +1,6 @@
 # Rebuild status & carried obligations
 
-**Last updated: 2026-07-20 (end of Phase 2).** This is the single pick-up point for continuing
+**Last updated: 2026-07-20 (end of Phase 3).** This is the single pick-up point for continuing
 the rebuild in a fresh session. Read this, the spec, and the current phase plan — everything
 else is history.
 
@@ -12,16 +12,25 @@ else is history.
 ## Where we are
 
 - **Phase 1 (skeleton) and Phase 2 (ingest port) are merged to master and deployed on the server**
-  (`mbp2016@100.77.139.22`, repo `~/kode/skannonser`, tailnet). 119 rebuild tests green on both machines.
+  (`mbp2016@100.77.139.22`, repo `~/kode/skannonser`, tailnet). **Phase 3 (enrichment port +
+  Google API gateway) is complete on branch `rebuild-phase-3`; merge to master is still pending.**
+  293 rebuild tests green (laptop; server-side count is post-merge).
 - **Legacy (`main/`, Makefile, cron wrapper) is still the production path.** Nothing cuts over
   until Phase 4. Legacy is frozen except for the sanctioned ops patch listed below.
 - Proven equivalence: `skannonser verify parse` ran the full 7 731-ad HTML cache with **zero
   unexplained diffs** (harness diff-detection proven by negative control); a supervised
   parallel run on the server (real finn.no crawl vs legacy's own run) classified all 1 361
-  diffs with **zero unexplained**.
-- The new CLI (both machines): `skannonser config show | db backup/migrate/stats | run ingest/refresh | verify parse`.
-- Migrations applied everywhere: 001 (adopt live schema), 002 (notify tables). Migration runner
-  is atomic (per-file transaction + rollback). Nightly Docker backup on the server keeps 30.
+  diffs with **zero unexplained**. `skannonser verify enrich` (estimate/donor-prepass/sheet-value
+  golden master) reports **zero diffs** against the live DB.
+- The new CLI (both machines): `skannonser config show | db backup/migrate/stats |
+  run ingest/refresh/geocode/enrich/validate-travel | estimate | verify parse/enrich`.
+- Migrations: 001 (adopt live schema), 002 (notify tables), 003 (api_usage). 001-002 applied
+  everywhere; **003 applied on the laptop only — SERVER APPLY is a named post-merge step**, same
+  pattern as Phase 2's merge-then-migrate. Migration runner is atomic (per-file transaction +
+  rollback). Nightly Docker backup on the server keeps 30.
+- **Golden-master caveat:** enrich parity is proven for a common (finnkode-ordered) iteration
+  order; donor pre-pass outcomes are order-dependent, so this is parity-for-a-fixed-order, not
+  order-insensitive equivalence.
 
 ## Sanctioned behavior changes vs legacy (the complete list — nothing else may diverge)
 
@@ -145,6 +154,17 @@ and fail if a default is removed — do not "simplify" those parameters away.
 13. A completely failed (zero-URL) crawl exited 0 silently → CLI exits 1 with an error.
 14. `run` commands auto-applied migrations (contradicting explicit-migrate) → now fail loud asking for `db migrate`.
 15. A crawl test was pinned to `data/eiendom/html_crawled/page1.html` — live, nightly-overwritten, machine-varying → frozen as a committed fixture.
+
+**Phase 3:**
+16. Gateway clock read local time instead of UTC for month-boundary budget accounting (could misalign with SQL's UTC `datetime('now')`, corrupting budget resets/counts near a month boundary) → clock unified on UTC.
+17. `TransitCommute.minutes()`'s exception handling was scoped too broadly → narrowed to legacy's exception scope, so only the failures legacy itself treated as a `TRAVEL_API_ERROR` sentinel are caught that way.
+18. `BudgetExceeded` could be caught by the broad handler and converted into a sentinel value instead of propagating → explicit `except BudgetExceeded: raise` added before the generic handler; contract locked (halt the loop, leave remaining rows untouched, CLI exits 3).
+19. `ProcessedRepo.upsert` writes the four CNTR columns unconditionally; without a fix, every enrich per-row upsert would have silently nulled existing CNTR data on its next travel write (critical cutover data-destruction) → read-and-passthrough added so every enrich upsert carries the existing CNTR values forward.
+20. Plan defect: candidacy required lat/lng coordinates before an API attempt, but legacy's transit API is address-based (no coords check) → candidacy narrowed to "missing value only"; coords matter only for donor assignment, not run-loop candidacy.
+21. `force_api=True` persisted an in-loop-discovered mvv_uni donor link unconditionally ("link overshoot"), diverging from legacy's `post_process.py:1139` gate (only assign+persist when the donor chain value actually resolves) → gated on resolvable donor value, matching legacy's force_api semantics.
+22. `estimate()`/`run_enrich()` never applied legacy's `SHEETS_MAX_PRICE` eligible-mask filter to candidacy/run scanning → caught live via `skannonser verify enrich` against a copy of the production DB (task-9); fixed (donor-cache construction/pre-pass deliberately stay unfiltered, per legacy); golden master re-ran all-zero.
+23. STATUS.md's Phase 3 named-deliverables list wasn't being marked done as work landed (bookkeeping gap — risk of re-doing or silently dropping finished obligations) → deliverables 1/3/4 marked DONE, pre-cutover gaps tracked explicitly.
+24. Final-review fix: the ported enrich loop only wrote `eiendom_processed` for rows it actually touched (price-eligible + API/donor-assigned), diverging from legacy's unconditional nightly bulk write over every post-processed row (`run_eiendom_db.py:196-229` → `db.py:508`) — pre-pass donor links on price-ineligible rows, `adresse_cleaned`/`google_maps_url` refresh on unrelated address edits, and processed rows for brand-new price-ineligible listings could all be silently lost → added an end-of-run metadata refresh pass over every active row, diff-gated against the run-start snapshot so an untouched row costs no write, restoring legacy's bulk-write equivalence.
 
 Legacy bugs found while porting (in production today): the absolute-href listing drop (sanctioned
 fix #3 fixes it in the rebuild), and the nightly cron failures (DNS at midnight + interactive

@@ -47,7 +47,7 @@ def test_polygon_points_outside_coord_bounds_rejected():
             filters=dict(sheets_max_price=1, url_max_price=1, min_bra_i=1, include_unlisted=True),
             coords=dict(lat_min=57.0, lat_max=72.0, lng_min=4.0, lng_max=32.0),
             travel=dict(reuse_within_meters=300, max_travel_minutes=360),
-            destinations=[dict(key="a", label="A", address="x")],
+            destinations=[dict(key="a", label="A", address="x", df_column="X", db_column="x")],
             polygon_points=[(100.0, 59.0), (10.1, 59.1), (10.2, 59.2)],
             budget=dict(routes_monthly_cap=9000, geocode_monthly_cap=9000, warn_pcts=[50, 80]),
             dnb=dict(region_guids=[], max_pages=1),
