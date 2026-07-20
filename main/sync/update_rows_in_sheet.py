@@ -535,7 +535,12 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
             print(f"    {' //// '.join(api_diffs)}\n")
 
         print(f"Total API field changes requiring confirmation: {total_api_changes}")
-        response = input("\nProceed with API-derived changes? (yes/no): ").strip().lower()
+        if os.environ.get("SHEETS_AUTO_CONFIRM") == "1":
+            # Non-interactive (cron): API-derived values are refreshed machine data - accept.
+            print("\nSHEETS_AUTO_CONFIRM=1: auto-accepting API-derived changes.")
+            response = "yes"
+        else:
+            response = input("\nProceed with API-derived changes? (yes/no): ").strip().lower()
         if response in ['yes', 'y']:
             for update_info in api_confirmation_list:
                 for change in update_info.get("api_confirmation_changes", []):
@@ -559,7 +564,12 @@ def update_existing_rows(db_path: str = None, sheet_name: str = "Eie"):
             print(f"    {' //// '.join(non_api_diffs)}\n")
 
         print(f"Total non-API field changes requiring confirmation: {total_non_api_changes}")
-        response = input("\nProceed with non-API changes? (yes/no): ").strip().lower()
+        if os.environ.get("SHEETS_AUTO_CONFIRM") == "1":
+            # Non-interactive (cron): non-API changes may overwrite manual sheet values - skip them.
+            print("\nSHEETS_AUTO_CONFIRM=1: skipping non-API changes (manual values preserved).")
+            response = "no"
+        else:
+            response = input("\nProceed with non-API changes? (yes/no): ").strip().lower()
         if response in ['yes', 'y']:
             for update_info in non_api_confirmation_list:
                 for change in update_info.get("non_api_confirmation_changes", []):
