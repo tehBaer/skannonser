@@ -6,6 +6,7 @@ from skannonser.config.domain import load_domain
 from skannonser.config.settings import get_secrets
 from skannonser.enrich.geocode import run_geocode
 from skannonser.enrich.travel import VALID_TARGETS, run_enrich
+from skannonser.enrich.validate import validate_travel
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.ingest.finn.refresh import MODES as REFRESH_MODES
 from skannonser.ingest.finn.refresh import refresh_listings
@@ -249,3 +250,47 @@ def enrich(
         raise typer.Exit(code=3)
 
     typer.echo(f"enrich: {stats}")
+
+
+@app.command(name="validate-travel")
+def validate_travel_cmd(
+    db: Path | None = typer.Option(
+        None, "--db", help="Override the DB path for this run (supervised parallel runs)"
+    ),
+) -> None:
+    """Read-only heuristic scan for suspicious stored travel values (neighbor-
+    radius, postcode-group, and donor-distance checks with MAD-based outlier
+    scoring). Port of `main/tools/validate_travel_values.py`'s scoring core --
+    see `skannonser.enrich.validate` for the full heuristic writeup. Never
+    calls any API and always exits 0; this is informational only."""
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    conn = connection.connect(db_path)
+    domain = load_domain()
+
+    findings = validate_travel(
+        conn,
+        domain,
+        radius_m=domain.travel.reuse_within_meters,
+        max_travel_minutes=domain.travel.max_travel_minutes,
+    )
+
+    typer.echo("=" * 72)
+    typer.echo("Travel Value Validation Report")
+    typer.echo("=" * 72)
+    typer.echo(f"Flagged findings: {len(findings)}")
+
+    if not findings:
+        typer.echo("No suspicious travel values found with current thresholds.")
+        return
+
+    typer.echo()
+    typer.echo(f"{'score':>5}  {'column':<26}  {'finnkode':<12}  {'value':>6}  reason")
+    for f in findings:
+        reason = " | ".join(f["reasons"])
+        typer.echo(
+            f"{f['score']:>5}  {f['column']:<26}  {f['finnkode']:<12}  {f['value']:>6}  {reason}"
+        )

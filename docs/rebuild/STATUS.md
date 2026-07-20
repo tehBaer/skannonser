@@ -81,6 +81,11 @@ count to shift by design. The reverted implementations from Tasks 6/13 show exac
 one-line change goes.
 
 Other decided-later items (surface each for a go/no-go when its phase arrives):
+- **Targeted travel-value re-request tool** (a separate legacy script from
+  `main/tools/validate_travel_values.py`, whose scoring core Task 10 ported to
+  `skannonser/enrich/validate.py`) stays legacy-manual until Phase 4 — port scoped to the
+  read-only validator only; the tool that re-requests flagged rows' travel times was
+  intentionally left out of Task 10's scope.
 - Untrack `main/database/properties.db` from git (currently tracked+perpetually dirty; the
   stash-dance in every server pull exists because of this) — vs keeping git as a sync channel.
 - Deferred minors: `deactivate_missing` empty-list guard in repos; AliasChoices for
