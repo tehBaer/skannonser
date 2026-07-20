@@ -359,6 +359,7 @@ def _run_destination(
         if not _is_price_eligible(row.get("pris"), max_price):
             continue
         stored_link = row.get("_stored_link", "")
+        link_before_assign = _clean(row.get("donor_link"))
         donor = maybe_assign_donor(row, assign_cache, reuse)
         # "Newly assigned" = differs from the link already in the DB, so a
         # pre-pass-assigned link (absent from the DB) is persisted, while an
@@ -377,10 +378,18 @@ def _run_destination(
                 resolve_mvv_uni_donor_value(donor, prep.links, prep.values) if donor else None
             )
             can_use = donor_value is not None and not force_api
-            # Persist a newly-assigned link regardless of whether the chain
-            # value resolves -- legacy's final bulk write persisted the link
-            # unconditionally; only the *value* decision depends on can_use.
-            if newly_assigned:
+            # Legacy (post_process.py:1139): `if donor_finnkode and
+            # can_use_donor_value and not existing_donor_before` only ever
+            # ASSIGNS the link in-loop when can_use_donor_value is True --
+            # that in-loop assignment is what the final bulk write later
+            # persists. A link already on the row entering this iteration
+            # (pre-pass/stored) needs no such assignment; it sits in the df
+            # column the whole time and reaches the bulk write unconditionally.
+            # So: a pre-existing link is persisted whenever newly_assigned
+            # (differs from the stored DB value); a genuinely in-loop
+            # discovered link (fresh cache find, nothing on the row before
+            # this call) is persisted only when can_use is True.
+            if newly_assigned and (link_before_assign or can_use):
                 row["donor_link"] = donor
                 row_changed = True
             if is_candidate:

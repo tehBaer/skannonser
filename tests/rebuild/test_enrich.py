@@ -325,19 +325,26 @@ def test_run_enrich_mvv_uni_linked_row_gets_chain_value_written(conn, domain, ga
 
 
 # ==========================================================================
-# 4b. mvv_uni: a link newly assigned THIS run is persisted even when its
-#     chain value isn't used (force_api forces can_use=False) -- legacy's
-#     final bulk write persisted the link regardless of value resolvability.
+# 4b. mvv_uni: an in-loop-discovered link (no link on the row entering this
+#     iteration) is gated on can_use_donor_value, per legacy's
+#     post_process.py:1139 `if donor_finnkode and can_use_donor_value and
+#     not existing_donor_before`. Only a link already on the row entering
+#     the loop (pre-pass/stored) reaches the final bulk write unconditionally.
 # ==========================================================================
 
 
-def test_run_enrich_mvv_uni_newly_assigned_link_persisted_even_when_unused(conn, domain, gateway):
+def test_run_enrich_mvv_uni_in_loop_discovered_link_not_persisted_when_unresolvable(
+    conn, domain, gateway
+):
     # A is complete for mvv_uni ONLY (not brj/mvv), so the pre-pass (which
     # searches the "all" cache, requiring all three columns) does NOT link B
-    # to A -- B is linked to A freshly, in-loop, via the mvv_uni-specific
-    # cache. With force_api=True the resolved chain value is deliberately
-    # not used (can_use=False), but the newly-found link must still be
-    # written to the DB alongside B's own fresh API value.
+    # to A -- B enters the row loop with NO donor_link at all, and only gets
+    # one via a fresh in-loop cache search (mvv_uni-specific cache). With
+    # force_api=True the resolved chain value is deliberately not used
+    # (can_use=False); legacy's 1139 gate means a link discovered THIS WAY is
+    # only assigned (and thus persisted) when can_use_donor_value is True --
+    # unlike a pre-pass/stored link, it does NOT reach the unconditional bulk
+    # write. B gets its own fresh API value but no donor link.
     _seed_listing(conn, "A", adresse="A gate 1")
     _seed_listing(conn, "B", adresse="B gate 2")
     _seed_processed(conn, "A", lat=OSLO_LAT, lng=OSLO_LNG, travel={"pendl_rush_mvv_uni_rush": 40})
@@ -352,7 +359,35 @@ def test_run_enrich_mvv_uni_newly_assigned_link_persisted_even_when_unused(conn,
     assert stats["api_calls"] == 1
     b = _processed_row(conn, "B")
     assert b["pendl_rush_mvv_uni_rush"] == 15  # own API value
-    assert b["travel_copy_from_finnkode"] == "A"  # newly-found donor link, still persisted
+    assert b["travel_copy_from_finnkode"] is None  # unresolvable in-loop link not persisted
+
+
+def test_run_enrich_mvv_uni_prepass_link_persisted_even_when_unused(conn, domain, gateway):
+    # A is complete for ALL THREE columns, so the pre-pass (which searches
+    # the "all" cache) DOES link B to A before the row loop even starts --
+    # B enters the mvv_uni row loop already carrying donor_link="A". With
+    # force_api=True the chain value is deliberately not used
+    # (can_use=False) for B's own mvv_uni value, but per legacy's 1139 gate
+    # a link already on the row entering the iteration (pre-pass/stored)
+    # reaches the final bulk write unconditionally -- it must still persist.
+    _seed_listing(conn, "A", adresse="A gate 1")
+    _seed_listing(conn, "B", adresse="B gate 2")
+    _seed_processed(
+        conn, "A", lat=OSLO_LAT, lng=OSLO_LNG,
+        travel={"pendl_rush_brj": 30, "pendl_rush_mvv": 31, "pendl_rush_mvv_uni_rush": 40},
+    )
+    _seed_processed(conn, "B", lat=_north(50), lng=OSLO_LNG)  # no stored link
+
+    post = FakePost(minutes=15)
+    stats = run_enrich(
+        conn, domain, gateway, API_KEY, targets="mvv_uni", post=post, force_api=True
+    )
+
+    assert len(post.calls) == 1
+    assert stats["api_calls"] == 1
+    b = _processed_row(conn, "B")
+    assert b["pendl_rush_mvv_uni_rush"] == 15  # own API value
+    assert b["travel_copy_from_finnkode"] == "A"  # pre-pass link, still persisted
 
 
 # ==========================================================================
