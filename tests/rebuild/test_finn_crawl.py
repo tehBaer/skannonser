@@ -4,7 +4,7 @@ from pathlib import Path
 from skannonser.config.domain import load_domain
 from skannonser.ingest.finn.crawl import build_search_url, crawl, extract_ad_urls
 
-FIXTURE = Path("data/eiendom/html_crawled/page1.html")
+FIXTURE = Path("tests/rebuild/fixtures/finn/result_page1.html")
 
 
 def test_build_search_url_contains_polygon_and_price():
