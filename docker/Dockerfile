@@ -15,4 +15,5 @@ COPY skannonser ./skannonser
 RUN pip install --no-cache-dir .
 
 COPY docker/crontab /app/docker/crontab
-CMD ["supercronic", "/app/docker/crontab"]
+# tini (compose init: true) is PID 1 and reaps; supercronic must not self-reap
+CMD ["supercronic", "-no-reap", "/app/docker/crontab"]

@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    init: true
     env_file:
       - path: .env
         required: false
