@@ -1,2 +1,2 @@
-# Phase 1: nightly DB backup at 03:00. Later phases add pipeline/notify jobs here.
-0 3 * * * skannonser db backup
+# Nightly DB backup at 03:00 UTC, keep newest 30.
+0 3 * * * skannonser db backup --keep 30
