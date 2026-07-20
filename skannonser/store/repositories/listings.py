@@ -213,6 +213,20 @@ class ListingsRepo:
         ).fetchall()
         return {row["finnkode"] for row in rows}
 
+    def update_derived(self, finnkode: str, adresse_titled, pris_kvm) -> None:
+        """Write the two post-process derivations back onto ``eiendom``.
+
+        Sets ``adresse`` (title-cased, ``post_process.py:423``) and
+        ``pris_kvm`` (``post_process.py:397-420``) and bumps ``updated_at``.
+        Both values are written as given -- a ``None`` ``pris_kvm`` (no
+        parseable area/price) stores NULL, matching legacy's ``Int64`` NA.
+        """
+        self.conn.execute(
+            "UPDATE eiendom SET adresse = ?, pris_kvm = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE finnkode = ?",
+            (adresse_titled, pris_kvm, finnkode),
+        )
+
     def update_status(self, finnkode: str, new_status: str) -> None:
         """Update ``tilgjengelighet`` (status) for a listing.
 

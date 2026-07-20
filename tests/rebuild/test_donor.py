@@ -336,3 +336,16 @@ def test_resolve_mvv_uni_donor_value_dead_end_chain_returns_none():
     links = {"a": "b"}  # b has no further link and no value
     values = {}
     assert resolve_mvv_uni_donor_value("a", links, values) is None
+
+
+@pytest.mark.parametrize("sentinel", [-1, -2, -3])
+def test_resolve_mvv_uni_donor_value_passes_sentinels_through(sentinel):
+    """Fidelity-critical asymmetry (post_process.py:485): a sentinel is a
+    resolvable donor value, so a chain landing on it returns the sentinel
+    (a known failure is reused, never retried) -- unlike the donor CACHE,
+    which excludes sentinels."""
+    # Own value is a sentinel: returned before any chain walk.
+    assert resolve_mvv_uni_donor_value("a", {}, {"a": sentinel}) == sentinel
+    # Chain walks past a value-less link and lands on a sentinel.
+    links = {"a": "b", "b": "c"}
+    assert resolve_mvv_uni_donor_value("a", links, {"c": sentinel}) == sentinel

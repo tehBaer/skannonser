@@ -5,6 +5,7 @@ import typer
 from skannonser.config.domain import load_domain
 from skannonser.config.settings import get_secrets
 from skannonser.enrich.geocode import run_geocode
+from skannonser.enrich.travel import VALID_TARGETS, run_enrich
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.ingest.finn.refresh import MODES as REFRESH_MODES
 from skannonser.ingest.finn.refresh import refresh_listings
@@ -192,3 +193,59 @@ def geocode(
         raise typer.Exit(code=3)
 
     typer.echo(f"geocode: {stats}")
+
+
+@app.command()
+def enrich(
+    targets: str = typer.Option(
+        "all", "--targets", help="Destination group: all|brj|mvv|mvv_uni"
+    ),
+    force_api: bool = typer.Option(
+        False, "--force-api", help="Ignore donor reuse and call the API for every missing row"
+    ),
+    db: Path | None = typer.Option(
+        None, "--db", help="Override the DB path for this run (supervised parallel runs)"
+    ),
+) -> None:
+    """Fill missing public-transit commute times (and post-process
+    derivations) for the selected destination(s), through the shared Gateway.
+    Exits 3 when the Routes monthly budget is exhausted (remaining rows resume
+    next window)."""
+    if str(targets or "").strip().lower() not in VALID_TARGETS:
+        typer.echo(
+            f"Error: --targets must be one of {sorted(VALID_TARGETS)} (got {targets!r})",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    conn = connection.connect(db_path)
+    if not _require_no_pending_migrations(conn):
+        raise typer.Exit(code=1)
+
+    api_key = get_secrets().google_maps_api_key
+    if not api_key:
+        typer.echo("Error: GOOGLE_MAPS_API_KEY not set", err=True)
+        raise typer.Exit(code=1)
+
+    domain = load_domain()
+    gateway = Gateway(conn, domain.budget)
+
+    try:
+        stats = run_enrich(
+            conn, domain, gateway, api_key, targets=targets, force_api=force_api
+        )
+    except BudgetExceeded:
+        typer.echo("enrich budget exhausted - resumes next window", err=True)
+        raise typer.Exit(code=3)
+
+    if stats.get("budget_exhausted"):
+        typer.echo("enrich budget exhausted - resumes next window", err=True)
+        typer.echo(f"enrich: {stats}")
+        raise typer.Exit(code=3)
+
+    typer.echo(f"enrich: {stats}")
