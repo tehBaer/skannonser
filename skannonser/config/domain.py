@@ -25,10 +25,21 @@ class Travel(BaseModel):
     max_travel_minutes: int
 
 
+class Budget(BaseModel):
+    routes_monthly_cap: int
+    geocode_monthly_cap: int
+    warn_pcts: list[int]
+    routes_rpm: int = 60
+    geocode_rpm: int = 60
+
+
 class Destination(BaseModel):
     key: str
     label: str
     address: str
+    df_column: str
+    db_column: str
+    exclusive: bool = False
 
 
 class Dnb(BaseModel):
@@ -42,6 +53,7 @@ class DomainConfig(BaseModel):
     travel: Travel
     destinations: list[Destination]
     polygon_points: list[tuple[float, float]]  # (lng, lat), legacy order
+    budget: Budget
     dnb: Dnb
 
     @field_validator("polygon_points")

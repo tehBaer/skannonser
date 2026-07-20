@@ -34,8 +34,10 @@ def test_polygon_must_have_three_points():
             filters=dict(sheets_max_price=1, url_max_price=1, min_bra_i=1, include_unlisted=True),
             coords=dict(lat_min=57.0, lat_max=72.0, lng_min=4.0, lng_max=32.0),
             travel=dict(reuse_within_meters=300, max_travel_minutes=360),
-            destinations=[dict(key="a", label="A", address="x")],
+            destinations=[dict(key="a", label="A", address="x", df_column="X", db_column="x")],
             polygon_points=[(10.0, 59.0), (10.1, 59.1)],
+            budget=dict(routes_monthly_cap=9000, geocode_monthly_cap=9000, warn_pcts=[50, 80]),
+            dnb=dict(region_guids=[], max_pages=1),
         )
 
 
@@ -47,4 +49,28 @@ def test_polygon_points_outside_coord_bounds_rejected():
             travel=dict(reuse_within_meters=300, max_travel_minutes=360),
             destinations=[dict(key="a", label="A", address="x")],
             polygon_points=[(100.0, 59.0), (10.1, 59.1), (10.2, 59.2)],
+            budget=dict(routes_monthly_cap=9000, geocode_monthly_cap=9000, warn_pcts=[50, 80]),
+            dnb=dict(region_guids=[], max_pages=1),
         )
+
+
+def test_load_domain_has_budget_config():
+    d = load_domain()
+    assert d.budget.routes_monthly_cap == 9000
+    assert d.budget.geocode_monthly_cap == 9000
+    assert d.budget.warn_pcts == [50, 80]
+    assert d.budget.routes_rpm == 60
+    assert d.budget.geocode_rpm == 60
+
+
+def test_load_domain_destinations_have_column_config():
+    d = load_domain()
+    brj = next(dest for dest in d.destinations if dest.key == "brj")
+    assert brj.df_column == "PENDL RUSH BRJ"
+    assert brj.db_column == "pendl_rush_brj"
+    assert brj.exclusive is False
+
+    mvv_uni = next(dest for dest in d.destinations if dest.key == "mvv_uni")
+    assert mvv_uni.df_column == "MVV UNI RUSH"
+    assert mvv_uni.db_column == "pendl_rush_mvv_uni_rush"
+    assert mvv_uni.exclusive is True

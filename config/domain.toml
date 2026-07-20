@@ -17,20 +17,34 @@ lng_max = 32.0
 reuse_within_meters = 300
 max_travel_minutes = 360
 
+[budget]
+routes_monthly_cap = 9000
+geocode_monthly_cap = 9000
+warn_pcts = [50, 80]
+routes_rpm = 60
+geocode_rpm = 60
+
 [[destinations]]
 key = "brj"
 label = "BRJ (work, Sandvika)"
 address = "Rådmann Halmrasts Vei 5"
+df_column = "PENDL RUSH BRJ"
+db_column = "pendl_rush_brj"
 
 [[destinations]]
 key = "mvv"
 label = "MVV (Lambertseter)"
 address = "Langbølgen 24, 1155 Oslo"
+df_column = "PENDL RUSH MVV"
+db_column = "pendl_rush_mvv"
 
 [[destinations]]
 key = "mvv_uni"
 label = "MVV UNI (Gaustadalléen)"
 address = "Gaustadalléen 30, 0373 Oslo"
+df_column = "MVV UNI RUSH"
+db_column = "pendl_rush_mvv_uni_rush"
+exclusive = true
 
 [polygon]
 # Finn search polygon, (lng, lat) pairs — ported from main/runners/run_eiendom_db.py:140

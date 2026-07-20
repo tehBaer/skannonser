@@ -20,7 +20,7 @@ def _tables(conn):
 def test_migrate_fresh_db_creates_full_schema(tmp_path):
     conn = connection.connect(tmp_path / "fresh.db")
     ran = migrations.migrate(conn)
-    assert ran == ["001_adopt_live_schema", "002_notify_tables"]
+    assert ran == ["001_adopt_live_schema", "002_notify_tables", "003_api_usage"]
     assert EXPECTED_TABLES <= _tables(conn)
     assert "schema_migrations" in _tables(conn)
 
@@ -38,7 +38,7 @@ def test_migrate_adopts_preexisting_schema(tmp_path):
     sql = (migrations.MIGRATIONS_DIR / "001_adopt_live_schema.sql").read_text(encoding="utf-8")
     conn.executescript(sql)  # pre-existing schema, no migration bookkeeping
     ran = migrations.migrate(conn)
-    assert ran == ["001_adopt_live_schema", "002_notify_tables"]
+    assert ran == ["001_adopt_live_schema", "002_notify_tables", "003_api_usage"]
     assert EXPECTED_TABLES <= _tables(conn)
 
 
@@ -91,10 +91,26 @@ def test_failed_migration_rolls_back_and_is_not_recorded(tmp_path, monkeypatch):
 def test_migration_002_creates_notify_tables(tmp_path):
     conn = connection.connect(tmp_path / "fresh.db")
     ran = migrations.migrate(conn)
-    assert ran == ["001_adopt_live_schema", "002_notify_tables"]
+    assert ran == ["001_adopt_live_schema", "002_notify_tables", "003_api_usage"]
     tables = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"eiendom_status_history", "daily_listing_snapshot", "daily_metrics"} <= tables
+
+
+def test_migration_003_creates_api_usage_table(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    ran = migrations.migrate(conn)
+    assert "003_api_usage" in ran
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "api_usage" in tables
+    # Verify table structure
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(api_usage)")}
+    assert cols == {"id", "called_at", "api", "outcome", "finnkode"}
+    # Verify index exists
+    indexes = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='api_usage'")}
+    assert "idx_api_usage_called_at" in indexes
 
 
 def test_statements_keeps_trigger_block_intact():
