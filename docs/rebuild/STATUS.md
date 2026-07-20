@@ -47,13 +47,13 @@ Preserved legacy quirks (deliberate, test-pinned — change only with an explici
 The port scope is `main/post_process.py` + geocoding + donor system behind the new gateway, PLUS
 these obligations discovered in Phase 2 — **forgetting any of these silently freezes data**:
 
-1. `pris_kvm` computation and write path (legacy computes in post_process; new repo never writes it).
+1. `pris_kvm` computation and write path (legacy computes in post_process; new repo never writes it). — DONE (2026-07-20, phase 3)
 2. `image_hosted_url` write path (same class). → RE-SCOPED to Phase 5 (2026-07-20): only legacy writer is manual Drive tooling (`predownload_thumbnails_to_drive.py`), not the nightly; the Phase 5 web app owns image serving.
 3. **`eiendom_processed` writes** (adresse_cleaned, google_maps_url, travel columns — new pipeline
-   never touches the table; legacy upserts it on every ingest).
+   never touches the table; legacy upserts it on every ingest). — DONE (2026-07-20, phase 3)
 4. **`.str.title()` on Adresse** (post_process.py:242) — live `eiendom.adresse` is title-cased and
    feeds the sheets-facing `adresse_cleaned`; the new ingest writes raw case (~211 rows differ).
-   Phase 3 must reproduce the transform or the user must consciously drop it.
+   Phase 3 must reproduce the transform or the user must consciously drop it. — DONE (2026-07-20, phase 3)
 5. Migration-runner note: add a trigger-block regression test for `_statements()` before any
    trigger-bearing migration. — DONE (2026-07-20)
 
@@ -66,6 +66,13 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
 - `run ingest`'s archive dir is `data/eiendom/html_crawled_rebuild` (separated from legacy's);
   merge the two at cutover.
 - Daily/weekly notify "added" metrics inherit the activate-on-2nd-appearance timing.
+- **Real Routes API call never exercised** — every Phase 3 test/checkpoint used fakes or hit 0
+  candidates; the Phase 4 supervised run must include at least one real `run enrich` Routes call
+  with ledger verification (mirrors the DNB-network gap above).
+- **DNB travel backfill** (legacy `scripts/backfill_dnbeiendom_travel_to_sheet.py`, subprocess
+  step in run_eiendom_db.py:244-257) is not yet ported — Phase 4 must port or consciously retire
+  it. The targeted re-request tool (`rerequest_suspicious_travel.py`) likewise stays
+  legacy-manual until Phase 4.
 
 ## Backlog: approved fixes for after cutover
 

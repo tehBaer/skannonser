@@ -180,6 +180,95 @@ def test_score_threshold_is_respected(db_path, domain):
 
 
 # ---------------------------------------------------------------------------
+# Postcode-group check: fires when the LOCAL/neighbor check structurally
+# cannot (rows spaced beyond radius_m apart) but >= min_postcode_group peers
+# share a postnummer and one value is a gross outlier.
+# ---------------------------------------------------------------------------
+
+
+def test_postcode_outlier_flagged_when_local_check_cannot_fire(db_path, domain):
+    conn = connection.connect(db_path)
+    # Rows spaced 1000m apart (well beyond the default radius_m=300) so no
+    # row ever has a spatial neighbor within radius -- the LOCAL check is
+    # structurally unable to fire (neighbor_count stays 0, below
+    # min_neighbors=5) even though all 7 rows share one postnummer
+    # (peer count 6 == min_postcode_group).
+    baseline_values = {"PC1": 29, "PC2": 30, "PC3": 31, "PC4": 30, "PC5": 32, "PC6": 29}
+    for i, (fk, val) in enumerate(baseline_values.items()):
+        _seed_row(conn, fk, offset_m=i * 1000, brj=val, postnummer="2001")
+    _seed_row(conn, "PCOUT", offset_m=6 * 1000, brj=90, postnummer="2001")
+    conn.close()
+
+    conn = connection.connect(db_path)
+    # Lower score_threshold to 2 to isolate the postcode check's own +2
+    # contribution -- alone it sits below the module's default threshold of
+    # 3 (which is tuned for local+postcode/local+donor combos, not a lone
+    # postcode hit).
+    findings = validate_travel(conn, domain, score_threshold=2)
+
+    matches = [f for f in findings if f["finnkode"] == "PCOUT" and f["column"] == "pendl_rush_brj"]
+    assert len(matches) == 1, findings
+    finding = matches[0]
+    assert finding["neighbor_count"] < 5  # LOCAL check could not fire
+    assert finding["postcode_group_size"] >= 6
+    assert finding["score"] == 2
+    assert any(r.startswith("Postnr:") for r in finding["reasons"])
+    assert not any(r.startswith("Local:") for r in finding["reasons"])
+
+    baseline_flagged = [f for f in findings if f["finnkode"] in baseline_values]
+    assert baseline_flagged == []
+
+
+# ---------------------------------------------------------------------------
+# Donor-distance check: a row's donor-resolved value comes from a donor
+# (travel_copy_from_finnkode) whose own coordinates sit far from the row's
+# own -- flagged even though the row has no local/postcode peers of its own.
+# ---------------------------------------------------------------------------
+
+
+def test_donor_distance_outlier_flagged(db_path, domain):
+    conn = connection.connect(db_path)
+
+    # Donor: a single upsert leaves it inactive (activate-on-2nd-appearance,
+    # see STATUS.md) -- donor_seed() reads eiendom_processed alone (no
+    # active filter), so an inactive donor still resolves. Its own brj (50)
+    # is what DONEE's donor-resolved value below picks up.
+    donor_listing = NormalizedListing(
+        **{
+            "Finnkode": "DONOR",
+            "URL": "https://www.finn.no/realestate/ad.html?finnkode=DONOR",
+            "Adresse": "Donor Gate 1",
+            "Postnummer": "3009",
+            "Pris": 3_000_000,
+        }
+    )
+    ListingsRepo(conn).upsert([donor_listing])
+    _seed_processed(conn, "DONOR", lat=_north(20_000), lng=OSLO_LNG, brj=50, postnummer="3009")
+
+    # Donee: active, geographically isolated (unique postnummer, no nearby
+    # candidates) so only the donor-distance check can fire. Its own brj is
+    # left unset -- the CASE/COALESCE donor-resolution query picks DONOR's
+    # value (50) once travel_copy_from_finnkode links to it.
+    _seed_listing(conn, "DONEE", adresse="Donee Gate 1", postnummer="3010")
+    _seed_processed(
+        conn, "DONEE", lat=OSLO_LAT, lng=OSLO_LNG, brj=None, link="DONOR", postnummer="3010"
+    )
+    conn.close()
+
+    conn = connection.connect(db_path)
+    findings = validate_travel(conn, domain)
+
+    matches = [f for f in findings if f["finnkode"] == "DONEE" and f["column"] == "pendl_rush_brj"]
+    assert len(matches) == 1, findings
+    finding = matches[0]
+    assert finding["value"] == 50  # donor-resolved value, not DONEE's own (null)
+    assert finding["score"] == 3
+    assert any(r.startswith("Donor:") for r in finding["reasons"])
+    assert not any(r.startswith("Local:") for r in finding["reasons"])
+    assert not any(r.startswith("Postnr:") for r in finding["reasons"])
+
+
+# ---------------------------------------------------------------------------
 # CLI smoke test
 # ---------------------------------------------------------------------------
 

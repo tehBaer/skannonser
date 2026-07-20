@@ -261,8 +261,9 @@ def validate_travel_cmd(
     """Read-only heuristic scan for suspicious stored travel values (neighbor-
     radius, postcode-group, and donor-distance checks with MAD-based outlier
     scoring). Port of `main/tools/validate_travel_values.py`'s scoring core --
-    see `skannonser.enrich.validate` for the full heuristic writeup. Never
-    calls any API and always exits 0; this is informational only."""
+    see `skannonser.enrich.validate` for the full heuristic writeup.
+    Read-only; never calls any API. Exits 1 only when the DB is missing;
+    findings are informational (exit 0)."""
     db_path = db if db is not None else get_secrets().db_path
     if not db_path.exists():
         typer.echo(f"Error: database not found at {db_path}", err=True)
