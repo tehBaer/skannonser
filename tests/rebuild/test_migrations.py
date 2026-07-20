@@ -42,3 +42,15 @@ def test_connection_settings(tmp_path):
     conn = connection.connect(tmp_path / "x.db")
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_migrate_cli_fails_loud_when_db_missing(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from skannonser.cli import app
+
+    missing = tmp_path / "does-not-exist.db"
+    monkeypatch.setenv("SKANNONSER_DB_PATH", str(missing))
+    result = CliRunner().invoke(app, ["db", "migrate"])
+    assert result.exit_code == 1
+    assert not missing.exists()

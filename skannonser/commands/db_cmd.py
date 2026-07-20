@@ -33,6 +33,10 @@ def backup(dest_dir: Path = typer.Option(Path("backups"), help="Backup directory
 @app.command()
 def migrate() -> None:
     """Apply pending schema migrations (versioned, explicit — never on connect)."""
-    conn = connection.connect(get_secrets().db_path)
+    db_path = get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+    conn = connection.connect(db_path)
     ran = migrations.migrate(conn)
     typer.echo(f"Applied: {', '.join(ran) if ran else 'nothing (up to date)'}")
