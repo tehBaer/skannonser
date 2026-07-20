@@ -1,0 +1,16 @@
+services:
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SKANNONSER_DB_PATH: /app/main/database/properties.db
+    volumes:
+      - ./main/database:/app/main/database
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./backups:/app/backups
+    restart: unless-stopped
