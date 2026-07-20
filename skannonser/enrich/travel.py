@@ -175,6 +175,7 @@ def _build_rows(conn: sqlite3.Connection, col_map: dict[str, str]) -> list[dict]
         SELECT e.finnkode, e.adresse, e.postnummer,
                ep.lat AS lat, ep.lng AS lng,
                ep.pendl_rush_brj, ep.pendl_rush_mvv, ep.pendl_rush_mvv_uni_rush,
+               ep.pendl_morn_cntr, ep.bil_morn_cntr, ep.pendl_dag_cntr, ep.bil_dag_cntr,
                ep.travel_copy_from_finnkode
         FROM eiendom e
         LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
@@ -192,6 +193,16 @@ def _build_rows(conn: sqlite3.Connection, col_map: dict[str, str]) -> list[dict]
                 "lng": _to_number(r["lng"]),
                 "values": {col_map[db]: r[db] for db in col_map},
                 "donor_link": r["travel_copy_from_finnkode"],
+                # Read-and-passthrough for the four CNTR columns: ProcessedRepo
+                # .upsert writes these UNCONDITIONALLY (unlike the fill-only
+                # travel columns), so every upsert call in this module must
+                # carry the existing values back or they get clobbered to NULL.
+                "cntr": {
+                    "pendl_morn_cntr": r["pendl_morn_cntr"],
+                    "bil_morn_cntr": r["bil_morn_cntr"],
+                    "pendl_dag_cntr": r["pendl_dag_cntr"],
+                    "bil_dag_cntr": r["bil_dag_cntr"],
+                },
                 # Snapshot the link AS STORED, before the pre-pass mutates it.
                 # A link that differs from this at loop time was assigned this
                 # run (pre-pass or in-loop) and must be persisted -- legacy
@@ -311,7 +322,6 @@ def _run_destination(dest, prep, processed, gateway, api_key, post, force_api, m
         rows = sorted(rows, key=lambda r: 1 if _clean(r.get("donor_link")) else 0)
 
     for row in rows:
-        lat, lng = row.get("lat"), row.get("lng")
         stored_link = row.get("_stored_link", "")
         donor = maybe_assign_donor(row, assign_cache, reuse)
         # "Newly assigned" = differs from the link already in the DB, so a
@@ -319,7 +329,10 @@ def _run_destination(dest, prep, processed, gateway, api_key, post, force_api, m
         # unchanged pre-existing link is not re-written.
         newly_assigned = bool(donor) and donor != stored_link
 
-        is_candidate = row["values"].get(df_col) is None and lat is not None and lng is not None
+        # Candidacy = missing value only. Legacy's transit API is
+        # address-based (no coords check) -- coords matter only for donor
+        # assignment (maybe_assign_donor / the pre-pass), not here.
+        is_candidate = row["values"].get(df_col) is None
         row_changed = False
         value_written: Optional[int] = None
 
@@ -328,7 +341,10 @@ def _run_destination(dest, prep, processed, gateway, api_key, post, force_api, m
                 resolve_mvv_uni_donor_value(donor, prep.links, prep.values) if donor else None
             )
             can_use = donor_value is not None and not force_api
-            if newly_assigned and can_use:
+            # Persist a newly-assigned link regardless of whether the chain
+            # value resolves -- legacy's final bulk write persisted the link
+            # unconditionally; only the *value* decision depends on can_use.
+            if newly_assigned:
                 row["donor_link"] = donor
                 row_changed = True
             if is_candidate:
@@ -364,6 +380,7 @@ def _run_destination(dest, prep, processed, gateway, api_key, post, force_api, m
                 row["adresse"],
                 row["postnummer"],
                 travel={db_col: value_written},
+                cntr=row["cntr"],
                 travel_copy_from_finnkode=(row["donor_link"] or None),
             )
 

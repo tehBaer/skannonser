@@ -198,8 +198,25 @@ def test_run_enrich_derivations_write_titled_adresse_and_pris_kvm(conn, domain, 
     assert row["adresse"] == "Storgata 1 B"
     assert row["pris_kvm"] == 71429
     assert stats["derived"] == 1
-    # No coords -> no API candidate.
-    assert post.calls == []
+    # No coords -> still a candidate; legacy's transit API is address-based.
+    assert len(post.calls) == 1
+    assert stats["api_calls"] == 1
+    assert _processed_row(conn, "100")["pendl_rush_brj"] == 25
+
+
+def test_run_enrich_coordless_row_gets_api_attempt_and_value_written(conn, domain, gateway):
+    # No eiendom_processed row at all for "Q" -> lat/lng are None. Candidacy
+    # must not require coords (post_process.py's run loop has no coords
+    # gate; only the preview/estimate never had one either).
+    _seed_listing(conn, "Q", adresse="Q gate 9")
+    post = FakePost(minutes=33)
+
+    stats = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert len(post.calls) == 1
+    assert stats["api_calls"] == 1
+    q = _processed_row(conn, "Q")
+    assert q["pendl_rush_brj"] == 33
 
 
 # ==========================================================================
@@ -249,6 +266,43 @@ def test_run_enrich_prepass_assigned_link_is_persisted(conn, domain, gateway):
 
 
 # ==========================================================================
+# 3b. CNTR columns survive a travel-writing upsert (read-and-passthrough)
+# ==========================================================================
+
+
+def test_run_enrich_preserves_existing_cntr_columns(conn, domain, gateway):
+    # Pre-seed CNTR values the way a prior (unrelated) job would have --
+    # ProcessedRepo.upsert writes the four CNTR columns UNCONDITIONALLY, so
+    # every enrich upsert must read-and-pass them through or they get
+    # clobbered to NULL the moment a travel value gets written for this row.
+    _seed_listing(conn, "E", adresse="E gate 5")
+    ProcessedRepo(conn).upsert(
+        "E",
+        "E gate 5",
+        "0575",
+        lat=OSLO_LAT,
+        lng=OSLO_LNG,
+        cntr={
+            "pendl_morn_cntr": 12,
+            "bil_morn_cntr": 7,
+            "pendl_dag_cntr": 9,
+            "bil_dag_cntr": 3,
+        },
+    )
+
+    post = FakePost(minutes=22)
+    stats = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert stats["api_calls"] == 1
+    e = _processed_row(conn, "E")
+    assert e["pendl_rush_brj"] == 22
+    assert e["pendl_morn_cntr"] == 12
+    assert e["bil_morn_cntr"] == 7
+    assert e["pendl_dag_cntr"] == 9
+    assert e["bil_dag_cntr"] == 3
+
+
+# ==========================================================================
 # 4. mvv_uni linked row gets chain value WRITTEN
 # ==========================================================================
 
@@ -268,6 +322,37 @@ def test_run_enrich_mvv_uni_linked_row_gets_chain_value_written(conn, domain, ga
     b = _processed_row(conn, "B")
     assert b["pendl_rush_mvv_uni_rush"] == 42
     assert b["travel_copy_from_finnkode"] == "A"
+
+
+# ==========================================================================
+# 4b. mvv_uni: a link newly assigned THIS run is persisted even when its
+#     chain value isn't used (force_api forces can_use=False) -- legacy's
+#     final bulk write persisted the link regardless of value resolvability.
+# ==========================================================================
+
+
+def test_run_enrich_mvv_uni_newly_assigned_link_persisted_even_when_unused(conn, domain, gateway):
+    # A is complete for mvv_uni ONLY (not brj/mvv), so the pre-pass (which
+    # searches the "all" cache, requiring all three columns) does NOT link B
+    # to A -- B is linked to A freshly, in-loop, via the mvv_uni-specific
+    # cache. With force_api=True the resolved chain value is deliberately
+    # not used (can_use=False), but the newly-found link must still be
+    # written to the DB alongside B's own fresh API value.
+    _seed_listing(conn, "A", adresse="A gate 1")
+    _seed_listing(conn, "B", adresse="B gate 2")
+    _seed_processed(conn, "A", lat=OSLO_LAT, lng=OSLO_LNG, travel={"pendl_rush_mvv_uni_rush": 40})
+    _seed_processed(conn, "B", lat=_north(50), lng=OSLO_LNG)  # no stored link
+
+    post = FakePost(minutes=15)
+    stats = run_enrich(
+        conn, domain, gateway, API_KEY, targets="mvv_uni", post=post, force_api=True
+    )
+
+    assert len(post.calls) == 1
+    assert stats["api_calls"] == 1
+    b = _processed_row(conn, "B")
+    assert b["pendl_rush_mvv_uni_rush"] == 15  # own API value
+    assert b["travel_copy_from_finnkode"] == "A"  # newly-found donor link, still persisted
 
 
 # ==========================================================================
