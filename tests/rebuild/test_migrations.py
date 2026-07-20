@@ -95,3 +95,16 @@ def test_migration_002_creates_notify_tables(tmp_path):
     tables = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"eiendom_status_history", "daily_listing_snapshot", "daily_metrics"} <= tables
+
+
+def test_statements_keeps_trigger_block_intact():
+    sql = (
+        "CREATE TABLE t (x INTEGER);\n"
+        "CREATE TRIGGER trg AFTER INSERT ON t BEGIN\n"
+        "  UPDATE t SET x = 1; UPDATE t SET x = 2;\n"
+        "END;\n"
+        "CREATE TABLE u (y INTEGER);\n"
+    )
+    stmts = migrations._statements(sql)
+    assert len(stmts) == 3
+    assert stmts[1].startswith("CREATE TRIGGER") and stmts[1].rstrip().endswith("END;")
