@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from skannonser import pipeline
 from skannonser.cli import app
 from skannonser.commands import run_cmd
 from skannonser.config.domain import load_domain
@@ -213,7 +214,7 @@ def test_finn_mark_inactive_skipped_when_failure_rate_too_high(conn, domain, tmp
     assert repo.active_finnkodes() == {"999"}
 
 
-def test_dnb_deactivate_missing_skipped_when_failure_rate_too_high(conn, domain):
+def test_dnb_deactivate_missing_skipped_when_failure_rate_too_high(conn, domain, tmp_path):
     row = {
         "URL": "https://dnbeiendom.no/bolig/existing",
         "StreetAddress": "Nowhere 1",
@@ -237,10 +238,12 @@ def test_dnb_deactivate_missing_skipped_when_failure_rate_too_high(conn, domain)
     stats = run_dnb_ingest(
         domain,
         conn,
+        tmp_path / "proj",
         fetch=flaky_fetch,
+        fetch_delay=lambda: None,
         skip_crawl_urls=[
-            "https://dnbeiendom.no/bolig/a",
-            "https://dnbeiendom.no/bolig/b",
+            "https://dnbeiendom.no/bolig/a-100000001",
+            "https://dnbeiendom.no/bolig/b-100000002",
         ],
     )
 
@@ -257,12 +260,12 @@ def test_dnb_deactivate_missing_skipped_when_failure_rate_too_high(conn, domain)
 # ---------------------------------------------------------------------------
 
 
-def test_dnb_pipeline_offline_end_to_end(conn, domain):
+def test_dnb_pipeline_offline_end_to_end(conn, domain, tmp_path):
     html = (DNB_FIXTURES / "listing1.html").read_text(errors="replace")
-    url = "https://dnbeiendom.no/bolig/listing1"
+    url = "https://dnbeiendom.no/bolig/listing1-205260099"
 
     class FakeResponse:
-        text = html
+        content = html.encode("utf-8")
 
         def raise_for_status(self):
             pass
@@ -271,11 +274,142 @@ def test_dnb_pipeline_offline_end_to_end(conn, domain):
         assert u == url
         return FakeResponse()
 
-    stats = run_dnb_ingest(domain, conn, fetch=fake_fetch, skip_crawl_urls=[url])
+    stats = run_dnb_ingest(
+        domain, conn, tmp_path / "proj", fetch=fake_fetch,
+        fetch_delay=lambda: None, post_fetch_delay=lambda: None,
+        skip_crawl_urls=[url],
+    )
 
     assert stats["crawled"] == 1
     assert stats["parsed"] == 1
     assert stats["failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 (Critical): DNB listing-fetch discipline -- cache, UA/timeout
+# defaults, and post-fetch pacing routed through html_cache.load_or_fetch.
+# ---------------------------------------------------------------------------
+
+
+def test_dnb_listing_cache_hit_produces_no_fetch_call_on_second_run(domain, tmp_path):
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    url = "https://dnbeiendom.no/bolig/listing1-205260099"
+    uid = "205260099"  # last run of digits in the URL, legacy's uid rule.
+
+    html = (DNB_FIXTURES / "listing1.html").read_text(errors="replace")
+    (proj / "html_extracted").mkdir(parents=True)
+    (proj / "html_extracted" / f"{uid}.html").write_text(html, encoding="utf-8")
+
+    stats = run_dnb_ingest(
+        domain, conn, proj, fetch=_fail_if_called, skip_crawl_urls=[url],
+        fetch_delay=lambda: None, post_fetch_delay=lambda: None,
+    )
+
+    assert stats["parsed"] == 1
+    assert stats["failed"] == 0
+
+
+def test_dnb_listing_fetch_uses_legacy_ua_and_timeout_when_defaults_used(domain, tmp_path, monkeypatch):
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    url = "https://dnbeiendom.no/bolig/listing1-205260088"
+    html = (DNB_FIXTURES / "listing1.html").read_text(errors="replace")
+
+    calls = []
+
+    class FakeResponse:
+        content = html.encode("utf-8")
+
+        def raise_for_status(self):
+            pass
+
+    def recording_get(u, **kwargs):
+        calls.append((u, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(pipeline.requests, "get", recording_get)
+
+    # `fetch` is left at its default (None) -- the assertion is specifically
+    # about that default path, not an explicit override.
+    stats = run_dnb_ingest(
+        domain, conn, proj, skip_crawl_urls=[url],
+        fetch_delay=lambda: None, post_fetch_delay=lambda: None,
+    )
+
+    assert stats["parsed"] == 1
+    assert len(calls) == 1
+    called_url, kwargs = calls[0]
+    assert called_url == url
+    assert kwargs["headers"] == {"User-Agent": pipeline._DNB_LISTING_USER_AGENT}
+    assert kwargs["timeout"] == 15
+
+
+def test_dnb_post_fetch_delay_fires_only_on_network_fetch(domain, tmp_path):
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    html = (DNB_FIXTURES / "listing1.html").read_text(errors="replace")
+
+    cached_url = "https://dnbeiendom.no/bolig/cached-205260077"
+    cached_uid = "205260077"
+    (proj / "html_extracted").mkdir(parents=True)
+    (proj / "html_extracted" / f"{cached_uid}.html").write_text(html, encoding="utf-8")
+
+    network_url = "https://dnbeiendom.no/bolig/fresh-205260078"
+
+    class FakeResponse:
+        content = html.encode("utf-8")
+
+        def raise_for_status(self):
+            pass
+
+    def fake_fetch(u):
+        return FakeResponse()
+
+    delay_calls = []
+
+    stats = run_dnb_ingest(
+        domain, conn, proj, fetch=fake_fetch,
+        skip_crawl_urls=[cached_url, network_url],
+        fetch_delay=lambda: None,
+        post_fetch_delay=lambda: delay_calls.append(1),
+    )
+
+    assert stats["parsed"] == 2
+    # Only the network fetch (not the cache hit) paces.
+    assert delay_calls == [1]
+
+
+def test_dnb_post_fetch_delay_default_sleeps_random_200_to_800ms(domain, tmp_path, monkeypatch):
+    """Fix 7 (deferred-#9): regression-lock the post_fetch_delay default."""
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    html = (DNB_FIXTURES / "listing1.html").read_text(errors="replace")
+    url = "https://dnbeiendom.no/bolig/fresh-205260079"
+
+    class FakeResponse:
+        content = html.encode("utf-8")
+
+        def raise_for_status(self):
+            pass
+
+    def fake_fetch(u):
+        return FakeResponse()
+
+    sleep_calls = []
+    monkeypatch.setattr(pipeline.time, "sleep", lambda s: sleep_calls.append(s))
+    monkeypatch.setattr(pipeline.random, "uniform", lambda a, b: 555)
+
+    run_dnb_ingest(
+        domain, conn, proj, fetch=fake_fetch, skip_crawl_urls=[url],
+        fetch_delay=lambda: None,
+    )
+
+    assert sleep_calls == [555 / 1000]
 
 
 def test_finn_parse_failure_is_counted_and_not_upserted(tmp_path):
@@ -392,3 +526,62 @@ def test_cli_ingest_ok_at_exactly_the_threshold(tmp_path, monkeypatch):
         app, ["run", "ingest", "--source", "finn", "--db", str(db)]
     )
     assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# Fix 4 (Important): zero-url crawl fails loud at the CLI.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_ingest_exits_nonzero_when_crawl_returns_zero_urls(tmp_path, monkeypatch):
+    db = _seeded_db(tmp_path)
+
+    def fake_finn(domain, conn, project_dir, **kwargs):
+        return {"crawled": 0, "parsed": 0, "failed": 0, "upserted": 0, "deactivated": 0}
+
+    monkeypatch.setattr(run_cmd, "run_finn_ingest", fake_finn)
+
+    result = CliRunner().invoke(
+        app, ["run", "ingest", "--source", "finn", "--db", str(db)]
+    )
+    assert result.exit_code == 1
+    assert "crawl returned zero URLs" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Fix 5 (Minor promoted): run commands must not auto-migrate.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_ingest_exits_nonzero_when_migrations_pending(tmp_path):
+    db = tmp_path / "unmigrated.db"
+    connection.connect(db).close()  # touches the file but applies no migrations
+
+    result = CliRunner().invoke(
+        app, ["run", "ingest", "--source", "finn", "--db", str(db)]
+    )
+    assert result.exit_code == 1
+    assert "pending migrations" in result.output
+    assert "skannonser db migrate" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Fix 6 (Minor promoted): archive_dir default separated from legacy's.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_ingest_uses_rebuild_archive_dir_by_default(tmp_path, monkeypatch):
+    db = _seeded_db(tmp_path)
+    captured = {}
+
+    def fake_finn(domain, conn, project_dir, **kwargs):
+        captured.update(kwargs)
+        return {"crawled": 1, "parsed": 1, "failed": 0, "upserted": 1, "deactivated": 0}
+
+    monkeypatch.setattr(run_cmd, "run_finn_ingest", fake_finn)
+
+    result = CliRunner().invoke(
+        app, ["run", "ingest", "--source", "finn", "--db", str(db)]
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["archive_dir"] == Path("data/eiendom") / "html_crawled_rebuild"

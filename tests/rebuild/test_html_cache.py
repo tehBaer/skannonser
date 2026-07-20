@@ -143,6 +143,20 @@ def test_fetch_delay_fires_only_on_network_path(tmp_path):
     assert calls == [1], "fetch_delay must fire on cache miss before fetch"
 
 
+# ---------------------------------------------------------------------------
+# Fix 7 (deferred-#9): regression-lock the fetch_delay default branch.
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_delay_default_sleeps_0_1s(tmp_path, monkeypatch):
+    sleep_calls = []
+    monkeypatch.setattr(html_cache.time, "sleep", lambda s: sleep_calls.append(s))
+
+    load_or_fetch("https://x/123", tmp_path, "123", fetch=_fake_fetch_ok)
+
+    assert sleep_calls == [0.1]
+
+
 def test_force_refetches_even_when_cached(tmp_path):
     """`force=True` mirrors legacy's `force_save` path (ad_html_loader.py:101-104):
     skip the cache-read entirely and always fetch + save, even for a uid that

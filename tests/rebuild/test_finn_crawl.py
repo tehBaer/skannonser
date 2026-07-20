@@ -85,22 +85,29 @@ def test_extract_ad_urls_superset_of_legacy_on_real_page():
     assert extra == {"https://www.finn.no/realestate/homes/ad.html?finnkode=468598543"}
 
 
-def test_crawl_paginates_until_no_new_ads(tmp_path):
+def test_crawl_paginates_until_page_has_zero_ad_matches(tmp_path):
+    """Legacy stop condition (main/crawl.py:79): stop only when a page has
+    ZERO ad-link matches, not merely zero NEW ones -- a page of only
+    already-seen ads must not stop the crawl."""
     domain = load_domain()
 
     page1_html = """
     <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000001">a</a>
     <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000002">a</a>
     """
+    # Only-repeat page: every ad here was already seen on page 1. Must NOT
+    # stop the crawl (it has non-zero ad-link matches).
     page2_html = """
     <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000002">a</a>
-    <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000003">a</a>
+    <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000001">a</a>
     """
     page3_html = """
     <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000003">a</a>
     """
+    # Zero ad-link matches -> this is what actually stops the crawl.
+    page4_html = "<p>no more results</p>"
 
-    pages = [page1_html, page2_html, page3_html]
+    pages = [page1_html, page2_html, page3_html, page4_html]
     fetched_urls = []
 
     class FakeResponse:
@@ -124,14 +131,50 @@ def test_crawl_paginates_until_no_new_ads(tmp_path):
     assert "&page=" not in fetched_urls[0]
     assert fetched_urls[1].endswith("&page=2")
     assert fetched_urls[2].endswith("&page=3")
+    assert fetched_urls[3].endswith("&page=4")
 
-    # Stops after page 3 yields no new ads (page 4 never fetched).
-    assert len(fetched_urls) == 3
+    # Crawls through the only-repeat page 2 and the new-ad page 3, and only
+    # stops after page 4 yields zero matches (page 5 never fetched).
+    assert len(fetched_urls) == 4
 
     assert (archive_dir / "page1.html").exists()
     assert (archive_dir / "page2.html").exists()
     assert (archive_dir / "page3.html").exists()
-    assert not (archive_dir / "page4.html").exists()
+    assert (archive_dir / "page4.html").exists()
+    assert not (archive_dir / "page5.html").exists()
+
+
+def test_crawl_page_of_only_repeat_ads_does_not_stop_crawl(tmp_path):
+    """Narrow regression test for the specific defect this fix corrects:
+    the OLD (wrong) stop condition would have broken after page 2 here
+    (zero NEW finnkodes), but the correct legacy condition keeps going
+    since page 2 has non-zero ad-link matches."""
+    domain = load_domain()
+
+    page1_html = '<a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000001">a</a>'
+    page2_html = '<a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000001">a</a>'  # pure repeat
+    page3_html = '<a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000002">a</a>'
+    page4_html = ""
+
+    pages = [page1_html, page2_html, page3_html, page4_html]
+    fetched_urls = []
+
+    class FakeResponse:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    def fake_fetch(url):
+        fetched_urls.append(url)
+        return FakeResponse(pages[len(fetched_urls) - 1])
+
+    result = crawl(domain, fetch=fake_fetch, max_pages=50, page_delay=lambda: None)
+
+    assert len(fetched_urls) == 4
+    finnkodes = [fk for fk, _ in result]
+    assert finnkodes == ["100000001", "100000002"]
 
 
 def test_crawl_respects_max_pages(tmp_path):
@@ -175,8 +218,9 @@ def test_crawl_paces_between_pages():
     page3_html = """
     <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000003">a</a>
     """
+    page4_html = ""  # zero matches -> stop
 
-    pages = [page1_html, page2_html, page3_html]
+    pages = [page1_html, page2_html, page3_html, page4_html]
     fetched_urls = []
 
     class FakeResponse:
@@ -192,3 +236,39 @@ def test_crawl_paces_between_pages():
 
     crawl(domain, fetch=fake_fetch, page_delay=lambda: delay_calls.append(1))
     assert len(delay_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Fix 7 (deferred-#9): regression-lock the page_delay default branch.
+# ---------------------------------------------------------------------------
+
+
+def test_page_delay_default_sleeps_random_200_to_500ms(monkeypatch):
+    import skannonser.ingest.finn.crawl as crawl_module
+
+    domain = load_domain()
+
+    page1_html = '<a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000001">a</a>'
+    page2_html = ""  # zero matches -> stop after exactly one page_delay() call
+
+    pages = [page1_html, page2_html]
+    fetched_urls = []
+
+    class FakeResponse:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    def fake_fetch(url):
+        fetched_urls.append(url)
+        return FakeResponse(pages[len(fetched_urls) - 1])
+
+    sleep_calls = []
+    monkeypatch.setattr(crawl_module.time, "sleep", lambda s: sleep_calls.append(s))
+    monkeypatch.setattr(crawl_module.random, "uniform", lambda a, b: 999)
+
+    crawl_module.crawl(domain, fetch=fake_fetch, max_pages=50)
+
+    assert sleep_calls == [999 / 1000]

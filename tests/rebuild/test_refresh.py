@@ -289,7 +289,7 @@ def test_stale_open_mode_selects_correct_rows(conn, domain, tmp_path):
 
     stats = refresh_listings(
         conn, domain, tmp_path / "proj", mode="stale-open",
-        fetch=recording_fetch, fetch_delay=lambda: None,
+        fetch=recording_fetch, fetch_delay=lambda: None, listing_delay=lambda: None,
     )
 
     assert set(calls) == {_url_for("600"), _url_for("700")}
@@ -320,7 +320,7 @@ def test_inactive_mode_includes_closed_statuses(conn, domain, tmp_path):
 
     stats = refresh_listings(
         conn, domain, tmp_path / "proj", mode="inactive",
-        fetch=recording_fetch, fetch_delay=lambda: None,
+        fetch=recording_fetch, fetch_delay=lambda: None, listing_delay=lambda: None,
     )
 
     assert set(calls) == {_url_for("200"), _url_for("600")}
@@ -354,6 +354,68 @@ def test_unknown_mode_rejected(conn, domain, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# listing_delay: inter-listing pacing, additional to fetch_delay's own
+# per-fetch pacing inside html_cache.load_or_fetch (legacy runs both --
+# main/sync/refresh_listings.py:65,167-168).
+# ---------------------------------------------------------------------------
+
+
+def test_listing_delay_fires_between_listings_not_after_last(conn, domain, tmp_path):
+    repo = ListingsRepo(conn)
+    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])
+    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])  # activate
+    repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])
+    repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])  # activate
+    repo.upsert([_listing("300", Tilgjengelighet="Til salgs")])
+    repo.upsert([_listing("300", Tilgjengelighet="Til salgs")])  # activate
+    assert repo.active_finnkodes() == {"100", "200", "300"}
+
+    delay_calls = []
+
+    stats = refresh_listings(
+        conn, domain, tmp_path / "proj", mode="all",
+        fetch=_fake_fetch_minimal, fetch_delay=lambda: None,
+        listing_delay=lambda: delay_calls.append(1),
+    )
+
+    assert stats["candidates"] == 3
+    # Fires between listings only: 3 candidates -> 2 delay calls, none after
+    # the last listing (matches legacy's `if current_num < total`).
+    assert len(delay_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Fix 7 (deferred-#9): regression-lock the default-delay branches. Each
+# default-delay function gets one test that monkeypatches `time.sleep` in
+# its own module, drives the None-default path once, and asserts the
+# expected sleep argument -- locking the defaults, this phase's proven
+# regression class.
+# ---------------------------------------------------------------------------
+
+
+def test_listing_delay_default_sleeps_0_2s(conn, domain, tmp_path, monkeypatch):
+    from skannonser.ingest.finn import refresh as refresh_module
+
+    repo = ListingsRepo(conn)
+    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])
+    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])
+    repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])
+    repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])
+
+    sleep_calls = []
+    monkeypatch.setattr(refresh_module.time, "sleep", lambda s: sleep_calls.append(s))
+
+    refresh_listings(
+        conn, domain, tmp_path / "proj", mode="all",
+        fetch=_fake_fetch_minimal, fetch_delay=lambda: None,
+    )
+
+    # html_cache's own default fetch_delay (0.1s) is bypassed above via the
+    # explicit no-op, isolating this to listing_delay's default sleep only.
+    assert sleep_calls == [0.2]
+
+
+# ---------------------------------------------------------------------------
 # CLI: `skannonser run refresh`
 # ---------------------------------------------------------------------------
 
@@ -379,6 +441,16 @@ def test_cli_refresh_rejects_bad_mode(tmp_path):
         app, ["run", "refresh", "--mode", "bogus", "--db", str(db)]
     )
     assert result.exit_code == 2
+
+
+def test_cli_refresh_exits_nonzero_when_migrations_pending(tmp_path):
+    db = tmp_path / "unmigrated.db"
+    connection.connect(db).close()  # touches the file but applies no migrations
+
+    result = CliRunner().invoke(app, ["run", "refresh", "--db", str(db)])
+    assert result.exit_code == 1
+    assert "pending migrations" in result.output
+    assert "skannonser db migrate" in result.output
 
 
 def test_cli_refresh_routes_to_refresh_listings(tmp_path, monkeypatch):

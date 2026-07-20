@@ -33,6 +33,31 @@ def _failure_rate_ok(source: str, stats: dict) -> bool:
     return True
 
 
+def _crawled_ok(source: str, stats: dict) -> bool:
+    """Fail loud when a crawl finds zero URLs (mirrors legacy DNB's
+    RuntimeError on an empty crawl). The pipeline itself already skips
+    mark_inactive/deactivate_missing in this case (guard 1) -- this is the
+    operational alert layered on top, matching Fix 4's ask that `run
+    ingest` exit non-zero rather than silently succeed with nothing done."""
+    if stats["crawled"] == 0:
+        typer.echo(f"ERROR: {source} crawl returned zero URLs", err=True)
+        return False
+    return True
+
+
+def _require_no_pending_migrations(conn) -> bool:
+    """`run ingest`/`run refresh` must never auto-apply migrations (Fix 5)
+    -- only `skannonser db migrate` does, explicitly. Fails loud instead."""
+    pending = migrations.pending(conn)
+    if pending:
+        typer.echo(
+            "Error: pending migrations - run 'skannonser db migrate' first",
+            err=True,
+        )
+        return False
+    return True
+
+
 @app.command()
 def ingest(
     source: str = typer.Option("all", "--source", help="finn|dnb|all"),
@@ -56,25 +81,32 @@ def ingest(
         raise typer.Exit(code=1)
 
     conn = connection.connect(db_path)
-    migrations.migrate(conn)
+    if not _require_no_pending_migrations(conn):
+        raise typer.Exit(code=1)
     domain = load_domain()
 
     ok = True
 
     if source in ("finn", "all"):
-        # Archive raw crawl result pages next to the ad cache, mirroring
-        # legacy's data/eiendom/html_crawled/ (debuggability + parallel-run
-        # diff classification).
+        # Archive raw crawl result pages next to the ad cache. Deliberately
+        # NOT legacy's data/eiendom/html_crawled/ -- that directory is
+        # legacy's own, and writing into it here risks a clobber during the
+        # parallel-run era. Separate from legacy's archive dir until
+        # phase-4 cutover.
         stats = run_finn_ingest(
-            domain, conn, project_dir, archive_dir=project_dir / "html_crawled"
+            domain, conn, project_dir, archive_dir=project_dir / "html_crawled_rebuild"
         )
         typer.echo(f"finn: {stats}")
+        if not _crawled_ok("finn", stats):
+            ok = False
         if not _failure_rate_ok("finn", stats):
             ok = False
 
     if source in ("dnb", "all"):
         stats = run_dnb_ingest(domain, conn)
         typer.echo(f"dnb: {stats}")
+        if not _crawled_ok("dnb", stats):
+            ok = False
         if not _failure_rate_ok("dnb", stats):
             ok = False
 
@@ -110,7 +142,8 @@ def refresh(
         raise typer.Exit(code=1)
 
     conn = connection.connect(db_path)
-    migrations.migrate(conn)
+    if not _require_no_pending_migrations(conn):
+        raise typer.Exit(code=1)
     domain = load_domain()
 
     stats = refresh_listings(conn, domain, project_dir, mode)

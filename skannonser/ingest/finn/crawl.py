@@ -137,7 +137,7 @@ def crawl(
     domain: DomainConfig,
     fetch=requests.get,
     archive_dir: Path | None = None,
-    max_pages: int = 50,
+    max_pages: int = 50,  # Safety cap only (legacy unbounded); observed depth ~20 pages.
     page_delay: Callable[[], None] | None = None,
 ) -> list[tuple[str, str]]:
     """Crawl FINN result pages for `domain`, returning deduplicated
@@ -145,10 +145,15 @@ def crawl(
 
     Pagination follows the legacy page-param mechanism (`parse_resultpage`
     in `main/crawl.py`): page 1 uses the bare search URL, subsequent pages
-    append `&page=N`. Crawling stops once a page yields no ads not already
-    seen on an earlier page, or after `max_pages` pages, whichever comes
-    first. When `archive_dir` is given, each page's raw HTML is written
-    there as `page{N}.html`.
+    append `&page=N`. Crawling stops only when a page yields ZERO ad-link
+    matches (legacy: `main/crawl.py:79`, `if match_count == 0: break`) --
+    NOT merely zero *new* finnkodes, so a page of only already-seen ads
+    does not stop the crawl (matches legacy's `extract_URLs` loop, which
+    keeps paginating through such pages and only reports "new vs saved
+    data" for visibility). Results are still deduped by finnkode.
+    `max_pages` (default 50) is a safety cap only (legacy unbounded);
+    observed depth ~20 pages. When `archive_dir` is given, each page's raw
+    HTML is written there as `page{N}.html`.
     """
     url_base = build_search_url(domain)
 
@@ -169,14 +174,17 @@ def crawl(
             (archive_dir / f"page{page}.html").write_text(html, encoding="utf-8")
 
         page_pairs = extract_ad_urls(html)
-        new_pairs = [(fk, u) for fk, u in page_pairs if fk not in seen_finnkodes]
 
-        if not new_pairs:
+        # Legacy stop condition: zero ad-link matches on the page, not zero
+        # NEW matches (main/crawl.py:79). A page of only already-seen ads
+        # must not stop the crawl.
+        if not page_pairs:
             break
 
-        for fk, u in new_pairs:
-            seen_finnkodes.add(fk)
-            all_pairs.append((fk, u))
+        for fk, u in page_pairs:
+            if fk not in seen_finnkodes:
+                seen_finnkodes.add(fk)
+                all_pairs.append((fk, u))
 
         # Apply inter-page delay (legacy behavior: random 200-500ms between page fetches)
         if page_delay is not None:

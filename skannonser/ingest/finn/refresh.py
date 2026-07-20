@@ -36,6 +36,7 @@ to `eiendom_status_history`.
 """
 
 import sqlite3
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -95,6 +96,7 @@ def refresh_listings(
     mode: str,
     fetch=requests.get,
     fetch_delay: Callable[[], None] | None = None,
+    listing_delay: Callable[[], None] | None = None,
 ) -> dict:
     """Re-download every selected listing's ad page, update its
     `tilgjengelighet`, and append to `eiendom_status_history` only where the
@@ -105,6 +107,14 @@ def refresh_listings(
     is caught and counted in `errors` -- mirroring `refresh_listing`'s
     try/except -- without updating that listing's status or aborting the
     rest of the batch.
+
+    `listing_delay` paces BETWEEN listings, in addition to `fetch_delay`'s
+    own per-fetch pacing inside `html_cache.load_or_fetch` -- legacy runs
+    both: a 0.1s force-fetch sleep inside `load_or_fetch_ad_html`, plus a
+    separate `time.sleep(delay)` (default 0.2s) between listings in
+    `refresh_all_listings` itself (main/sync/refresh_listings.py:65,167-168).
+    It fires after every listing except the last, matching legacy's
+    `if current_num < total: time.sleep(delay)` placement exactly.
 
     Returns `{"candidates", "refreshed", "status_changed", "errors"}`.
     """
@@ -117,7 +127,7 @@ def refresh_listings(
     status_changed = 0
     errors = 0
 
-    for row in rows:
+    for i, row in enumerate(rows):
         finnkode = str(row["finnkode"]).strip()
         url = row["url"]
         old_status = row["tilgjengelighet"]
@@ -130,12 +140,17 @@ def refresh_listings(
             new_status = listing.Tilgjengelighet
         except Exception:
             errors += 1
-            continue
+        else:
+            repo.update_status(finnkode, new_status)
+            if repo.record_status_change_if_changed(finnkode, old_status, new_status):
+                status_changed += 1
+            refreshed += 1
 
-        repo.update_status(finnkode, new_status)
-        if repo.record_status_change_if_changed(finnkode, old_status, new_status):
-            status_changed += 1
-        refreshed += 1
+        if i < candidates - 1:
+            if listing_delay is not None:
+                listing_delay()
+            else:
+                time.sleep(0.2)
 
     return {
         "candidates": candidates,
