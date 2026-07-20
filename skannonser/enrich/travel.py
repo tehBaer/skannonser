@@ -31,6 +31,18 @@ Design notes (legacy line refs are to ``post_process.py``):
   * ``BudgetExceeded`` from ``.minutes()`` propagates BEFORE any write for that
     row; the loop halts and stats carry ``budget_exhausted=True`` (already-
     written rows persist -- every write commits immediately).
+  * Price eligibility (``eligible_mask``, 589-591): candidacy/run scanning
+    (``_estimate_plain``/``_estimate_uni``/``_run_destination``'s row loop)
+    is restricted to ``pris <= domain.filters.sheets_max_price`` (missing
+    price counts as eligible, legacy's ``fillna(0)``). This does NOT apply
+    to donor-cache construction or the pre-pass (463-466/534-587 run over
+    the FULL row set, unfiltered) -- an over-priced listing can still be a
+    *donor* if it already has complete data, it just never becomes a new
+    API-call *candidate*. Found via ``skannonser verify enrich`` against the
+    production DB (task-9): every active listing missing BRJ/MVV/MVV-UNI
+    data on that DB happened to be priced above the cap, so the pre-fix
+    ``estimate()``/``run_enrich()`` would have spent Routes budget on
+    listings legacy would have skipped outright.
 """
 
 import sqlite3
@@ -77,6 +89,19 @@ def _to_number(value) -> Optional[float]:
     if f != f:  # NaN
         return None
     return f
+
+
+def _is_price_eligible(pris: Optional[float], max_price: Optional[float]) -> bool:
+    """Port of the ``eligible_mask`` price filter (post_process.py:590-591):
+    ``df['Pris'].fillna(0) <= SHEETS_MAX_PRICE``. A missing price is treated
+    as 0 (always eligible); ``max_price`` of ``None`` disables the filter
+    entirely (matches legacy's ``SHEETS_MAX_PRICE = None`` config case,
+    guarded upstream in ``post_process_eiendom`` at line 590).
+    """
+    if max_price is None:
+        return True
+    price = pris if pris is not None else 0.0
+    return price <= max_price
 
 
 def compute_pris_kvm(pris, primary_area, usable_i_area, usable_area) -> Optional[int]:
@@ -172,7 +197,7 @@ def _build_rows(conn: sqlite3.Connection, col_map: dict[str, str]) -> list[dict]
     ``values`` carries all three travel columns keyed the legacy way.
     """
     sql = """
-        SELECT e.finnkode, e.adresse, e.postnummer,
+        SELECT e.finnkode, e.adresse, e.postnummer, e.pris,
                ep.lat AS lat, ep.lng AS lng,
                ep.pendl_rush_brj, ep.pendl_rush_mvv, ep.pendl_rush_mvv_uni_rush,
                ep.pendl_morn_cntr, ep.bil_morn_cntr, ep.pendl_dag_cntr, ep.bil_dag_cntr,
@@ -189,6 +214,7 @@ def _build_rows(conn: sqlite3.Connection, col_map: dict[str, str]) -> list[dict]
                 "finnkode": str(r["finnkode"]),
                 "adresse": r["adresse"],
                 "postnummer": r["postnummer"],
+                "pris": _to_number(r["pris"]),
                 "lat": _to_number(r["lat"]),
                 "lng": _to_number(r["lng"]),
                 "values": {col_map[db]: r[db] for db in col_map},
@@ -305,7 +331,9 @@ def _apply_api_result(minutes, row, df_col, max_min, stats) -> tuple[Optional[in
     return None, False
 
 
-def _run_destination(dest, prep, processed, gateway, api_key, post, force_api, max_min, reuse, stats):
+def _run_destination(
+    dest, prep, processed, gateway, api_key, post, force_api, max_min, reuse, max_price, stats
+):
     df_col = dest.df_column
     db_col = dest.db_column
     is_uni = dest.exclusive
@@ -322,6 +350,14 @@ def _run_destination(dest, prep, processed, gateway, api_key, post, force_api, m
         rows = sorted(rows, key=lambda r: 1 if _clean(r.get("donor_link")) else 0)
 
     for row in rows:
+        # Price-ineligible rows are entirely out of scope for this loop --
+        # legacy's run loop only ever iterates `df.loc[eligible_mask]`
+        # (post_process.py:877/1001/1123). They can still be donors if a
+        # PRIOR run (or the pre-pass, which runs over the full row set) left
+        # them complete, but they never get a donor assignment, an API call,
+        # or a donor-cache addition from this run.
+        if not _is_price_eligible(row.get("pris"), max_price):
+            continue
         stored_link = row.get("_stored_link", "")
         donor = maybe_assign_donor(row, assign_cache, reuse)
         # "Newly assigned" = differs from the link already in the DB, so a
@@ -433,11 +469,13 @@ def run_enrich(
     processed = ProcessedRepo(conn)
     max_min = float(domain.travel.max_travel_minutes)
     reuse = float(domain.travel.reuse_within_meters)
+    max_price = domain.filters.sheets_max_price
 
     try:
         for dest in selected:
             _run_destination(
-                dest, prep, processed, gateway, api_key, post, force_api, max_min, reuse, stats
+                dest, prep, processed, gateway, api_key, post, force_api,
+                max_min, reuse, max_price, stats,
             )
     except BudgetExceeded:
         stats["budget_exhausted"] = True
@@ -450,16 +488,22 @@ def run_enrich(
 # ---------------------------------------------------------------------------
 
 
-def _estimate_plain(df_col, cache, rows, reuse) -> tuple[int, int]:
+def _estimate_plain(df_col, cache, rows, reuse, max_price) -> tuple[int, int]:
     """(max_attempts, simulated_attempts) for a brj/mvv destination.
 
     ``max`` uses the fixed seed cache (post_process.py:637-670); ``simulated``
     grows a cache copy as each attempt optimistically seeds a donor
     (672-721). Candidacy is ``value is None`` only, matching the legacy
-    preview (643) -- no coords check here.
+    preview (643) -- no coords check here. The scan itself is restricted to
+    price-eligible rows (``df.loc[eligible_mask]``, post_process.py:589-591,
+    642, 686) -- an ineligible row is skipped outright, exactly like legacy;
+    it can still seed the donor cache (built earlier from the FULL row set)
+    but is never itself a candidate.
     """
     max_attempts = 0
     for row in rows:
+        if not _is_price_eligible(row.get("pris"), max_price):
+            continue
         if row["values"].get(df_col) is not None:
             continue
         if maybe_assign_donor(row, cache, reuse):
@@ -469,6 +513,8 @@ def _estimate_plain(df_col, cache, rows, reuse) -> tuple[int, int]:
     sim_cache = list(cache)
     sim_attempts = 0
     for row in rows:
+        if not _is_price_eligible(row.get("pris"), max_price):
+            continue
         if row["values"].get(df_col) is not None:
             continue
         if maybe_assign_donor(row, sim_cache, reuse):
@@ -481,12 +527,15 @@ def _estimate_plain(df_col, cache, rows, reuse) -> tuple[int, int]:
     return max_attempts, sim_attempts
 
 
-def _estimate_uni(df_col, cache, rows, links, values, reuse) -> tuple[int, int]:
+def _estimate_uni(df_col, cache, rows, links, values, reuse, max_price) -> tuple[int, int]:
     """(max, simulated) for mvv_uni: reuse counts only when the donor chain
     value actually resolves (post_process.py:739-767); simulated == max (770-771).
+    Price-eligibility scoping matches ``_estimate_plain`` (see its docstring).
     """
     attempts = 0
     for row in rows:
+        if not _is_price_eligible(row.get("pris"), max_price):
+            continue
         if row["values"].get(df_col) is not None:
             continue
         donor = maybe_assign_donor(row, cache, reuse)
@@ -507,6 +556,7 @@ def estimate(conn: sqlite3.Connection, domain: DomainConfig, targets: str = "all
     selected = _select_destinations(domain, targets)
     prep = _prepare(conn, domain, selected)
     reuse = float(domain.travel.reuse_within_meters)
+    max_price = domain.filters.sheets_max_price
 
     per_destination: dict[str, dict] = {}
     total_max = 0
@@ -515,10 +565,10 @@ def estimate(conn: sqlite3.Connection, domain: DomainConfig, targets: str = "all
         cache = prep.caches[dest.key]  # per-target cache (legacy preview)
         if dest.exclusive:
             mx, sim = _estimate_uni(
-                dest.df_column, cache, prep.rows, prep.links, prep.values, reuse
+                dest.df_column, cache, prep.rows, prep.links, prep.values, reuse, max_price
             )
         else:
-            mx, sim = _estimate_plain(dest.df_column, cache, prep.rows, reuse)
+            mx, sim = _estimate_plain(dest.df_column, cache, prep.rows, reuse, max_price)
         per_destination[dest.key] = {"max_attempts": mx, "simulated_attempts": sim}
         total_max += mx
         total_sim += sim

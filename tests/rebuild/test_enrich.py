@@ -495,6 +495,67 @@ def test_estimate_invalid_targets_raises(conn, domain):
 
 
 # ==========================================================================
+# 12. price eligibility (SHEETS_MAX_PRICE, post_process.py:589-591)
+#
+# Found via `skannonser verify enrich` against the production DB (task-9):
+# candidacy/run scanning must exclude rows priced above sheets_max_price,
+# exactly like legacy's `eligible_mask`, but donor-cache construction and
+# the pre-pass (which run over the FULL row set) must not.
+# ==========================================================================
+
+
+def test_estimate_excludes_price_ineligible_row(conn, domain):
+    # R is missing BRJ but priced above sheets_max_price -> must not count
+    # as a candidate on either the max or the simulated side.
+    over_price = domain.filters.sheets_max_price + 1
+    _seed_listing(conn, "R", adresse="R gate", pris=over_price)
+    _seed_processed(conn, "R", lat=OSLO_LAT, lng=OSLO_LNG)
+
+    result = estimate(conn, domain, targets="brj")
+    assert result["per_destination"]["brj"] == {"max_attempts": 0, "simulated_attempts": 0}
+
+
+def test_estimate_price_ineligible_row_can_still_donate(conn, domain):
+    # S is priced above the cap but ALREADY has a complete BRJ value -> the
+    # donor cache (built from the full, unfiltered row set) still lets a
+    # nearby price-eligible row T reuse it, even though S is never itself a
+    # candidate.
+    over_price = domain.filters.sheets_max_price + 1
+    _seed_listing(conn, "S", adresse="S gate", pris=over_price)
+    _seed_processed(conn, "S", lat=OSLO_LAT, lng=OSLO_LNG, travel={"pendl_rush_brj": 40})
+    _seed_listing(conn, "T", adresse="T gate", pris=1_000_000)
+    _seed_processed(conn, "T", lat=_north(50), lng=OSLO_LNG)
+
+    result = estimate(conn, domain, targets="brj")
+    assert result["per_destination"]["brj"] == {"max_attempts": 0, "simulated_attempts": 0}
+
+
+def test_run_enrich_skips_price_ineligible_row_no_api_call(conn, domain, gateway):
+    over_price = domain.filters.sheets_max_price + 1
+    _seed_listing(conn, "U", adresse="U gate", pris=over_price)
+    _seed_processed(conn, "U", lat=OSLO_LAT, lng=OSLO_LNG)
+    post = FakePost()
+
+    stats = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert post.calls == []
+    assert stats["api_calls"] == 0
+    assert _processed_row(conn, "U")["pendl_rush_brj"] is None
+
+
+def test_run_enrich_missing_price_is_eligible(conn, domain, gateway):
+    # Legacy treats a missing price as 0 (`fillna(0) <= SHEETS_MAX_PRICE`) --
+    # always eligible.
+    _seed_listing(conn, "V", adresse="V gate", pris=None)
+    post = FakePost(minutes=15)
+
+    stats = run_enrich(conn, domain, gateway, API_KEY, targets="brj", post=post)
+
+    assert stats["api_calls"] == 1
+    assert _processed_row(conn, "V")["pendl_rush_brj"] == 15
+
+
+# ==========================================================================
 # CLI
 # ==========================================================================
 
