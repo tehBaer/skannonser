@@ -638,9 +638,12 @@ The migration must be the live schema verbatim, guarded so it is a no-op on the 
 mkdir -p skannonser/store/migrations
 sqlite3 main/database/properties.db .schema \
   | grep -v 'sqlite_sequence' \
-  | sed -E 's/^CREATE TABLE /CREATE TABLE IF NOT EXISTS /; s/^CREATE INDEX /CREATE INDEX IF NOT EXISTS /; s/^CREATE UNIQUE INDEX /CREATE UNIQUE INDEX IF NOT EXISTS /' \
+  | sed -E 's/^CREATE TABLE (IF NOT EXISTS )?/CREATE TABLE IF NOT EXISTS /; s/^CREATE INDEX (IF NOT EXISTS )?/CREATE INDEX IF NOT EXISTS /; s/^CREATE UNIQUE INDEX (IF NOT EXISTS )?/CREATE UNIQUE INDEX IF NOT EXISTS /' \
   > skannonser/store/migrations/001_adopt_live_schema.sql
 ```
+
+(The `(IF NOT EXISTS )?` group makes the rewrite idempotent — the live DB already stores
+`CREATE TABLE IF NOT EXISTS` for some tables and a blind prepend would double the clause.)
 
 Then open the generated file and sanity-check: it must contain `CREATE TABLE IF NOT EXISTS` statements for exactly these 8 tables — `eiendom`, `eiendom_processed`, `dnbeiendom`, `manual_overrides`, `listing_comments`, `stations`, `station_lines`, `station_travel` — plus their indexes, and no `sqlite_sequence` line. Do not edit the DDL itself.
 
