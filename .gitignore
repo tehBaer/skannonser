@@ -16,3 +16,6 @@ artifacts/
 # SQLite temporary files
 *.db-shm
 *.db-wal
+.env
+backups/
+*.egg-info/
