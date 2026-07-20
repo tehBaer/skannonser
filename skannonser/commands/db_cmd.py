@@ -5,6 +5,7 @@ from pathlib import Path
 import typer
 
 from skannonser.config.settings import get_secrets
+from skannonser.store import connection, migrations
 
 app = typer.Typer(no_args_is_help=True, help="Database maintenance")
 
@@ -27,3 +28,11 @@ def backup(dest_dir: Path = typer.Option(Path("backups"), help="Backup directory
         src_conn.close()
         dest_conn.close()
     typer.echo(f"Backed up {src} -> {dest}")
+
+
+@app.command()
+def migrate() -> None:
+    """Apply pending schema migrations (versioned, explicit — never on connect)."""
+    conn = connection.connect(get_secrets().db_path)
+    ran = migrations.migrate(conn)
+    typer.echo(f"Applied: {', '.join(ran) if ran else 'nothing (up to date)'}")
