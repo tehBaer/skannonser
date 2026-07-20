@@ -1,0 +1,48 @@
+# Domain configuration — the tuning surface of the system.
+# Values ported 1:1 from main/config/filters.py and main/post_process.py on 2026-07-20.
+
+[filters]
+sheets_max_price = 7500000
+url_max_price = 7500000
+min_bra_i = 70
+include_unlisted = true
+
+[coords]
+lat_min = 57.0
+lat_max = 72.0
+lng_min = 4.0
+lng_max = 32.0
+
+[travel]
+reuse_within_meters = 300
+max_travel_minutes = 360
+
+[[destinations]]
+key = "brj"
+label = "BRJ (work, Sandvika)"
+address = "Rådmann Halmrasts Vei 5"
+
+[[destinations]]
+key = "mvv"
+label = "MVV (Lambertseter)"
+address = "Langbølgen 24, 1155 Oslo"
+
+[[destinations]]
+key = "mvv_uni"
+label = "MVV UNI (Gaustadalléen)"
+address = "Gaustadalléen 30, 0373 Oslo"
+
+[polygon]
+# Finn search polygon, (lng, lat) pairs — ported from main/runners/run_eiendom_db.py:140
+points = [
+    [10.656738281250, 59.884802942124],
+    [10.536789920973, 59.797487966246],
+    [10.545723856072, 59.709734171804],
+    [10.332641601563, 59.700380312509],
+    [9.971542814941, 59.874465805403],
+    [11.260986328125, 60.440962535310],
+    [11.585234663086, 60.136034630691],
+    [10.947750935529, 59.714239974969],
+    [10.721282958984, 59.712097173323],
+    [10.715468622953, 59.849132221282],
+]
