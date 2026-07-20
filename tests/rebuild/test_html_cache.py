@@ -104,11 +104,39 @@ def test_load_or_fetch_fetches_and_caches_on_miss(tmp_path):
         calls.append(url)
         return FakeResponse()
 
-    html = load_or_fetch("https://x/99", tmp_path, "99", fetch=fake_fetch)
+    html = load_or_fetch("https://x/99", tmp_path, "99", fetch=fake_fetch, fetch_delay=lambda: None)
 
     assert calls == ["https://x/99"]
     assert "fresh" in html
     assert canonical_path(tmp_path, "99").exists()
     # Second call is served from cache -- fetch must not be called again.
-    html2 = load_or_fetch("https://x/99", tmp_path, "99", fetch=_fail_if_called)
+    html2 = load_or_fetch("https://x/99", tmp_path, "99", fetch=_fail_if_called, fetch_delay=lambda: None)
     assert html2 == canonical_path(tmp_path, "99").read_text(encoding="utf-8")
+
+
+def _fake_fetch_ok(url):
+    """Minimal ok response for testing fetch_delay."""
+    class FakeResponse:
+        content = b"<html>ok</html>"
+
+        def raise_for_status(self):
+            pass
+
+    return FakeResponse()
+
+
+def test_fetch_delay_fires_only_on_network_path(tmp_path):
+    """Verify that fetch_delay is called only on cache misses, never on hits."""
+    calls = []
+
+    proj = tmp_path / "proj"
+    (proj / "html_extracted").mkdir(parents=True)
+    (proj / "html_extracted" / "7.html").write_text("<html>cached</html>")
+
+    # cache hit: no delay
+    load_or_fetch("https://x", proj, "7", fetch=_fail_if_called, fetch_delay=lambda: calls.append(1))
+    assert calls == [], "fetch_delay must not fire on cache hit"
+
+    # network path: delay fires
+    load_or_fetch("https://x", proj, "8", fetch=_fake_fetch_ok, fetch_delay=lambda: calls.append(1))
+    assert calls == [1], "fetch_delay must fire on cache miss before fetch"

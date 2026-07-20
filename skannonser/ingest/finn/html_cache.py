@@ -30,8 +30,10 @@ signatures:
 import gzip
 import os
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import requests
 from bs4 import BeautifulSoup
@@ -100,7 +102,13 @@ def save_ad_html(
     return canonical_path
 
 
-def load_or_fetch(url: str, project_dir: Path, uid: str, fetch=requests.get) -> str:
+def load_or_fetch(
+    url: str,
+    project_dir: Path,
+    uid: str,
+    fetch=requests.get,
+    fetch_delay: Callable[[], None] | None = None,
+) -> str:
     """Return cached HTML for ``uid`` if present, else fetch, cache, and
     return it.
 
@@ -109,11 +117,20 @@ def load_or_fetch(url: str, project_dir: Path, uid: str, fetch=requests.get) -> 
     BeautifulSoup (`str(soup)`) before being saved/compared, matching legacy
     exactly (so change-detection against the ~7,731 existing canonical files,
     which were themselves saved this way, is apples-to-apples).
+
+    When `fetch_delay` is None, sleeps 0.1s before the network fetch to
+    rate-limit ad page fetches (legacy behavior). A cache hit does not sleep.
     """
     project_dir = Path(project_dir)
     canonical_path = project_dir / "html_extracted" / f"{uid}.html"
     if canonical_path.exists():
         return canonical_path.read_text(encoding="utf-8")
+
+    # Apply fetch delay before network request (legacy behavior: 0.1s per fetch)
+    if fetch_delay is not None:
+        fetch_delay()
+    else:
+        time.sleep(0.1)
 
     response = fetch(url)
     response.raise_for_status()
