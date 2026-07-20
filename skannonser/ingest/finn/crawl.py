@@ -16,8 +16,11 @@ Everything else -- the search URL construction, the polygon/filter suffix,
 and the page-param pagination mechanism -- matches legacy exactly.
 """
 
+import random
 import re
+import time
 from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
@@ -135,6 +138,7 @@ def crawl(
     fetch=requests.get,
     archive_dir: Path | None = None,
     max_pages: int = 50,
+    page_delay: Callable[[], None] | None = None,
 ) -> list[tuple[str, str]]:
     """Crawl FINN result pages for `domain`, returning deduplicated
     (finnkode, url) pairs across all pages.
@@ -173,5 +177,11 @@ def crawl(
         for fk, u in new_pairs:
             seen_finnkodes.add(fk)
             all_pairs.append((fk, u))
+
+        # Apply inter-page delay (legacy behavior: random 200-500ms between page fetches)
+        if page_delay is not None:
+            page_delay()
+        else:
+            time.sleep(random.uniform(200, 500) / 1000)
 
     return all_pairs

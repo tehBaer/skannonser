@@ -115,7 +115,7 @@ def test_crawl_paginates_until_no_new_ads(tmp_path):
         return FakeResponse(pages[len(fetched_urls) - 1])
 
     archive_dir = tmp_path / "archive"
-    result = crawl(domain, fetch=fake_fetch, archive_dir=archive_dir, max_pages=50)
+    result = crawl(domain, fetch=fake_fetch, archive_dir=archive_dir, max_pages=50, page_delay=lambda: None)
 
     finnkodes = [fk for fk, _ in result]
     assert finnkodes == ["100000001", "100000002", "100000003"]
@@ -154,7 +154,41 @@ def test_crawl_respects_max_pages(tmp_path):
             f'<a href="https://www.finn.no/realestate/homes/ad.html?finnkode={finnkode}">a</a>'
         )
 
-    result = crawl(domain, fetch=fake_fetch, archive_dir=None, max_pages=3)
+    result = crawl(domain, fetch=fake_fetch, archive_dir=None, max_pages=3, page_delay=lambda: None)
 
     assert call_count == 3
     assert len(result) == 3
+
+
+def test_crawl_paces_between_pages():
+    domain = load_domain()
+
+    delay_calls = []
+    page1_html = """
+    <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000001">a</a>
+    <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000002">a</a>
+    """
+    page2_html = """
+    <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000002">a</a>
+    <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000003">a</a>
+    """
+    page3_html = """
+    <a href="https://www.finn.no/realestate/homes/ad.html?finnkode=100000003">a</a>
+    """
+
+    pages = [page1_html, page2_html, page3_html]
+    fetched_urls = []
+
+    class FakeResponse:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    def fake_fetch(url):
+        fetched_urls.append(url)
+        return FakeResponse(pages[len(fetched_urls) - 1])
+
+    crawl(domain, fetch=fake_fetch, page_delay=lambda: delay_calls.append(1))
+    assert len(delay_calls) >= 1
