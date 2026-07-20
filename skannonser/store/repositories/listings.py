@@ -212,3 +212,35 @@ class ListingsRepo:
             "SELECT finnkode FROM eiendom WHERE active = 1"
         ).fetchall()
         return {row["finnkode"] for row in rows}
+
+    def update_status(self, finnkode: str, new_status: str) -> None:
+        """Update ``tilgjengelighet`` (status) for a listing.
+
+        Port of ``db.py:update_eiendom_status`` (616-638). Note: ``active``
+        is managed by the upsert/mark_inactive lifecycle, not by status
+        refresh -- this never touches it.
+        """
+        self.conn.execute(
+            "UPDATE eiendom SET tilgjengelighet = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE finnkode = ?",
+            (new_status, finnkode),
+        )
+
+    def record_status_change_if_changed(self, finnkode: str, old_status, new_status) -> bool:
+        """Append a row to ``eiendom_status_history`` when the status
+        actually changed.
+
+        Port of ``db.py:record_status_change_if_changed`` (640-660).
+        Statuses are compared after stripping whitespace. Returns True when
+        a history row was written, False when the status was unchanged.
+        """
+        old_norm = str(old_status or "").strip()
+        new_norm = str(new_status or "").strip()
+        if old_norm == new_norm:
+            return False
+        self.conn.execute(
+            "INSERT INTO eiendom_status_history (finnkode, old_status, new_status) "
+            "VALUES (?, ?, ?)",
+            (str(finnkode).strip(), old_norm, new_norm),
+        )
+        return True

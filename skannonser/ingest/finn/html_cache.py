@@ -25,6 +25,13 @@ signatures:
 - `load_or_fetch` returns the HTML string directly (legacy's
   `load_or_fetch_ad_html` returned a parsed `BeautifulSoup`); callers parse
   as needed.
+
+Sanctioned scope extension (Task 14, ledgered): the refresh flow
+(`skannonser/ingest/finn/refresh.py`) needs to force a re-download of
+already-cached ads to detect status changes -- legacy's
+`load_or_fetch_ad_html(..., force_save=True)`. `load_or_fetch` grew a
+`force: bool = False` parameter for this: `force=True` skips the cache-read
+and always fetches + saves, mirroring legacy's `force_save` branch exactly.
 """
 
 import gzip
@@ -108,6 +115,7 @@ def load_or_fetch(
     uid: str,
     fetch=requests.get,
     fetch_delay: Callable[[], None] | None = None,
+    force: bool = False,
 ) -> str:
     """Return cached HTML for ``uid`` if present, else fetch, cache, and
     return it.
@@ -120,10 +128,18 @@ def load_or_fetch(
 
     When `fetch_delay` is None, sleeps 0.1s before the network fetch to
     rate-limit ad page fetches (legacy behavior). A cache hit does not sleep.
+
+    `force=True` mirrors legacy's `force_save` path
+    (`main/extractors/ad_html_loader.py:101-104`, used by the status-refresh
+    flow): the cache-read is skipped entirely, so a fetch+save always
+    happens even for a `uid` that already has a canonical file on disk.
+    `save_ad_html`'s own change-detection still governs whether a new dated
+    snapshot is written -- an unchanged re-fetch produces no snapshot even
+    under `force=True`.
     """
     project_dir = Path(project_dir)
     canonical_path = project_dir / "html_extracted" / f"{uid}.html"
-    if canonical_path.exists():
+    if not force and canonical_path.exists():
         return canonical_path.read_text(encoding="utf-8")
 
     # Apply fetch delay before network request (legacy behavior: 0.1s per fetch)

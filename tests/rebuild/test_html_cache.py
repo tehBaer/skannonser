@@ -7,6 +7,7 @@ Rewrite of `tests/test_ad_html_loader.py` against the new
 """
 
 import gzip
+from datetime import datetime
 from unittest import mock
 
 import pytest
@@ -140,3 +141,38 @@ def test_fetch_delay_fires_only_on_network_path(tmp_path):
     # network path: delay fires
     load_or_fetch("https://x", proj, "8", fetch=_fake_fetch_ok, fetch_delay=lambda: calls.append(1))
     assert calls == [1], "fetch_delay must fire on cache miss before fetch"
+
+
+def test_force_refetches_even_when_cached(tmp_path):
+    """`force=True` mirrors legacy's `force_save` path (ad_html_loader.py:101-104):
+    skip the cache-read entirely and always fetch + save, even for a uid that
+    already has a canonical file on disk."""
+    proj = tmp_path / "proj"
+    (proj / "html_extracted").mkdir(parents=True)
+    (proj / "html_extracted" / "42.html").write_text("<html>old</html>", encoding="utf-8")
+
+    calls = []
+
+    def fake_fetch(url):
+        calls.append(url)
+
+        class FakeResponse:
+            content = b"<html><body>new</body></html>"
+
+            def raise_for_status(self):
+                pass
+
+        return FakeResponse()
+
+    html = load_or_fetch(
+        "https://x/42", proj, "42", fetch=fake_fetch, fetch_delay=lambda: None, force=True
+    )
+
+    assert calls == ["https://x/42"], "force=True must bypass the cache-read and always fetch"
+    assert "new" in html
+    assert canonical_path(proj, "42").read_text(encoding="utf-8") == html
+
+    # Content changed relative to the pre-existing canonical -> a dated
+    # snapshot must be created (save_ad_html's normal change-detection).
+    today = datetime.now().strftime("%Y%m%d")
+    assert snapshot_path(proj, "42", today).exists()
