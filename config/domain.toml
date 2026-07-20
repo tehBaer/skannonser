@@ -46,3 +46,13 @@ points = [
     [10.721282958984, 59.712097173323],
     [10.715468622953, 59.849132221282],
 ]
+
+[dnb]
+# Region GUIDs used as the DNB "locations" search filter — ported verbatim
+# from main/extractors/extract_dnbeiendom.py:26-28.
+region_guids = [
+    "BUSKERUD_ae0fe87e-0ba2-46b7-9164-5ee26c4fc85b",
+    "AKERSHUS_fe2e9e2c-620e-4190-9af0-a5baa93abc1f",
+    "OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c",
+]
+max_pages = 200

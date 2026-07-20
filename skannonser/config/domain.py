@@ -31,12 +31,18 @@ class Destination(BaseModel):
     address: str
 
 
+class Dnb(BaseModel):
+    region_guids: list[str]
+    max_pages: int
+
+
 class DomainConfig(BaseModel):
     filters: Filters
     coords: CoordBounds
     travel: Travel
     destinations: list[Destination]
     polygon_points: list[tuple[float, float]]  # (lng, lat), legacy order
+    dnb: Dnb
 
     @field_validator("polygon_points")
     @classmethod
