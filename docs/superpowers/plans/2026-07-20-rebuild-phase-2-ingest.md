@@ -938,7 +938,10 @@ def test_finn_pipeline_offline_end_to_end(tmp_path):
                             fetch=_fail_if_called, skip_crawl_urls=urls)
 
     assert stats["parsed"] == 2 and stats["failed"] == 0
-    assert conn.execute("SELECT COUNT(*) FROM eiendom WHERE active=1").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] == 2
+    # Legacy quirk preserved: first-seen listings stay active=0 until their 2nd
+    # appearance (Task 6 ruling). A second identical run activates them.
+    assert conn.execute("SELECT COUNT(*) FROM eiendom WHERE active=1").fetchone()[0] == 0
 ```
 
 - [ ] **Step 2: Run failing → implement pipeline + CLI → run passing.** Full suite green.
