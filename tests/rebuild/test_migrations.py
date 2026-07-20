@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from skannonser.store import connection, migrations
@@ -63,3 +65,24 @@ def test_pending_fails_loud_when_migrations_dir_missing(tmp_path, monkeypatch):
     conn = connection.connect(tmp_path / "x.db")
     with pytest.raises(FileNotFoundError):
         migrations.pending(conn)
+
+
+def test_failed_migration_rolls_back_and_is_not_recorded(tmp_path, monkeypatch):
+    mig_dir = tmp_path / "migs"
+    mig_dir.mkdir()
+    (mig_dir / "001_good.sql").write_text("CREATE TABLE a (x INTEGER);")
+    (mig_dir / "002_bad.sql").write_text(
+        "CREATE TABLE b (x INTEGER);\nINSERT INTO nope VALUES (1);"
+    )
+    monkeypatch.setattr(migrations, "MIGRATIONS_DIR", mig_dir)
+    conn = connection.connect(tmp_path / "x.db")
+
+    with pytest.raises(sqlite3.OperationalError):
+        migrations.migrate(conn)
+
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+    assert "a" in tables          # 001 fully applied and recorded
+    assert "b" not in tables      # 002 rolled back entirely, no partial DDL
+    applied = {r["id"] for r in conn.execute("SELECT id FROM schema_migrations")}
+    assert applied == {"001_good"}
