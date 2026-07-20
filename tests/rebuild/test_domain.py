@@ -4,6 +4,18 @@ from pydantic import ValidationError
 from skannonser.config.domain import DomainConfig, load_domain
 
 
+def test_config_show_masks_secrets(monkeypatch):
+    from typer.testing import CliRunner
+
+    from skannonser.cli import app
+
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "super-secret-value")
+    result = CliRunner().invoke(app, ["config", "show"])
+    assert result.exit_code == 0, result.output
+    assert "super-secret-value" not in result.output
+    assert "google_maps_api_key: set" in result.output
+
+
 def test_load_domain_matches_legacy_values():
     d = load_domain()
     assert d.filters.sheets_max_price == 7_500_000
