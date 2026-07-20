@@ -11,7 +11,7 @@ from typing import Any, Optional
 import requests
 
 from skannonser.enrich.sentinels import TRAVEL_API_ERROR, TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC
-from skannonser.gateway import Gateway
+from skannonser.gateway import BudgetExceeded, Gateway
 
 ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 
@@ -88,6 +88,11 @@ class TransitCommute:
         return ROUTES_URL, headers, body
 
     def minutes(self, address: str, postnummer: Optional[str] = None) -> Optional[int]:
+        """Return the transit commute time in minutes, or a sentinel/None.
+
+        Raises BudgetExceeded when the monthly routes budget is exhausted —
+        callers must halt and leave rows untouched.
+        """
         if not self.api_key:
             return None
 
@@ -98,22 +103,24 @@ class TransitCommute:
 
         try:
             response = self.gateway.call("routes", fn)
+
+            if response.status_code != 200:
+                return None
+
+            data = response.json()
+            routes = data.get("routes")
+            if not routes:
+                return TRAVEL_NO_ROUTES
+
+            route = routes[0]
+            if "duration" not in route:
+                return TRAVEL_NO_ROUTES
+
+            m = _parse_duration_minutes(route["duration"])
+            if not _is_reasonable(m, self.max_minutes):
+                return TRAVEL_UNREALISTIC
+            return m
+        except BudgetExceeded:
+            raise
         except Exception:
             return TRAVEL_API_ERROR
-
-        if response.status_code != 200:
-            return None
-
-        data = response.json()
-        routes = data.get("routes")
-        if not routes:
-            return TRAVEL_NO_ROUTES
-
-        route = routes[0]
-        if "duration" not in route:
-            return TRAVEL_NO_ROUTES
-
-        m = _parse_duration_minutes(route["duration"])
-        if not _is_reasonable(m, self.max_minutes):
-            return TRAVEL_UNREALISTIC
-        return m

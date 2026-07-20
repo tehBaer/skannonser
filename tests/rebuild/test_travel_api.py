@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 import main.location_features as legacy_location_features
@@ -6,10 +8,11 @@ from main.location_features import PublicTransitCommuteTime
 from skannonser.config.domain import Budget
 from skannonser.enrich.sentinels import TRAVEL_API_ERROR, TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC
 from skannonser.enrich.travel_api import TransitCommute
-from skannonser.gateway import Gateway
+from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.store import connection, migrations
 
 WORK_ADDRESS = "Rådmann Halmrasts Vei 5"
+CURRENT_UTC_MONTH = datetime.now(timezone.utc).strftime("%Y-%m")
 
 
 class FakeResponse:
@@ -44,6 +47,17 @@ def _routes_row_count(gateway: Gateway) -> int:
     return gateway.conn.execute(
         "SELECT COUNT(*) AS c FROM api_usage WHERE api='routes'"
     ).fetchone()["c"]
+
+
+def _seed_ok_row(conn, api, month=CURRENT_UTC_MONTH):
+    """Seed a single 'ok' api_usage row directly, dated inside `month` (UTC,
+    matching Gateway's default clock), so it counts toward month_usage."""
+    called_at = f"{month}-01 00:00:00"
+    conn.execute(
+        "INSERT INTO api_usage (api, outcome, called_at) VALUES (?, ?, ?)",
+        (api, "ok", called_at),
+    )
+    conn.commit()
 
 
 # --- Step 1: pin test — request construction equals legacy -----------------
@@ -163,3 +177,50 @@ def test_minutes_missing_api_key_short_circuits_before_gateway(gateway):
     assert commute.minutes("Storgata 1", "0155") is None
     assert calls == []
     assert _routes_row_count(gateway) == 0
+
+
+# --- Regression: exception scope + budget propagation -----------------------
+
+
+def test_malformed_response_degrades_to_api_error(gateway):
+    """A 200 response whose body isn't valid JSON must degrade to
+    TRAVEL_API_ERROR like legacy, not crash minutes() with an unhandled
+    ValueError. Legacy's try/except (main/location_features.py:415-437) wraps
+    the request through the end of parsing; ours must match that scope."""
+
+    class BadJSONResponse:
+        status_code = 200
+
+        def json(self):
+            raise ValueError("not valid json")
+
+    commute = TransitCommute(
+        WORK_ADDRESS,
+        gateway=gateway,
+        api_key="K",
+        post=lambda *a, **k: BadJSONResponse(),
+    )
+    assert commute.minutes("Storgata 1", "0155") == TRAVEL_API_ERROR
+    assert _routes_row_count(gateway) == 1
+
+
+def test_budget_exceeded_propagates_not_sentinel(tmp_path):
+    """BudgetExceeded is an administrative stop, not a per-row API failure.
+    It must propagate out of minutes() so callers halt and leave rows
+    untouched, instead of being laundered into a permanent TRAVEL_API_ERROR
+    sentinel by the blanket except."""
+    conn = connection.connect(tmp_path / "travel_budget.db")
+    migrations.migrate(conn)
+    budget = make_budget(routes_monthly_cap=1)
+    gw = Gateway(conn, budget, notify=lambda m: None, sleeper=lambda s: None)
+    _seed_ok_row(conn, "routes")  # this month's usage is already at the cap
+
+    commute = TransitCommute(
+        WORK_ADDRESS,
+        gateway=gw,
+        api_key="K",
+        post=lambda *a, **k: FakeResponse(200, {"routes": [{"duration": "1800s"}]}),
+    )
+
+    with pytest.raises(BudgetExceeded):
+        commute.minutes("Storgata 1", "0155")
