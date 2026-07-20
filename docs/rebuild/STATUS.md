@@ -38,7 +38,8 @@ else is history.
 
 Preserved legacy quirks (deliberate, test-pinned — change only with an explicit ruling):
 - **Activate-on-second-appearance**: new listings stay `active=0` until their 2nd crawl (delays
-  export/notify by one cycle). Twice attempted as a "fix", twice reverted. → post-cutover candidate.
+  export/notify by one cycle). Twice attempted as a "fix", twice reverted to keep equivalence.
+  → **User has ruled it a bug: scheduled for removal right after Phase 4 cutover (see Backlog).**
 - DNB matcher ignores `active`; `deactivate_missing([])` deactivates everything (pipeline guards it).
 
 ## Phase 3 named deliverables (enrichment port + Google API gateway)
@@ -66,9 +67,20 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
   merge the two at cutover.
 - Daily/weekly notify "added" metrics inherit the activate-on-2nd-appearance timing.
 
-## Post-cutover candidates (user decisions, not scheduled)
+## Backlog: approved fixes for after cutover
 
-- Fix the activate-on-second-appearance delay (new listings would export/notify same-day).
+**1. KILL the activate-on-second-appearance quirk — USER DECISION 2026-07-20: fix it.**
+Today a newly discovered listing stays `active=0` (invisible to sheet export and the daily
+"added" notification) until the SECOND crawl that sees it — a full day's delay on exactly the
+listings the user most wants to hear about. Preserved during the rebuild only because phases 2-4
+require byte-equivalence with legacy for the golden-master/parallel-run comparisons. **Scheduled:
+first change after Phase 4 cutover** — make listings active on first appearance (insert with
+`active=1` in `ListingsRepo.upsert`), update the pinning tests (`test_insert_inactive_until_
+second_appearance_legacy_semantics` and the pipeline e2e), and expect the daily notify "added"
+count to shift by design. The reverted implementations from Tasks 6/13 show exactly where the
+one-line change goes.
+
+Other decided-later items (surface each for a go/no-go when its phase arrives):
 - Untrack `main/database/properties.db` from git (currently tracked+perpetually dirty; the
   stash-dance in every server pull exists because of this) — vs keeping git as a sync channel.
 - Deferred minors: `deactivate_missing` empty-list guard in repos; AliasChoices for
@@ -76,6 +88,10 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
   supercronic checksum in Dockerfile; backup `PRAGMA journal_mode=DELETE`; USER/HEALTHCHECK in
   Docker (with Phase 5 web service); crawl archives `response.text` vs legacy's `content`
   round-trip; progress logging in long crawls.
+
+**Standing rule: any NEW issue found in later phases that can't be fixed immediately gets added
+to this backlog section in the same commit that discovers it — never only in chat or the
+gitignored ledger.**
 
 ## Operational state (server)
 
@@ -92,6 +108,35 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
 - The server's `properties.db` is the authoritative live DB (laptop copy goes stale). It is
   git-tracked: every server pull needs the stash-dance (`git stash push main/database/properties.db`,
   pull, `git checkout stash@{0} -- …`, drop).
+
+## Review findings log (RESOLVED — do not re-litigate, do not undo)
+
+Every defect the review loop caught in Phases 1-2, with its resolution. Each is fixed on master;
+the delay/timing ones are regression-locked by tests that monkeypatch `time.sleep`/`random.uniform`
+and fail if a default is removed — do not "simplify" those parameters away.
+
+**Phase 1:**
+1. Migration-001 generation doubled `IF NOT EXISTS` (plan's sed was not idempotent) → sed fixed in plan, file regenerated clean.
+2. `db backup`/`db migrate` silently created an empty DB on a wrong path (exit 0, plausible empty backup) → exists-check + read-only URI open + loud exit 1, tested.
+3. supercronic as PID 1 crash-looped ("Failed to fork exec") → `init: true` + `-no-reap`, verified locally and on the server.
+4. Migration SQL was dropped from wheels → in Docker, `db migrate` silently no-opped → `package-data` fix + `pending()` raises on missing migrations dir, verified against a non-editable install.
+5. No `.dockerignore` (build context shipped the DB, caches, `.env`) → added.
+
+**Phase 2:**
+6. Unsanctioned `active=1`-on-insert in ListingsRepo (changes when listings reach export/notify) → reverted to legacy activate-on-2nd-appearance, test-pinned.
+7. Finn crawl dropped legacy's 200-500 ms inter-page delay → restored (`page_delay`, injectable).
+8. Ad fetch dropped legacy's 0.1 s pre-fetch delay → restored (`fetch_delay`, cache hits exempt).
+9. Pipeline double-upserted to force first-run activation (the plan's own test demanded it — plan defect acknowledged and amended) → double-upsert removed, legacy timing preserved.
+10. DNB listing fetches lost cache/User-Agent/timeout/pacing entirely (hid in the task seam; DNB path was never network-tested) → routed through the HTML cache with legacy uid derivation, UA/timeout, 200-800 ms post-fetch delay.
+11. Refresh dropped legacy's 0.2 s inter-listing delay → restored (`listing_delay`).
+12. Crawl stop-condition silently changed (no-new-ads vs legacy's zero-matches; could truncate crawls on repeat-heavy pages) → aligned back to legacy, regression-tested.
+13. A completely failed (zero-URL) crawl exited 0 silently → CLI exits 1 with an error.
+14. `run` commands auto-applied migrations (contradicting explicit-migrate) → now fail loud asking for `db migrate`.
+15. A crawl test was pinned to `data/eiendom/html_crawled/page1.html` — live, nightly-overwritten, machine-varying → frozen as a committed fixture.
+
+Legacy bugs found while porting (in production today): the absolute-href listing drop (sanctioned
+fix #3 fixes it in the rebuild), and the nightly cron failures (DNS at midnight + interactive
+prompt EOF — remedied 2026-07-20, see Operational state).
 
 ## Next step
 
