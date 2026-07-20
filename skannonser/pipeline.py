@@ -28,21 +28,14 @@ Two guards are ledgered as MANDATORY for this task:
    which flagged failures for a human to notice rather than silently
    accepting them.
 
-Deliberate pipeline-level design note (NOT a repository-layer change):
+This pipeline calls `upsert()` exactly once per run for each source.
 `ListingsRepo`/`DnbRepo` preserve legacy's "activate only on second
 appearance" quirk (a fresh INSERT leaves `active` at its schema default,
 0/NULL; only an UPDATE hard-sets `active = 1` -- see those modules'
-docstrings, reaffirmed at Task 6/11 review). On the real, long-lived live
-DB almost every finnkode/url already exists from thousands of prior runs,
-so a single `upsert()` call naturally reactivates it. For a listing this
-pipeline has never seen before, a single call would leave it inactive
-until the *next* run. Rather than change the repository's documented
-per-call semantics, this pipeline calls `upsert()` a second time over the
-same batch whenever the first call inserted new rows -- functionally
-equivalent to "this listing was also seen last run", which is exactly
-what a real crawl observing a live ad means. This keeps the repository
-layer's pinned quirk intact while ensuring a listing crawled once now
-shows up as active immediately.
+docstrings, reaffirmed at Task 6/11 review, and pinned exactly at the
+pipeline layer too -- Task 13 review). A listing this pipeline has never
+seen before stays inactive after this run and activates on the run that
+next observes it, matching legacy exactly.
 """
 
 import sqlite3
@@ -123,10 +116,6 @@ def run_finn_ingest(
 
     repo = ListingsRepo(conn)
     upsert_stats = repo.upsert(listings)
-    if upsert_stats["inserted"]:
-        # Activate first-ever-seen listings within this same run -- see
-        # module docstring.
-        repo.upsert(listings)
 
     deactivated = 0
     if crawled > 0 and not _failure_rate_too_high(crawled, failed):
@@ -238,10 +227,6 @@ def run_dnb_ingest(
 
     repo = DnbRepo(conn)
     upsert_stats = repo.upsert(matched)
-    if upsert_stats["inserted"]:
-        # Same first-appearance activation nudge as run_finn_ingest -- see
-        # module docstring.
-        repo.upsert(matched)
 
     deactivated = 0
     if crawled > 0 and not _failure_rate_too_high(crawled, failed):

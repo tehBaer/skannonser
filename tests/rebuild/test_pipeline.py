@@ -67,7 +67,19 @@ def test_finn_pipeline_offline_end_to_end(tmp_path):
     )
 
     assert stats["parsed"] == 2 and stats["failed"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] == 2
+    # Legacy quirk preserved: first-seen listings activate on 2nd appearance (Task 6 ruling).
+    assert conn.execute("SELECT COUNT(*) FROM eiendom WHERE active=1").fetchone()[0] == 0
+
+    # Running the same ingest again (same finnkodes) hits the UPDATE branch,
+    # which activates them -- and nothing gets deactivated in the process.
+    stats2 = run_finn_ingest(
+        load_domain(), conn, proj, fetch=_fail_if_called, skip_crawl_urls=urls
+    )
+
+    assert stats2["parsed"] == 2 and stats2["failed"] == 0
     assert conn.execute("SELECT COUNT(*) FROM eiendom WHERE active=1").fetchone()[0] == 2
+    assert stats2["deactivated"] == 0
 
 
 def test_finn_pipeline_reports_crawled_upserted_deactivated(tmp_path):
