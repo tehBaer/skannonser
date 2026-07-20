@@ -44,8 +44,8 @@ _INT_COLUMNS: dict[str, str] = {
     "Byggeår": "info_construction_year",
 }
 
-# Columns written on insert/update, excluding the ``finnkode`` key and ``url``
-# (handled explicitly). Order is stable for deterministic SQL.
+# Columns written on insert/update, excluding the ``finnkode`` key (handled
+# explicitly). ``url`` IS included here. Order is stable for deterministic SQL.
 _DATA_COLUMNS: list[str] = (
     ["tilgjengelighet", "adresse", "postnummer", "pris", "url", "image_url"]
     + [
@@ -151,9 +151,15 @@ class ListingsRepo:
                 ).fetchone()
 
                 if existing is None:
-                    cols = ["finnkode"] + _DATA_COLUMNS + ["active"]
+                    # Legacy's INSERT never sets ``active`` — the schema default
+                    # (``active BOOLEAN DEFAULT 0``) applies, so a new finnkode
+                    # only becomes active on its SECOND appearance (see the
+                    # UPDATE branch below, which does set active=1). This is a
+                    # deliberate legacy quirk, not an oversight — do not "fix"
+                    # it here without a controller ruling.
+                    cols = ["finnkode"] + _DATA_COLUMNS
                     placeholders = ", ".join("?" * len(cols))
-                    params = [data["finnkode"]] + [data[c] for c in _DATA_COLUMNS] + [1]
+                    params = [data["finnkode"]] + [data[c] for c in _DATA_COLUMNS]
                     conn.execute(
                         f"INSERT INTO eiendom ({', '.join(cols)}) VALUES ({placeholders})",
                         params,

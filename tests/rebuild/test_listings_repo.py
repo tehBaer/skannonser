@@ -29,8 +29,20 @@ def test_upsert_inserts_then_updates(repo):
     assert r2["inserted"] == 0
 
 
-def test_upsert_inserts_are_active(repo):
+def test_insert_inactive_until_second_appearance_legacy_semantics(repo):
+    # Legacy quirk preserved deliberately: new listings activate on 2nd crawl. Candidate fix post-cutover.
     repo.upsert([_listing("111")])
+    row = repo.conn.execute(
+        "SELECT active FROM eiendom WHERE finnkode = '111'"
+    ).fetchone()
+    assert row["active"] == 0
+    assert repo.active_finnkodes() != {"111"}
+
+    repo.upsert([_listing("111")])
+    row = repo.conn.execute(
+        "SELECT active FROM eiendom WHERE finnkode = '111'"
+    ).fetchone()
+    assert row["active"] == 1
     assert repo.active_finnkodes() == {"111"}
 
 
@@ -64,10 +76,16 @@ def test_excluded_urls_are_skipped_and_counted(repo):
     )
     r = repo.upsert([bad, _listing("111")])
     assert r == {"inserted": 1, "updated": 0, "excluded": 1}
+    # Second appearance activates "111" under legacy semantics; the excluded
+    # listing is skipped both times and never persisted.
+    r2 = repo.upsert([bad, _listing("111")])
+    assert r2 == {"inserted": 0, "updated": 1, "excluded": 1}
     assert repo.active_finnkodes() == {"111"}
 
 
 def test_mark_inactive_deactivates_missing_never_deletes(repo):
+    repo.upsert([_listing("111"), _listing("222")])
+    # Second appearance activates both under legacy semantics.
     repo.upsert([_listing("111"), _listing("222")])
     n = repo.mark_inactive(["111"])
     assert n == 1
@@ -77,6 +95,8 @@ def test_mark_inactive_deactivates_missing_never_deletes(repo):
 
 
 def test_mark_inactive_empty_list_deactivates_all(repo):
+    repo.upsert([_listing("111"), _listing("222")])
+    # Second appearance activates both under legacy semantics.
     repo.upsert([_listing("111"), _listing("222")])
     n = repo.mark_inactive([])
     assert n == 2
@@ -104,6 +124,19 @@ def test_upsert_is_one_transaction(repo, monkeypatch):
     # per the brief we use the robust variant: an error while the SECOND
     # listing is being written must roll back the FIRST. We inject the error at
     # a real repo seam that runs per-listing.
+    #
+    # Reviewed decision: this monkeypatches an internal seam
+    # (``repo._apply_overrides``) rather than provoking a genuine SQL
+    # failure. That's deliberate, not a shortcut — no genuine SQL-constraint
+    # failure is reachable through the public ``upsert()`` path here, because
+    # within a single batch/connection, uncommitted reads of rows already
+    # written earlier in the same transaction turn intra-batch duplicate
+    # finnkodes into UPDATEs (via the ``existing = conn.execute("SELECT * ...")``
+    # lookup), not INSERT/PK-constraint failures. So the only way to exercise
+    # "an error mid-batch rolls back the whole batch" is to inject a failure
+    # at an internal seam that runs per-listing, as done below. A future
+    # reader should not treat this as a shortcut that needs upgrading to a
+    # "real" SQL error case — there isn't one to provoke here.
     listings = [_listing("111"), _listing("BAD")]
     real_apply = repo._apply_overrides
 
