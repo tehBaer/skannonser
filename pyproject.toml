@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skannonser"
+version = "0.1.0"
+description = "skannonser rebuilt: Finn/DNB listing scanner"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+skannonser = "skannonser.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["skannonser*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/rebuild"]
