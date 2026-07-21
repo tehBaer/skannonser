@@ -85,7 +85,8 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
 
 ## Backlog: approved fixes for after cutover
 
-**1. KILL the activate-on-second-appearance quirk — USER DECISION 2026-07-20: fix it.**
+**1. KILL the activate-on-second-appearance quirk — USER DECISION 2026-07-20 (re-confirmed 2026-07-21): fix it.**
+**BINDING: the Phase 4 implementation plan MUST include this as its FINAL task, executed immediately after the cron cutover is verified — Phase 4 is not complete until new listings activate (and therefore export/notify) on FIRST appearance. Do not write the Phase 4 plan without this task.**
 Today a newly discovered listing stays `active=0` (invisible to sheet export and the daily
 "added" notification) until the SECOND crawl that sees it — a full day's delay on exactly the
 listings the user most wants to hear about. Preserved during the rebuild only because phases 2-4
