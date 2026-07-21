@@ -1,14 +1,24 @@
 import sqlite3
+import warnings
 
 import pytest
-from fastapi.testclient import TestClient
+from starlette.exceptions import StarletteDeprecationWarning
+
+# starlette's TestClient nudges toward the httpx2 fork; the contract pins
+# plain httpx (>=0.27) for the dev extra, and it works fine here. The warning
+# fires at IMPORT time (fastapi/testclient.py) during collection, so it must
+# be suppressed at the import site -- pytestmark/filterwarnings config cannot
+# intercept collection-time warnings.
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message="Using `httpx` with `starlette.testclient` is deprecated",
+        category=StarletteDeprecationWarning,
+    )
+    from fastapi.testclient import TestClient
 
 from skannonser.store import connection, migrations
 from skannonser.web.app import create_app, ro_conn
-
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Using `httpx` with `starlette.testclient` is deprecated:DeprecationWarning"
-)
 
 
 def _migrated_db(tmp_path):
