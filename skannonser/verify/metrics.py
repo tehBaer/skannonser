@@ -2,9 +2,10 @@
 against LEGACY ``main.notify.listing_metrics.compute_daily_metrics``, driving
 the REAL legacy function (never a reimplementation).
 
-Three fixed synthetic scenarios reproduce every case pinned in legacy's own
-``tests/test_listing_metrics.py`` (empty sets, no-change, and the
-added/removed split-by-sold-vs-delisted case), plus one ``live_db`` scenario
+Three fixed synthetic scenarios cover legacy's own
+``tests/test_listing_metrics.py`` -- its two data cases (no-change, and the
+added/removed split-by-sold-vs-delisted case) -- plus an empty-set edge case
+that isn't itself one of legacy's pinned cases, plus one ``live_db`` scenario
 built from a caller-supplied DB COPY: the real ``previous_active_snapshot``
 (``ListingsRepo``) vs the real active/price/area-filtered tracked set
 (``skannonser.notifications._active_tracked_finnkodes``) vs the real

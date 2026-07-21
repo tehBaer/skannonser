@@ -94,12 +94,23 @@ worth mirroring:
 Given (a) the brief's own candidacy description for this port never mentions
 donor reuse ("active, unmatched-to-finn, missing values"), (b) the schema
 this port targets has no slot to store a donor pointer, and (c) the
-mechanism, traced fully, mostly produces skip-with-no-value dead ends for the
-one destination (BRJ) this script always runs -- ``run_dnb_travel`` makes a
-straight Routes API call for every missing-value candidate, no donor lookup,
-no reuse-within-meters check. This is a deliberate simplification, not an
-oversight; see the report for the full trace and the option to revisit if a
-controller wants the (broken) legacy behavior mirrored byte-for-byte anyway.
+mechanism, traced fully, is not a uniform dead end: the donor path CAN
+produce a value when the nearby donor happens to already be BRJ+MVV-complete
+(the happy path traced above), but a donor that's only half-complete dead-
+ends it -- the BRJ-only-complete ``donor_cache_brj`` used at assignment time
+(post_process.py:815-825) is looser than the BRJ+MVV-complete requirement
+``_fill_missing_from_donor_seed`` actually enforces at resolution time
+(backfill script:194-196), so a half-complete donor skips the API call and
+then fails the all-or-nothing check, leaving that row silently unresolved
+every run. ``run_dnb_travel`` makes a straight Routes API call for every
+missing-value candidate instead, no donor lookup, no reuse-within-meters
+check -- dropped here on grounds independent of that legacy gap: migration
+004 gives ``dnbeiendom`` no donor-pointer column to persist a link in the
+first place, and the table's current 3-row population makes the added
+complexity not worth carrying regardless. This is a deliberate
+simplification, not an oversight; see the report for the full trace and the
+option to revisit if a controller wants the (broken) legacy behavior
+mirrored byte-for-byte anyway.
 
 Sentinels (``skannonser.enrich.sentinels``) are stored like any other value.
 ``DnbRepo.set_travel``'s COALESCE fill-only semantics then make storing a
@@ -149,6 +160,14 @@ def run_dnb_travel(
     :class:`~skannonser.gateway.BudgetExceeded` raised mid-row (out of
     ``TransitCommute.minutes``) always propagates before that row's write,
     leaving it completely untouched, exactly like ``run_geocode``.
+
+    ``limit`` behaves differently: it can leave a row PARTIALLY written.
+    If a row needs both destinations and the cap is hit between the BRJ and
+    MVV calls (BRJ consumes the last unit of ``limit``), the MVV call for
+    that row is skipped but ``DnbRepo.set_travel`` still fires with just
+    ``brj`` set -- one destination stored, the other left NULL for the next
+    run. Unlike the BudgetExceeded case above, this is intentional and
+    covered by tests, not a bug.
     """
     by_key = {d.key: d for d in domain.destinations}
     brj_dest = by_key["brj"]

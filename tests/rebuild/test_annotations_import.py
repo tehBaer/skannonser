@@ -100,6 +100,45 @@ def test_idempotent_rerun_does_not_bump_updated_at(conn):
     assert result["skipped"] == 2
 
 
+def test_legit_update_bumps_both_timestamps(conn):
+    """Positive case for the idempotency SQL's LEGIT-UPDATE branch: a row
+    that's untouched since import (updated_at == imported_at) whose sheet
+    value actually changes on re-import must update, bumping BOTH
+    timestamps to the new run's ts. (The protection branch -- a web-UI-edited
+    row with updated_at != imported_at -- is covered by
+    test_web_ui_edited_row_is_not_overwritten below.)"""
+    client = FakeClient(ROWS)
+    import_sheet_annotations(conn, client, tab="Eie")
+
+    # Pin the stored row to an old-but-still-"untouched" timestamp: the SQL
+    # only cares that updated_at == imported_at, not any particular value,
+    # so this makes the bump assertion deterministic regardless of the
+    # real clock's resolution.
+    conn.execute(
+        "UPDATE annotations SET imported_at = ?, updated_at = ? WHERE finnkode = ?",
+        ("2020-01-01T00:00:00+00:00", "2020-01-01T00:00:00+00:00", "12345678"),
+    )
+    conn.commit()
+
+    changed_rows = [
+        HEADER,
+        ["12345678", "new view from balcony", "A"],
+        ['=HYPERLINK("http://finn.no/xyz","23456789")', "", "B"],  # unchanged
+    ]
+    client2 = FakeClient(changed_rows)
+    result = import_sheet_annotations(conn, client2, tab="Eie")
+
+    row = _annotations(conn)["12345678"]
+    assert row["kommentar"] == "new view from balcony"
+    assert row["tag"] == "A"
+    assert row["imported_at"] != "2020-01-01T00:00:00+00:00"
+    assert row["updated_at"] != "2020-01-01T00:00:00+00:00"
+    assert row["imported_at"] == row["updated_at"]
+    assert result["inserted"] == 0
+    assert result["updated"] == 1
+    assert result["skipped"] == 1  # 23456789: sheet value unchanged -> no-op
+
+
 def test_web_ui_edited_row_is_not_overwritten(conn):
     client = FakeClient(ROWS)
     import_sheet_annotations(conn, client, tab="Eie")

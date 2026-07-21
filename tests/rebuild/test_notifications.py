@@ -183,6 +183,26 @@ def test_count_sold_between(repo):
 
 
 # ---------------------------------------------------------------------------
+# _active_tracked_finnkodes / _finnkodes_with_status (db.py:690-727 ports,
+# isolated -- mirrors legacy tests/test_notify_db.py's
+# test_active_tracked_respects_filters / test_finnkodes_with_status)
+# ---------------------------------------------------------------------------
+
+
+def test_active_tracked_finnkodes_respects_price_and_area_filters(conn):
+    _insert(conn, "1")  # passes both sheets_max_price/min_bra_i filters
+    _insert(conn, "2", pris=99_000_000)  # over sheets_max_price -> excluded
+    assert notifications._active_tracked_finnkodes(conn) == {"1"}
+
+
+def test_finnkodes_with_status_returns_only_requested_status_subset(conn):
+    _insert(conn, "1", active=0, status="Solgt")
+    _insert(conn, "2", active=0, status="Inaktiv")
+    _insert(conn, "3", active=0, status="Solgt")
+    assert notifications._finnkodes_with_status(conn, {"1", "2", "3"}, "Solgt") == {"1", "3"}
+
+
+# ---------------------------------------------------------------------------
 # daily_summary (mirrors tests/test_daily_summary.py exactly)
 # ---------------------------------------------------------------------------
 
@@ -330,6 +350,29 @@ def test_default_send_builds_legacy_cli_args(monkeypatch):
     ok = default_send("Daily listings", "hello", 5)
     assert ok is True
     assert calls == [(["my-notify", "send", "Daily listings", "hello", "--priority", "5"], 15)]
+
+
+def test_default_send_uses_notify_default_when_notify_bin_unset(monkeypatch):
+    """Pins the DEFAULT binary literal: with NOTIFY_BIN unset entirely (not
+    just absent from this test's env -- also drop it from the process env so
+    get_secrets() can't pick it up from outside), default_send must invoke
+    argv[0] == "notify" (Secrets.notify_bin's class default)."""
+    calls = []
+
+    class FakeCompleted:
+        returncode = 0
+
+    def fake_run(args, timeout=None):
+        calls.append(args)
+        return FakeCompleted()
+
+    monkeypatch.delenv("NOTIFY_BIN", raising=False)
+    notifications.get_secrets.cache_clear()
+    monkeypatch.setattr(notifications.subprocess, "run", fake_run)
+
+    ok = default_send("t", "m", 0)
+    assert ok is True
+    assert calls[0][0] == "notify"
 
 
 def test_default_send_returns_false_on_nonzero_exit(monkeypatch):
