@@ -78,7 +78,9 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
 - Daily/weekly notify "added" metrics inherit the activate-on-2nd-appearance timing.
 - **Real Routes API call never exercised** — every Phase 3 test/checkpoint used fakes or hit 0
   candidates; the Phase 4 supervised run must include at least one real `run enrich` Routes call
-  with ledger verification (mirrors the DNB-network gap above).
+  with ledger verification (mirrors the DNB-network gap above). — PROVEN (2026-07-21): 6 real
+  Routes calls via `run enrich-dnb` on a server DB copy; ledger exact; values plausible vs sheet
+  baseline.
 - **DNB travel backfill** (legacy `scripts/backfill_dnbeiendom_travel_to_sheet.py`, subprocess
   step in run_eiendom_db.py:244-257) is not yet ported — Phase 4 must port or consciously retire
   it. The targeted re-request tool (`rerequest_suspicious_travel.py`) likewise stays
