@@ -48,6 +48,7 @@ const COLUMNS = [
 const state = {
   items: [], // all loaded items (eie + dnb, + sold once toggled on)
   soldLoaded: false,
+  showSold: false, // tracks "Vis solgte" toggle state; sold items stay in items
   sortKey: "adresse",
   sortDir: "asc",
   filterText: "",
@@ -139,7 +140,11 @@ function matchesFilter(item, text) {
 }
 
 function visibleRows() {
-  const filtered = state.items.filter((item) => matchesFilter(item, state.filterText));
+  const filtered = state.items.filter((item) => {
+    // Hide sold items when showSold is false
+    if (!state.showSold && item.sold) return false;
+    return matchesFilter(item, state.filterText);
+  });
   filtered.sort((a, b) => compareItems(a, b, state.sortKey, state.sortDir));
   return filtered;
 }
@@ -290,7 +295,9 @@ function wireToolbar() {
 
   const soldToggle = document.getElementById("table-sold");
   soldToggle.checked = loadSoldPref();
+  state.showSold = soldToggle.checked;
   soldToggle.addEventListener("change", async () => {
+    state.showSold = soldToggle.checked;
     saveSoldPref(soldToggle.checked);
     if (soldToggle.checked && !state.soldLoaded) {
       soldToggle.disabled = true;
@@ -324,6 +331,7 @@ async function init() {
       const sold = (await fetchListings(1)).filter((it) => it.sold);
       state.items = state.items.concat(sold);
       state.soldLoaded = true;
+      state.showSold = true;
     } catch (_) {
       /* fall through with just the non-sold rows loaded */
     }
