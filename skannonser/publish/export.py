@@ -78,7 +78,15 @@ import math
 import sqlite3
 from typing import Any
 
-from skannonser.config.domain import load_domain
+from skannonser.publish.rows import (
+    _EIE_JOINS,
+    _EIE_SELECT_HEAD,
+    _EIE_SELECT_TAIL,
+    _DONOR_TRAVEL_SQL,
+    _rows_from_cursor,
+    _sheet_filters,
+    listing_rows,
+)
 
 # ---------------------------------------------------------------------------
 # Headers (transcribed from legacy; see per-column citations below)
@@ -290,117 +298,27 @@ def _norm_base_cell(header: str, value: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Shared SQL fragments
-# ---------------------------------------------------------------------------
-
-# Donor-resolved travel columns, reused verbatim from
-# ProcessedRepo.sheet_travel_values (processed.py:390-407) / the CASE blocks in
-# get_eiendom_for_sheets (db.py:829-846). `ep` is the listing's processed row,
-# `ep_src` the donor pointed at by ep.travel_copy_from_finnkode.
-_DONOR_TRAVEL_SQL = """
-    CASE
-        WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-             AND ep_src.pendl_rush_brj IS NOT NULL
-        THEN ep_src.pendl_rush_brj
-        ELSE ep.pendl_rush_brj
-    END AS "PENDL RUSH BRJ",
-    CASE
-        WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-             AND ep_src.pendl_rush_mvv IS NOT NULL
-        THEN ep_src.pendl_rush_mvv
-        ELSE ep.pendl_rush_mvv
-    END AS "PENDL RUSH MVV",
-    CASE
-        WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
-             AND ep_src.pendl_rush_mvv_uni_rush IS NOT NULL
-        THEN ep_src.pendl_rush_mvv_uni_rush
-        ELSE ep.pendl_rush_mvv_uni_rush
-    END AS "MVV UNI RUSH"
-"""
-
-# The non-travel Eie/Sold payload columns, aliased exactly as legacy.
-# (Order here need not match the header -- rows are assembled by header name.)
-_EIE_SELECT_HEAD = """
-    e.finnkode AS "Finnkode",
-    e.tilgjengelighet AS "Tilgjengelighet",
-    e.active AS "active",
-    COALESCE(ep.adresse_cleaned, e.adresse) AS "ADRESSE",
-    e.postnummer AS "Postnummer",
-    e.pris AS "Pris",
-    e.url AS "URL",
-    e.image_url AS "IMAGE_URL",
-    e.image_hosted_url AS "IMAGE_HOSTED_URL",
-    e.info_usable_area AS "Bruksareal",
-    e.info_usable_i_area AS "Internt bruksareal (BRA-i)",
-    e.info_primary_area AS "Primærrom",
-    e.info_gross_area AS "Bruttoareal",
-    e.info_usable_e_area AS "Eksternt bruksareal (BRA-e)",
-    e.info_usable_b_area AS "Innglasset balkong (BRA-b)",
-    e.info_open_area AS "Balkong/Terrasse (TBA)",
-    e.info_plot_area AS "Tomteareal",
-    e.info_plot_ownership AS "Eierskap, tomt",
-    e.info_property_type AS "Boligtype",
-    e.info_construction_year AS "Byggeår",
-    ep.lat AS "LAT",
-    ep.lng AS "LNG",
-    e.pris_kvm AS "PRIS KVM",
-"""
-
-_EIE_SELECT_TAIL = """
-    ep.travel_copy_from_finnkode AS "TRAVEL_COPY_FROM_FINNKODE",
-    ep.google_maps_url AS "GOOGLE_MAPS_URL",
-    e.scraped_at AS "SCRAPED_AT"
-"""
-
-_EIE_JOINS = """
-    FROM eiendom e
-    LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
-    LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
-"""
-
-
-def _sheet_filters() -> tuple[int, int]:
-    """(sheets_max_price, min_bra_i) from the domain config == legacy constants
-    (main/config/filters.py: SHEETS_MAX_PRICE=7500000, MIN_BRA_I=70)."""
-    f = load_domain().filters
-    return f.sheets_max_price, f.min_bra_i
-
-
-def _rows_from_cursor(cur: sqlite3.Cursor) -> list[dict]:
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
-
-
-# ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
+#
+# NOTE: the Eie/Sold shared SQL fragments (_EIE_SELECT_HEAD/_EIE_SELECT_TAIL/
+# _EIE_JOINS/_DONOR_TRAVEL_SQL) and query helpers (_rows_from_cursor,
+# _sheet_filters) now live in ``skannonser.publish.rows`` (imported above) --
+# ``rows.listing_rows`` is the extracted Eie query; ``sold_rows`` below still
+# composes the same fragments directly (different WHERE/ORDER BY, no
+# annotations join), unchanged.
 
 def eie_rows(conn: sqlite3.Connection) -> tuple[list[str], list[list]]:
     """Build the ``Eie`` tab payload: ``(header, rows)``.
 
-    Visibility (== get_eiendom_for_sheets SQL filters db.py:861-866 +
-    filter_rows_for_sheet_visibility helper:43-105): ``active = 1`` AND
-    tilgjengelighet NOT in {solgt, inaktiv} AND ``pris <= SHEETS_MAX_PRICE`` AND
-    ``CAST(info_usable_i_area AS REAL) >= MIN_BRA_I``. Kommentar/Tag are
-    re-exported from ``annotations`` (empty string when absent).
+    Thin consumer of ``rows.listing_rows`` (the extracted visibility-filtered,
+    donor-resolved query -- see that function's docstring for the exact
+    filter/ordering citation trail): fetches the default-path row dicts and
+    applies the existing per-column cell normalization (``_norm_base_cell``)
+    over ``EIE_HEADER`` to build the sheet payload, exactly as before the
+    extraction.
     """
-    max_price, min_bra_i = _sheet_filters()
-    sql = (
-        "SELECT "
-        + _EIE_SELECT_HEAD
-        + _DONOR_TRAVEL_SQL
-        + ", "
-        + _EIE_SELECT_TAIL
-        + ', a.kommentar AS "Kommentar", a.tag AS "Tag"'
-        + _EIE_JOINS
-        + " LEFT JOIN annotations a ON a.finnkode = e.finnkode"
-        + " WHERE e.active = 1"
-        + " AND LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) NOT IN ('solgt', 'inaktiv')"
-        + " AND e.pris <= ?"
-        + " AND CAST(e.info_usable_i_area AS REAL) >= ?"
-        + " ORDER BY e.active DESC, e.scraped_at DESC"
-    )
-    records = _rows_from_cursor(conn.execute(sql, (max_price, min_bra_i)))
+    records = listing_rows(conn)
     rows = [[_norm_base_cell(h, rec.get(h)) for h in EIE_HEADER] for rec in records]
     return list(EIE_HEADER), rows
 
