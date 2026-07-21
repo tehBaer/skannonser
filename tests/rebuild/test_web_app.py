@@ -251,6 +251,81 @@ def test_thumb_valid_identifier_charset_accepted(tmp_path):
     assert resp.status_code == 200
 
 
+def _run_in_other_thread(fn):
+    import threading
+
+    box = {}
+
+    def target():
+        try:
+            box["result"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - capture for the assertion
+            box["error"] = exc
+
+    t = threading.Thread(target=target)
+    t.start()
+    t.join()
+    if "error" in box:
+        raise box["error"]
+    return box["result"]
+
+
+def test_ro_conn_usable_across_threadpool_threads(tmp_path):
+    """Regression: FastAPI resolves a sync generator dependency and its sync
+    endpoint on potentially different anyio threadpool threads, so a
+    per-request connection opened in one and used in the other must NOT trip
+    sqlite3's same-thread guard (`check_same_thread=False`). Without the fix,
+    executing on the connection from another thread raises
+    sqlite3.ProgrammingError; with it, the query runs."""
+    db_path = _migrated_db(tmp_path)
+
+    class MockRequest:
+        class MockApp:
+            state = type("State", (), {"db_path": db_path})()
+
+        app = MockApp()
+
+    gen = ro_conn(MockRequest())
+    conn = next(gen)
+    try:
+        rows = _run_in_other_thread(
+            lambda: conn.execute("SELECT 1").fetchone()
+        )
+        assert tuple(rows) == (1,)
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_rw_conn_usable_across_threadpool_threads(tmp_path):
+    """Same cross-thread guarantee for the writable annotations connection
+    (the popup's PUT save path runs the endpoint off-thread too)."""
+    from skannonser.web.app import rw_conn
+
+    db_path = _migrated_db(tmp_path)
+
+    class MockRequest:
+        class MockApp:
+            state = type("State", (), {"db_path": db_path})()
+
+        app = MockApp()
+
+    gen = rw_conn(MockRequest())
+    conn = next(gen)
+    try:
+        rows = _run_in_other_thread(
+            lambda: conn.execute("SELECT 1").fetchone()
+        )
+        assert tuple(rows) == (1,)
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
 def test_ro_conn_rejects_writes(tmp_path):
     """Verify that ro_conn is genuinely read-only by attempting an INSERT
     on the generator-yielded connection."""

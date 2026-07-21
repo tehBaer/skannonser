@@ -1,5 +1,45 @@
 <!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><title>skannonser</title></head>
-<body>skannonser web</body>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>skannonser</title>
+  <link rel="stylesheet" href="/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h1 class="brand">skannonser</h1>
+
+      <section class="panel">
+        <h2>Lag</h2>
+        <label class="toggle"><input type="checkbox" id="toggle-eie" checked> Eie</label>
+        <label class="toggle"><input type="checkbox" id="toggle-dnb" checked> DNB</label>
+        <label class="toggle"><input type="checkbox" id="toggle-sold"> Solgt</label>
+      </section>
+
+      <section class="panel" id="boligtype-legend-panel">
+        <h2>Boligtype</h2>
+        <div id="boligtype-legend" class="legend muted">Laster …</div>
+      </section>
+
+      <!-- Placeholders for later Phase 5 tasks (table, filters, stations). -->
+      <section class="panel placeholder">
+        <h2>Filtre</h2>
+        <p class="muted">Kommer (senere oppgave).</p>
+      </section>
+      <section class="panel placeholder">
+        <h2>Tabell</h2>
+        <p class="muted">Kommer (senere oppgave).</p>
+      </section>
+
+      <div id="status" class="status muted"></div>
+    </aside>
+    <div id="map"></div>
+  </div>
+
+  <script src="/vendor/maplibre-gl.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
 </html>

@@ -46,7 +46,13 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 
 def _ro_connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    # check_same_thread=False: FastAPI may resolve the `ro_conn` dependency
+    # and run the sync endpoint on different anyio threadpool threads, so a
+    # per-request connection created in one and used in the other would trip
+    # sqlite3's same-thread guard. The connection is single-request-scoped
+    # (opened + closed within the request, never shared), so relaxing the
+    # guard is safe. (mode=ro still forbids writes -- see test_ro_conn_rejects_writes.)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -65,7 +71,9 @@ def rw_conn(request: Request) -> Iterator[sqlite3.Connection]:
     """Per-request writable connection dependency -- wired to
     ``PUT /api/annotations/{finnkode}`` (see ``skannonser/web/api.py``'s
     "Annotations CRUD" section)."""
-    conn = connection_module.connect(request.app.state.db_path)
+    conn = connection_module.connect(
+        request.app.state.db_path, check_same_thread=False
+    )
     try:
         yield conn
     finally:
