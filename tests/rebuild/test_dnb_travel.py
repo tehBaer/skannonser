@@ -216,15 +216,23 @@ def test_sentinel_stored_and_skipped_on_rerun(conn, domain, gateway):
 
 
 def test_limit_stops_at_n_calls(conn, domain, gateway):
-    _seed_dnb_row(conn, "https://dnbeiendom.no/bolig/a")
-    _seed_dnb_row(conn, "https://dnbeiendom.no/bolig/b", StreetAddress="Annen gate 2")
+    url_a = "https://dnbeiendom.no/bolig/a"
+    url_b = "https://dnbeiendom.no/bolig/b"
+    _seed_dnb_row(conn, url_a)
+    _seed_dnb_row(conn, url_b, StreetAddress="Annen gate 2")
     post, calls = _counting_post(lambda n: _routes_response(600))
 
     stats = run_dnb_travel(conn, domain, gateway, API_KEY, post=post, limit=1)
 
     assert len(calls) == 1
     assert stats["api_calls"] == 1
+    assert stats["brj_written"] == 1
+    assert stats["mvv_written"] == 0
     assert _routes_row_count(conn) == 1
+    # Verify the row written has pendl_rush_brj set, pendl_rush_mvv NULL.
+    row = _get_row(conn, url_a)
+    assert row["pendl_rush_brj"] is not None
+    assert row["pendl_rush_mvv"] is None
 
 
 def test_budget_exceeded_propagates_row_untouched(conn, domain):

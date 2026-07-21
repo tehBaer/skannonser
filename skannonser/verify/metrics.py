@@ -69,8 +69,9 @@ def _import_legacy():
 
 
 def _fixed_scenarios() -> dict[str, tuple[set, set, set]]:
-    """(previous, current, sold_finnkodes) triples covering every case in
-    legacy's `tests/test_listing_metrics.py`."""
+    """(previous, current, sold_finnkodes) triples covering legacy's two data
+    cases from `tests/test_listing_metrics.py` (no-change, added/removed split)
+    plus an empty-set edge-case addition."""
     return {
         "empty": (set(), set(), set()),
         "no_change": ({"a", "b"}, {"a", "b"}, set()),

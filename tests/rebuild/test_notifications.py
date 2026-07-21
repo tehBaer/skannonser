@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from skannonser.cli import app
 from skannonser.commands import notify_cmd
+from skannonser.config.settings import Secrets
 from skannonser.store import connection, migrations
 from skannonser.store.repositories.listings import ListingsRepo
 from skannonser import notifications
@@ -367,7 +368,9 @@ def test_default_send_uses_notify_default_when_notify_bin_unset(monkeypatch):
         return FakeCompleted()
 
     monkeypatch.delenv("NOTIFY_BIN", raising=False)
-    notifications.get_secrets.cache_clear()
+    # Monkeypatch get_secrets to return Secrets with _env_file=None to properly
+    # isolate the class default (ensures .env repo file doesn't interfere).
+    monkeypatch.setattr(notifications, "get_secrets", lambda: Secrets(_env_file=None))
     monkeypatch.setattr(notifications.subprocess, "run", fake_run)
 
     ok = default_send("t", "m", 0)
