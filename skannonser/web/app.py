@@ -13,6 +13,18 @@ exists, but raises `sqlite3.OperationalError` on a fresh, unmigrated DB
 where it doesn't. So we check `sqlite_master` for the table ourselves first
 -- absence means "unmigrated", reported as degraded without ever attempting
 a write.
+
+`GET /thumbs/{identifier}.jpg` (Phase 5 Task 5) serves a cached listing
+thumbnail straight off disk under `app.state.thumbs_dir` (default:
+`data/thumbs`, the same directory the nightly `thumbs` step
+(`skannonser.nightly.run_nightly`/`skannonser.enrich.thumbs.cache_thumbnails`)
+downloads into). `identifier` is validated against `skannonser.ids`'s shared
+`IDENTIFIER_RE` (the SAME charset `skannonser.web.api`'s annotations routes
+validate a finnkode against) BEFORE it ever touches the filesystem -- that
+charset excludes `.`/`/`, so no value that passes it can encode a
+`..`/path-traversal segment or escape the single `{identifier}.jpg` path
+segment. An invalid identifier is a 400; a valid one with no cached file is
+a 404 -- neither ever stats/opens anything outside `thumbs_dir`.
 """
 
 from __future__ import annotations
@@ -22,10 +34,11 @@ from pathlib import Path
 from typing import Iterator
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from skannonser.config.domain import DomainConfig
+from skannonser.ids import IDENTIFIER_RE
 from skannonser.store import connection as connection_module
 from skannonser.store import migrations
 
@@ -94,10 +107,23 @@ def _healthz(db_path: Path) -> JSONResponse | dict:
         conn.close()
 
 
+def _thumb_response(thumbs_dir: Path | None, identifier: str) -> FileResponse | JSONResponse:
+    if not IDENTIFIER_RE.match(identifier or ""):
+        return JSONResponse(
+            status_code=400, content={"detail": f"invalid identifier: {identifier!r}"}
+        )
+    if thumbs_dir is None:
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    path = Path(thumbs_dir) / f"{identifier}.jpg"
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    return FileResponse(path, media_type="image/jpeg")
+
+
 def create_app(
     db_path: Path,
     domain: DomainConfig | None = None,
-    thumbs_dir: Path | None = None,
+    thumbs_dir: Path | None = Path("data/thumbs"),
 ) -> FastAPI:
     app = FastAPI(title="skannonser")
     app.state.db_path = db_path
@@ -107,6 +133,10 @@ def create_app(
     @app.get("/healthz", response_model=None)
     def healthz() -> JSONResponse | dict:
         return _healthz(app.state.db_path)
+
+    @app.get("/thumbs/{identifier}.jpg", response_model=None)
+    def get_thumb(identifier: str) -> FileResponse | JSONResponse:
+        return _thumb_response(app.state.thumbs_dir, identifier)
 
     # Deferred import: skannonser.web.api imports `ro_conn` back out of this
     # module. By the time create_app() actually RUNS, this module has already

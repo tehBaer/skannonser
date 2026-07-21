@@ -78,6 +78,7 @@ _DNB_TRAVEL_OK = {
 }
 _REFRESH_OK = {"candidates": 0, "refreshed": 0, "status_changed": 0, "errors": 0}
 _GEOCODE_OK = {"candidates": 0, "geocoded": 0, "failed": 0}
+_THUMBS_OK = {"candidates": 0, "downloaded": 0, "skipped_existing": 0, "failed": 0}
 
 
 class RecordingClient:
@@ -124,12 +125,17 @@ def _install_happy_fakes(monkeypatch, order):
         order.append(f"refresh:{mode}")
         return dict(_REFRESH_OK)
 
+    def fake_thumbs(conn, dest_dir, fetch=None, fetch_delay=None, limit=0):
+        order.append("thumbs")
+        return dict(_THUMBS_OK)
+
     monkeypatch.setattr(nightly_module, "run_finn_ingest", fake_finn)
     monkeypatch.setattr(nightly_module, "run_dnb_ingest", fake_dnb)
     monkeypatch.setattr(nightly_module, "run_geocode", fake_geocode)
     monkeypatch.setattr(nightly_module, "run_enrich", fake_enrich)
     monkeypatch.setattr(nightly_module, "run_dnb_travel", fake_dnb_travel)
     monkeypatch.setattr(nightly_module, "refresh_listings", fake_refresh)
+    monkeypatch.setattr(nightly_module, "cache_thumbnails", fake_thumbs)
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +150,7 @@ def test_full_nightly_happy_path_step_order_and_sheets_last(conn, domain, gatewa
 
     result = run_nightly(conn, domain, gateway, "K", client)
 
-    assert order[:7] == [
+    assert order[:8] == [
         "ingest_finn",
         "ingest_dnb",
         "geocode",
@@ -152,10 +158,11 @@ def test_full_nightly_happy_path_step_order_and_sheets_last(conn, domain, gatewa
         "enrich_mvv_uni",
         "enrich_dnb",
         "refresh:stale-open",
+        "thumbs",
     ]
-    # Sheets writes 4 tabs, all strictly after every pipeline step, in the
-    # documented tab order.
-    assert order[7:] == ["sheets:Eie", "sheets:Sold", "sheets:DNB", "sheets:Stations"]
+    # Sheets writes 4 tabs, all strictly after every pipeline step (including
+    # thumbs), in the documented tab order.
+    assert order[8:] == ["sheets:Eie", "sheets:Sold", "sheets:DNB", "sheets:Stations"]
 
     assert result["failed"] == []
     assert result["budget_exhausted"] == []
@@ -167,6 +174,7 @@ def test_full_nightly_happy_path_step_order_and_sheets_last(conn, domain, gatewa
         "enrich_mvv_uni",
         "enrich_dnb",
         "refresh",
+        "thumbs",
         "sheets",
     ):
         assert result["steps"][name]["ok"] is True, result["steps"][name]
@@ -200,8 +208,73 @@ def test_enrich_failure_does_not_skip_refresh_or_sheets(conn, domain, gateway, m
     assert "enrich_dnb" in order
     assert "refresh:stale-open" in order
     assert result["steps"]["refresh"]["ok"] is True
+    assert "thumbs" in order
+    assert result["steps"]["thumbs"]["ok"] is True
     assert result["steps"]["sheets"]["ok"] is True
     assert any(o.startswith("sheets:") for o in order)
+
+
+def test_refresh_failure_does_not_skip_thumbs_or_sheets(conn, domain, gateway, monkeypatch):
+    order = []
+    _install_happy_fakes(monkeypatch, order)
+
+    def failing_refresh(conn, domain, project_dir, mode, fetch=None):
+        order.append(f"refresh:{mode}(FAIL)")
+        raise RuntimeError("refresh boom")
+
+    monkeypatch.setattr(nightly_module, "refresh_listings", failing_refresh)
+    client = RecordingClient(order)
+
+    result = run_nightly(conn, domain, gateway, "K", client)
+
+    assert "refresh" in result["failed"]
+    assert result["steps"]["refresh"] == {"ok": False, "error": "refresh boom"}
+    assert "thumbs" in order  # ran anyway
+    assert result["steps"]["thumbs"]["ok"] is True
+    assert result["steps"]["sheets"]["ok"] is True
+
+
+def test_thumbs_failure_does_not_skip_sheets(conn, domain, gateway, monkeypatch):
+    order = []
+    _install_happy_fakes(monkeypatch, order)
+
+    def failing_thumbs(conn, dest_dir, fetch=None, fetch_delay=None, limit=0):
+        order.append("thumbs(FAIL)")
+        raise RuntimeError("thumbs boom")
+
+    monkeypatch.setattr(nightly_module, "cache_thumbnails", failing_thumbs)
+    client = RecordingClient(order)
+
+    result = run_nightly(conn, domain, gateway, "K", client)
+
+    assert "thumbs" in result["failed"]
+    assert result["steps"]["thumbs"] == {"ok": False, "error": "thumbs boom"}
+    assert result["steps"]["sheets"]["ok"] is True
+    assert any(o.startswith("sheets:") for o in order)
+
+
+def test_thumbs_step_wired_with_thumbs_dir_default_and_override(conn, domain, gateway, monkeypatch):
+    """`run_nightly`'s `thumbs_dir` param (default `data/thumbs/`) is
+    forwarded verbatim to `cache_thumbnails` -- proves the wiring, not just
+    that the step runs."""
+    order = []
+    _install_happy_fakes(monkeypatch, order)
+
+    seen = {}
+
+    def recording_thumbs(conn, dest_dir, fetch=None, fetch_delay=None, limit=0):
+        seen["dest_dir"] = dest_dir
+        return dict(_THUMBS_OK)
+
+    monkeypatch.setattr(nightly_module, "cache_thumbnails", recording_thumbs)
+    client = RecordingClient(order)
+
+    run_nightly(conn, domain, gateway, "K", client)
+    assert seen["dest_dir"] == Path("data/thumbs/")
+
+    custom_dir = Path("some/custom/thumbs")
+    run_nightly(conn, domain, gateway, "K", client, thumbs_dir=custom_dir)
+    assert seen["dest_dir"] == custom_dir
 
 
 def test_ingest_finn_failure_does_not_skip_ingest_dnb(conn, domain, gateway, monkeypatch):

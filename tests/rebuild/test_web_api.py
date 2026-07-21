@@ -44,7 +44,13 @@ def db_path(tmp_path):
 
 @pytest.fixture()
 def client(db_path):
-    return TestClient(create_app(db_path))
+    # thumbs_dir=None: the generic fixture used by every test in this module
+    # deliberately keeps the pre-Task-5 `image = bool(image_url)` fallback
+    # (see skannonser.web.api's "IMAGE DECISION" docstring) so the many
+    # unrelated tests below don't need to know about the thumbnail cache.
+    # The file-existence behavior itself (thumbs_dir configured) has its own
+    # dedicated fixture/tests -- see "Image thumb-file existence" below.
+    return TestClient(create_app(db_path, thumbs_dir=None))
 
 
 def _conn(db_path):
@@ -483,6 +489,82 @@ def test_boligtype_whitespace_trimmed(db_path, client):
 
     meta = client.get("/api/meta").json()
     assert meta["boligtyper"] == ["Leilighet"]
+
+
+# ---------------------------------------------------------------------------
+# `image` bool -- thumbnail-file existence (Phase 5 Task 5)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def thumbs_dir(tmp_path):
+    d = tmp_path / "thumbs"
+    d.mkdir()
+    return d
+
+
+@pytest.fixture()
+def thumbs_client(db_path, thumbs_dir):
+    return TestClient(create_app(db_path, thumbs_dir=thumbs_dir))
+
+
+def test_image_false_when_thumbs_dir_configured_but_file_missing(
+    db_path, thumbs_client
+):
+    """A non-empty image_url alone is no longer enough once thumbs_dir is
+    configured -- the pre-Task-5 placeholder is retired for this app."""
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A", image_url="https://example/img.jpg")
+    _ins_processed(conn, "A")
+    conn.close()
+
+    item = _by_finnkode(thumbs_client.get("/api/listings").json()["listings"], "A")
+    assert item["image"] is False
+
+
+def test_image_true_when_cached_thumb_file_exists(db_path, thumbs_dir, thumbs_client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A", image_url="https://example/img.jpg")
+    _ins_processed(conn, "A")
+    conn.close()
+    (thumbs_dir / "A.jpg").write_bytes(b"fake-jpeg-bytes")
+
+    item = _by_finnkode(thumbs_client.get("/api/listings").json()["listings"], "A")
+    assert item["image"] is True
+
+
+def test_image_true_for_dnb_row_when_cached_thumb_file_exists(
+    db_path, thumbs_dir, thumbs_client
+):
+    """DNB rows use the SAME synthetic dnb: identifier as the thumbnail
+    filename -- proves the two call sites (this API and
+    skannonser.enrich.thumbs) share one derivation via skannonser.ids."""
+    conn = _conn(db_path)
+    _ins_dnb(conn, "https://dnb.no/has-thumb")
+    conn.close()
+
+    listings = thumbs_client.get("/api/listings").json()["listings"]
+    dnb_item = next(i for i in listings if i["source"] == "dnb")
+    assert dnb_item["image"] is False  # no cached file yet
+
+    (thumbs_dir / f"{dnb_item['finnkode']}.jpg").write_bytes(b"fake-jpeg-bytes")
+
+    listings = thumbs_client.get("/api/listings").json()["listings"]
+    dnb_item = next(i for i in listings if i["source"] == "dnb")
+    assert dnb_item["image"] is True
+
+
+def test_image_reflects_thumb_existence_on_detail_endpoint_too(
+    db_path, thumbs_dir, thumbs_client
+):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A", image_url="https://example/img.jpg")
+    _ins_processed(conn, "A")
+    conn.close()
+
+    assert thumbs_client.get("/api/listings/A").json()["image"] is False
+
+    (thumbs_dir / "A.jpg").write_bytes(b"fake-jpeg-bytes")
+    assert thumbs_client.get("/api/listings/A").json()["image"] is True
 
 
 # ---------------------------------------------------------------------------

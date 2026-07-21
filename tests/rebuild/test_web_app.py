@@ -151,6 +151,106 @@ def test_cli_web_command_registered():
     assert "web" in result.output
 
 
+# ---------------------------------------------------------------------------
+# GET /thumbs/{identifier}.jpg (Phase 5 Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_thumb_serves_cached_file(tmp_path):
+    db_path = _migrated_db(tmp_path)
+    thumbs_dir = tmp_path / "thumbs"
+    thumbs_dir.mkdir()
+    (thumbs_dir / "12345.jpg").write_bytes(b"jpeg-bytes")
+    client = TestClient(create_app(db_path, thumbs_dir=thumbs_dir))
+
+    resp = client.get("/thumbs/12345.jpg")
+
+    assert resp.status_code == 200
+    assert resp.content == b"jpeg-bytes"
+    assert resp.headers["content-type"] == "image/jpeg"
+
+
+def test_thumb_serves_dnb_synthetic_identifier(tmp_path):
+    db_path = _migrated_db(tmp_path)
+    thumbs_dir = tmp_path / "thumbs"
+    thumbs_dir.mkdir()
+    (thumbs_dir / "dnb:abcdef0123456789.jpg").write_bytes(b"jpeg-bytes")
+    client = TestClient(create_app(db_path, thumbs_dir=thumbs_dir))
+
+    resp = client.get("/thumbs/dnb:abcdef0123456789.jpg")
+
+    assert resp.status_code == 200
+    assert resp.content == b"jpeg-bytes"
+
+
+def test_thumb_404_when_file_missing(tmp_path):
+    db_path = _migrated_db(tmp_path)
+    thumbs_dir = tmp_path / "thumbs"
+    thumbs_dir.mkdir()
+    client = TestClient(create_app(db_path, thumbs_dir=thumbs_dir))
+
+    resp = client.get("/thumbs/nope.jpg")
+
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "not found"}
+
+
+def test_thumb_404_when_no_thumbs_dir_configured(tmp_path):
+    db_path = _migrated_db(tmp_path)
+    client = TestClient(create_app(db_path, thumbs_dir=None))
+
+    resp = client.get("/thumbs/12345.jpg")
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "..%2F..%2Fetc%2Fpasswd",  # encoded traversal, single segment
+        "..",
+        "a.b",  # literal dot not in the allowed charset
+        "a/b",  # would only reach the handler via an already-decoded slash
+    ],
+)
+def test_thumb_traversal_attempt_400_without_touching_fs_outside_dest(tmp_path, identifier):
+    """Every value that could plausibly reach the handler as `identifier`
+    either fails the shared IDENTIFIER_RE (400, checked before any
+    filesystem access) or fails routing entirely (multi-segment paths never
+    reach the handler) -- neither ever stats/opens anything outside
+    `thumbs_dir`."""
+    db_path = _migrated_db(tmp_path)
+    thumbs_dir = tmp_path / "thumbs"
+    thumbs_dir.mkdir()
+    # A real file OUTSIDE thumbs_dir, at the path a naive ".." join could
+    # reach -- must never be served.
+    secret = tmp_path / "secret.jpg"
+    secret.write_bytes(b"do-not-serve-me")
+
+    client = TestClient(create_app(db_path, thumbs_dir=thumbs_dir))
+    resp = client.get(f"/thumbs/{identifier}.jpg")
+
+    assert resp.status_code in (400, 404)
+    assert resp.content != b"do-not-serve-me"
+
+
+def test_thumb_valid_identifier_charset_accepted(tmp_path):
+    """Sanity check that the traversal-blocking regex isn't so strict it
+    rejects legitimate identifiers (plain finnkode digits, and the
+    dnb:<hex> synthetic id)."""
+    db_path = _migrated_db(tmp_path)
+    thumbs_dir = tmp_path / "thumbs"
+    thumbs_dir.mkdir()
+    (thumbs_dir / "9001.jpg").write_bytes(b"x")
+    client = TestClient(create_app(db_path, thumbs_dir=thumbs_dir))
+
+    resp = client.get("/thumbs/../thumbs/9001.jpg")
+    # Browsers/clients normalize ".." before sending; httpx's TestClient
+    # does the same -- this just confirms the legitimate path still works
+    # after any client-side normalization.
+    assert resp.status_code == 200
+
+
 def test_ro_conn_rejects_writes(tmp_path):
     """Verify that ro_conn is genuinely read-only by attempting an INSERT
     on the generator-yielded connection."""

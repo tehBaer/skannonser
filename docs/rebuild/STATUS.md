@@ -86,7 +86,7 @@ The port scope is `main/post_process.py` + geocoding + donor system behind the n
 these obligations discovered in Phase 2 — **forgetting any of these silently freezes data**:
 
 1. `pris_kvm` computation and write path (legacy computes in post_process; new repo never writes it). — DONE (2026-07-20, phase 3)
-2. `image_hosted_url` write path (same class). → RE-SCOPED to Phase 5 (2026-07-20): only legacy writer is manual Drive tooling (`predownload_thumbnails_to_drive.py`), not the nightly; the Phase 5 web app owns image serving.
+2. `image_hosted_url` write path (same class). → RE-SCOPED to Phase 5 (2026-07-20): only legacy writer is manual Drive tooling (`predownload_thumbnails_to_drive.py`), not the nightly; the Phase 5 web app owns image serving. → RETIRED (2026-07-21, Phase 5 Task 5): the `image_hosted_url` machinery (Drive pre-upload + hosted-URL serving) is superseded — the web app now serves listing thumbnails straight from a local disk cache (`GET /thumbs/{identifier}.jpg`, `skannonser/web/app.py`) populated by a new nightly step (`thumbs`, `skannonser/enrich/thumbs.py`'s `cache_thumbnails`, wired into `skannonser/nightly.py` between `refresh` and `sheets`). `predownload_thumbnails_to_drive.py` stays legacy-only (unused by the new pipeline) until its Phase-6 deletion; `image_hosted_url` itself is neither read nor written by any Phase-5 code path.
 3. **`eiendom_processed` writes** (adresse_cleaned, google_maps_url, travel columns — new pipeline
    never touches the table; legacy upserts it on every ingest). — DONE (2026-07-20, phase 3)
 4. **`.str.title()` on Adresse** (post_process.py:242) — live `eiendom.adresse` is title-cased and

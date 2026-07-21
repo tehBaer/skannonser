@@ -35,7 +35,9 @@ identity/upsert-match key, UNIQUE on ``dnbeiendom`` and never changes for a
 given crawled listing). This derivation is provably stable across scrapes
 regardless of whether ``dnb_id`` is ever populated. A raw url can't be used
 directly as a path segment (embedded ``/`` would break FastAPI's path-param
-matching).
+matching). The derivation itself lives in ``skannonser.ids.dnb_identifier``
+(shared with ``skannonser.enrich.thumbs``'s nightly thumbnail cache, so both
+call sites can never disagree on a DNB row's identifier/filename).
 
 BOLIGTYPE TRIM DECISION: the API serves ``boligtype`` (and ``/api/meta``'s
 ``boligtyper`` list) TRIMMED of surrounding whitespace, unlike the raw
@@ -44,25 +46,27 @@ whitespace-inconsistent scraped values (e.g. ``"Leilighet "``) would
 otherwise silently fracture client-side filter grouping ("Leilighet" and
 "Leilighet " would count as different filter buckets). See ``_clean_boligtype``.
 
-IMAGE DECISION: ``image`` is simply ``bool(image_url)`` for every row today
-(EIE and DNB) regardless of ``app.state.thumbs_dir`` -- ports the sheet's
-existing ``IMAGE_URL`` presence check verbatim. A follow-up "thumbs" task
-owns actually checking thumbnail-file existence under ``thumbs_dir``; wiring
-that in now would be speculative (no thumbs-download path exists yet).
+IMAGE DECISION (Phase 5 Task 5 update): ``image`` is now thumbnail-FILE-
+existence-based -- ``{thumbs_dir}/{identifier}.jpg``'s presence on disk --
+whenever the app was built with a ``thumbs_dir`` (``create_app``'s default:
+``data/thumbs``, wired by the nightly ``thumbs`` step,
+``skannonser.enrich.thumbs.cache_thumbnails``). Only when the app was
+explicitly built WITHOUT a thumbs dir (``thumbs_dir=None``) does this fall
+back to the original placeholder, ``bool(image_url)`` -- see ``_has_thumb``.
 """
 
 from __future__ import annotations
 
-import hashlib
-import re
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from skannonser.config.domain import DomainConfig, load_domain
+from skannonser.ids import IDENTIFIER_RE, dnb_identifier
 from skannonser.publish.rows import (
     _DONOR_TRAVEL_SQL,
     _EIE_JOINS,
@@ -114,14 +118,25 @@ def _travel_from_record(rec: dict, domain: DomainConfig) -> dict[str, Any]:
     return {dest.key: rec.get(dest.df_column) for dest in domain.destinations}
 
 
-def _dnb_identifier(url: Any) -> str:
-    """Stable, path-safe synthetic id for a DNB row derived from url hash.
+def _thumbs_dir(request: Request) -> Path | None:
+    """``app.state.thumbs_dir`` as set by ``create_app`` (default:
+    ``data/thumbs``), or ``None`` if the app was explicitly built without
+    one -- see module docstring "IMAGE DECISION"."""
+    return getattr(request.app.state, "thumbs_dir", None)
 
-    See module docstring "DNB IDENTIFIER DECISION" — id is provably stable
-    across scrapes since url is the table's identity/upsert-match key.
-    """
-    digest = hashlib.sha1(str(url or "").encode("utf-8")).hexdigest()[:16]
-    return f"dnb:{digest}"
+
+def _has_thumb(thumbs_dir: Path | None, identifier: str, image_url_present: bool) -> bool:
+    """File-existence-based ``image`` bool when `thumbs_dir` is configured
+    (Task 5); falls back to the pre-Task-5 ``image_url``-non-empty
+    placeholder when it isn't (see module docstring "IMAGE DECISION").
+    Shared by both `_eie_item` and `_dnb_item` so a future migration that
+    gives `dnbeiendom` an `image_url` column (see
+    `skannonser.enrich.thumbs`'s "DNB image_url column" note) needs no
+    change here -- the identifier-keyed file check already works for any
+    source."""
+    if thumbs_dir is None:
+        return image_url_present
+    return (Path(thumbs_dir) / f"{identifier}.jpg").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +227,12 @@ def _dnb_records_all(conn: sqlite3.Connection) -> list[dict]:
 # Record -> API item
 # ---------------------------------------------------------------------------
 
-def _eie_item(rec: dict, domain: DomainConfig, *, sold: bool) -> dict:
+def _eie_item(
+    rec: dict, domain: DomainConfig, *, sold: bool, thumbs_dir: Path | None = None
+) -> dict:
+    finnkode = rec.get("_finnkode")
     return {
-        "finnkode": rec.get("_finnkode"),
+        "finnkode": finnkode,
         "adresse": rec.get("ADRESSE"),
         "postnummer": rec.get("Postnummer"),
         "pris": rec.get("Pris"),
@@ -227,7 +245,7 @@ def _eie_item(rec: dict, domain: DomainConfig, *, sold: bool) -> dict:
         "bra_i": rec.get("Internt bruksareal (BRA-i)"),
         "byggeaar": rec.get("Byggeår"),
         "url": rec.get("URL"),
-        "image": bool(rec.get("_image_url")),
+        "image": _has_thumb(thumbs_dir, finnkode, bool(rec.get("_image_url"))),
         "kommentar": rec.get("Kommentar"),
         "tag": rec.get("Tag"),
         "source": "eie",
@@ -239,6 +257,8 @@ def _dnb_item(
     rec: dict,
     domain: DomainConfig,
     annotation: tuple[str | None, str | None] | None = None,
+    *,
+    thumbs_dir: Path | None = None,
 ) -> dict:
     """``annotation``, when given, is the ``(kommentar, tag)`` pair already
     looked up by the caller for this row's synthetic id (see
@@ -248,8 +268,9 @@ def _dnb_item(
     Kommentar/Tag columns (legacy parity), so these annotations are web-only
     by design."""
     kommentar, tag = annotation if annotation is not None else (None, None)
+    identifier = dnb_identifier(rec.get("URL"))
     return {
-        "finnkode": _dnb_identifier(rec.get("URL")),
+        "finnkode": identifier,
         "adresse": rec.get("Adresse"),
         "postnummer": rec.get("Postnummer"),
         "pris": rec.get("Pris"),
@@ -262,7 +283,12 @@ def _dnb_item(
         "bra_i": None,  # dnbeiendom has no BRA-i column
         "byggeaar": None,  # dnbeiendom has no construction-year column
         "url": rec.get("URL"),
-        "image": False,  # dnbeiendom has no image_url column
+        # dnbeiendom has no image_url column today, so `image_url_present`
+        # is always False here -- but `_has_thumb` still checks the
+        # identifier-keyed file when `thumbs_dir` is configured, so this
+        # starts working automatically once a migration adds one (see
+        # `skannonser.enrich.thumbs`'s DNB candidate-query note).
+        "image": _has_thumb(thumbs_dir, identifier, False),
         "kommentar": kommentar,
         "tag": tag,
         "source": "dnb",
@@ -307,17 +333,26 @@ def get_listings(
     conn: sqlite3.Connection = Depends(ro_conn),
 ) -> dict:
     domain = _domain(request)
+    thumbs_dir = _thumbs_dir(request)
     items = [
-        _eie_item(rec, domain, sold=False)
+        _eie_item(rec, domain, sold=False, thumbs_dir=thumbs_dir)
         for rec in listing_rows(conn, include_hidden_fields=True)
     ]
     dnb_annotations = _dnb_annotations(conn)
     items += [
-        _dnb_item(rec, domain, dnb_annotations.get(_dnb_identifier(rec.get("URL"))))
+        _dnb_item(
+            rec,
+            domain,
+            dnb_annotations.get(dnb_identifier(rec.get("URL"))),
+            thumbs_dir=thumbs_dir,
+        )
         for rec in _dnb_records(conn)
     ]
     if sold:
-        items += [_eie_item(rec, domain, sold=True) for rec in _sold_records(conn)]
+        items += [
+            _eie_item(rec, domain, sold=True, thumbs_dir=thumbs_dir)
+            for rec in _sold_records(conn)
+        ]
     return {"listings": items}
 
 
@@ -346,7 +381,7 @@ def _find_dnb_record(conn: sqlite3.Connection, finnkode: str) -> dict | None:
     unavoidable since the id is a hash, not a stored column. Fine at current
     DNB row counts (hundreds); revisit if that changes."""
     for rec in _dnb_records_all(conn):
-        if _dnb_identifier(rec.get("URL")) == finnkode:
+        if dnb_identifier(rec.get("URL")) == finnkode:
             return rec
     return None
 
@@ -358,10 +393,11 @@ def get_listing_detail(
     conn: sqlite3.Connection = Depends(ro_conn),
 ) -> dict:
     domain = _domain(request)
+    thumbs_dir = _thumbs_dir(request)
 
     rec = _eie_full_row(conn, finnkode)
     if rec is not None:
-        item = _eie_item(rec, domain, sold=_sold_from_hidden(rec))
+        item = _eie_item(rec, domain, sold=_sold_from_hidden(rec), thumbs_dir=thumbs_dir)
         raw = {k: v for k, v in rec.items() if not k.startswith("_")}
         return {**raw, **item}
 
@@ -371,7 +407,7 @@ def get_listing_detail(
             "SELECT kommentar, tag FROM annotations WHERE finnkode = ?", (finnkode,)
         ).fetchone()
         annotation = (ann_row["kommentar"], ann_row["tag"]) if ann_row is not None else None
-        item = _dnb_item(dnb_rec, domain, annotation)
+        item = _dnb_item(dnb_rec, domain, annotation, thumbs_dir=thumbs_dir)
         raw = {k: v for k, v in dnb_rec.items() if k != "dnb_id"}
         return {**raw, **item}
 
@@ -519,11 +555,8 @@ def get_missing_coords(conn: sqlite3.Connection = Depends(ro_conn)) -> dict:
 # DELETEd (a no-op if the row is already absent), same as before.
 # ---------------------------------------------------------------------------
 
-_FINNKODE_RE = re.compile(r"^[A-Za-z0-9:_-]{1,128}$")
-
-
 def _validate_finnkode(finnkode: str) -> None:
-    if not _FINNKODE_RE.match(finnkode or ""):
+    if not IDENTIFIER_RE.match(finnkode or ""):
         raise HTTPException(status_code=400, detail=f"invalid finnkode: {finnkode!r}")
 
 

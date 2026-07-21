@@ -20,3 +20,7 @@ artifacts/
 .env
 backups/
 *.egg-info/
+
+# Nightly thumbnail cache (Phase 5 Task 5, skannonser/enrich/thumbs.py) --
+# locally downloaded/regenerable, never committed.
+data/thumbs/

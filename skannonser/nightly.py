@@ -6,15 +6,21 @@ ran three INDEPENDENT sections -- [A] full (crawl+enrich), [B]
 refresh-stale-open, [C] sold-sync -- such that a failure in one section was
 recorded but never prevented the next section from running (a crawl outage
 must not also skip the day's stale-listing refresh or sheet publish). This
-module mirrors that at the level of eight concrete steps, run strictly in
+module mirrors that at the level of nine concrete steps, run strictly in
 order but each independently try/except'd: ingest_finn, ingest_dnb, geocode,
 enrich(targets=all), enrich(targets=mvv_uni), enrich_dnb, refresh
-(stale-open), sheets. No step's failure skips a LATER step -- none of these
-eight steps has a same-run data dependency on an earlier one succeeding (each
-one operates on whatever is currently in the DB), so "intra-section
-dependencies skip conservatively" (the general wrapper policy) never actually
-fires for this concrete step list; it is called out here for the next
-maintainer who adds a step that DOES depend on an earlier one.
+(stale-open), thumbs (Phase 5 Task 5 -- the nightly thumbnail cache,
+`skannonser.enrich.thumbs.cache_thumbnails`), sheets. No step's failure skips
+a LATER step -- none of these nine steps has a same-run data dependency on an
+earlier one succeeding (each one operates on whatever is currently in the
+DB), so "intra-section dependencies skip conservatively" (the general
+wrapper policy) never actually fires for this concrete step list; it is
+called out here for the next maintainer who adds a step that DOES depend on
+an earlier one.
+
+`thumbs` runs AFTER `refresh` (so it sees the freshest `active`/`image_url`
+state for the day) and BEFORE `sheets` (sheets stays the LAST step,
+unconditionally -- see below).
 
 Two distinct BudgetExceeded shapes are normalized into one outcome
 ("budget_exhausted", not a failure -- the monthly Routes/Geocode cap is an
@@ -57,6 +63,7 @@ import requests
 from skannonser.config.domain import DomainConfig
 from skannonser.enrich.dnb_travel import run_dnb_travel
 from skannonser.enrich.geocode import run_geocode
+from skannonser.enrich.thumbs import cache_thumbnails
 from skannonser.enrich.travel import run_enrich
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.ingest.finn.refresh import refresh_listings
@@ -220,16 +227,23 @@ def run_nightly(
     fetch=requests.get,
     post=requests.post,
     sheets_writer=None,
+    thumbs_dir: Path = Path("data/thumbs/"),
 ) -> dict:
     """The legacy `make full` replacement: ingest finn -> ingest dnb ->
     geocode -> enrich(all) -> enrich(mvv_uni) -> enrich_dnb ->
-    refresh(stale-open) -> sheets, run strictly in this order. Every step is
-    independently try/except'd (see module docstring) -- no step's failure
-    prevents any later step from running.
+    refresh(stale-open) -> thumbs -> sheets, run strictly in this order.
+    Every step is independently try/except'd (see module docstring) -- no
+    step's failure prevents any later step from running.
 
     `client` is the `SheetsClient` used for the sheets step, UNLESS
     `sheets_writer` is given, in which case it is used instead (the
     `--dry-run-sheets` hook; `client` may then be `None`).
+
+    `thumbs_dir` (default `data/thumbs/`) is where the `thumbs` step
+    (`skannonser.enrich.thumbs.cache_thumbnails`) downloads/reads cached
+    listing thumbnails -- same directory the web app serves
+    `GET /thumbs/{identifier}.jpg` from (`skannonser.web.app.create_app`'s
+    own `thumbs_dir` default).
 
     Returns `{"steps": {name: {"ok": bool, "stats": {...}} | {"ok": False,
     "error": str}}, "failed": [names], "budget_exhausted": [names]}`.
@@ -288,6 +302,13 @@ def run_nightly(
         lambda: refresh_listings(
             conn, domain, _FINN_PROJECT_DIR, mode="stale-open", fetch=fetch
         ),
+    )
+    _run_step(
+        steps,
+        failed,
+        budget_exhausted,
+        "thumbs",
+        lambda: cache_thumbnails(conn, thumbs_dir, fetch=fetch),
     )
     # Sheets ALWAYS attempts -- it publishes whatever state the DB is
     # currently in, regardless of how many earlier steps failed.
