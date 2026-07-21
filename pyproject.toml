@@ -35,9 +35,3 @@ include = ["skannonser*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/rebuild"]
-filterwarnings = [
-    # starlette's TestClient nudges toward the httpx2 fork; the contract
-    # pins plain httpx (>=0.27) for the dev extra, and it works fine here --
-    # this just silences the nag so the suite stays warning-free.
-    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
-]

@@ -1,9 +1,14 @@
 import sqlite3
 
+import pytest
 from fastapi.testclient import TestClient
 
 from skannonser.store import connection, migrations
-from skannonser.web.app import create_app
+from skannonser.web.app import create_app, ro_conn
+
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:DeprecationWarning"
+)
 
 
 def _migrated_db(tmp_path):
@@ -134,3 +139,29 @@ def test_cli_web_command_registered():
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "web" in result.output
+
+
+def test_ro_conn_rejects_writes(tmp_path):
+    """Verify that ro_conn is genuinely read-only by attempting an INSERT
+    on the generator-yielded connection."""
+    db_path = _migrated_db(tmp_path)
+
+    class MockRequest:
+        class MockApp:
+            state = type("State", (), {"db_path": db_path})()
+
+        app = MockApp()
+
+    # Obtain connection from the ro_conn dependency generator
+    gen = ro_conn(MockRequest())
+    conn = next(gen)
+    try:
+        # Attempt to write to the read-only connection
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute("INSERT INTO schema_migrations (id) VALUES ('test')")
+    finally:
+        # Properly close the generator
+        try:
+            next(gen)
+        except StopIteration:
+            pass
