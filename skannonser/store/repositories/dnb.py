@@ -205,6 +205,42 @@ class DnbRepo:
         conn.commit()
         return {"inserted": inserted, "updated": updated}
 
+    def set_travel(self, url: str, brj: int | None = None, mvv: int | None = None) -> bool:
+        """Fill-only write of the two DNB travel columns (migration 004:
+        ``pendl_rush_brj``/``pendl_rush_mvv``), matched by ``url``.
+
+        COALESCE semantics: a non-``None`` argument only ever lands when the
+        existing stored value is NULL; an already-populated column (a real
+        value OR a sentinel -- see ``skannonser.enrich.sentinels`` -- both
+        count as "populated") is never overwritten. This mirrors
+        ``scripts/backfill_dnbeiendom_travel_to_sheet.py``'s observable
+        effect: candidacy there is selected purely on "value is missing"
+        (see the module docstring of ``skannonser.enrich.dnb_travel`` for the
+        full port-fidelity writeup), so a value this call ever receives was
+        computed *because* the column was NULL -- fill-only is simply the
+        DB-level enforcement of that same invariant, and it's what makes a
+        stored sentinel "not retried" on the next run for free (a sentinel is
+        NOT NULL, so the candidate query in ``run_dnb_travel`` never selects
+        the row again for that destination).
+
+        A no-op call (both args ``None``, or an unknown/blank ``url``)
+        returns ``False`` without touching the row.
+        """
+        if not url or (brj is None and mvv is None):
+            return False
+        cur = self.conn.execute(
+            """
+            UPDATE dnbeiendom
+            SET pendl_rush_brj = COALESCE(?, pendl_rush_brj),
+                pendl_rush_mvv = COALESCE(?, pendl_rush_mvv),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE url = ?
+            """,
+            (brj, mvv, url),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def deactivate_missing(self, active_urls: list[str]) -> int:
         """Deactivate ``dnbeiendom`` rows whose (normalized) url is absent
         from ``active_urls``. Never deletes; returns the number of rows

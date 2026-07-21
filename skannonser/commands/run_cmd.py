@@ -4,6 +4,7 @@ import typer
 
 from skannonser.config.domain import load_domain
 from skannonser.config.settings import get_secrets
+from skannonser.enrich.dnb_travel import run_dnb_travel
 from skannonser.enrich.geocode import run_geocode
 from skannonser.enrich.travel import VALID_TARGETS, run_enrich
 from skannonser.enrich.validate import validate_travel
@@ -250,6 +251,45 @@ def enrich(
         raise typer.Exit(code=3)
 
     typer.echo(f"enrich: {stats}")
+
+
+@app.command(name="enrich-dnb")
+def enrich_dnb(
+    limit: int = typer.Option(
+        0, "--limit", help="Max Routes API calls to make this run (0 = no limit)"
+    ),
+    db: Path | None = typer.Option(
+        None, "--db", help="Override the DB path for this run (supervised parallel runs)"
+    ),
+) -> None:
+    """Fill missing public-transit commute times (BRJ + MVV only) on active,
+    FINN-unmatched ``dnbeiendom`` rows, through the shared Gateway. Exits 3
+    when the Routes monthly budget is exhausted (remaining rows resume next
+    window)."""
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    conn = connection.connect(db_path)
+    if not _require_no_pending_migrations(conn):
+        raise typer.Exit(code=1)
+
+    api_key = get_secrets().google_maps_api_key
+    if not api_key:
+        typer.echo("Error: GOOGLE_MAPS_API_KEY not set", err=True)
+        raise typer.Exit(code=1)
+
+    domain = load_domain()
+    gateway = Gateway(conn, domain.budget)
+
+    try:
+        stats = run_dnb_travel(conn, domain, gateway, api_key, limit=limit)
+    except BudgetExceeded:
+        typer.echo("dnb travel budget exhausted - resumes next window", err=True)
+        raise typer.Exit(code=3)
+
+    typer.echo(f"enrich-dnb: {stats}")
 
 
 @app.command(name="validate-travel")
