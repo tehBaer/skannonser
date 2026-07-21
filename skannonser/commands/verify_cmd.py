@@ -8,6 +8,7 @@ import typer
 from skannonser.config.settings import get_secrets
 from skannonser.verify.enrich import verify_enrich
 from skannonser.verify.parse import verify_parse
+from skannonser.verify.sheets import verify_sheets
 
 app = typer.Typer(no_args_is_help=True, help="Golden-master verification against legacy")
 
@@ -97,4 +98,51 @@ def enrich(
             typer.echo(f"  {d.finnkode}  {d.field}: legacy={d.legacy_value!r} new={d.new_value!r}")
 
     if result.estimate_diffs or result.donor_diffs or result.sheet_value_diffs:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def sheets(
+    db: Path | None = typer.Option(None, "--db", help="Override the DB path for this run"),
+) -> None:
+    """Compare the rebuilt Sheets export payload builders (Eie/Sold/Stations)
+    against legacy's DataFrame-to-sheet pipeline (`main/sync/helper_sync_to_sheets.py`,
+    `main/sync/sync_stations_to_sheet.py`).
+
+    Runs entirely against a disposable COPY of the DB (made here via
+    `shutil.copy` to a tempdir) -- the source DB is never opened for
+    writing, and no Google Sheets service is ever constructed on either
+    side. DNB has no legacy baseline (legacy's DNB sync is unreachable dead
+    code) and is excluded -- see `skannonser.verify.sheets` module docstring.
+    Prints per-tab diff counts and the first 20 diffs from each; exits 1 if
+    any diff remains.
+    """
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_copy = Path(tmp_dir) / db_path.name
+        shutil.copy(db_path, db_copy)
+        result = verify_sheets(db_copy)
+
+    typer.echo(
+        f"Eie diffs: {len(result.eie_diffs)}  "
+        f"Sold diffs: {len(result.sold_diffs)}  "
+        f"Stations diffs: {len(result.stations_diffs)}"
+    )
+
+    for label, diffs in (
+        ("Eie", result.eie_diffs),
+        ("Sold", result.sold_diffs),
+        ("Stations", result.stations_diffs),
+    ):
+        if diffs:
+            typer.echo("")
+            typer.echo(f"First 20 {label} diffs:")
+            for d in diffs[:20]:
+                typer.echo(f"  {d.key}  {d.field}: legacy={d.legacy_value!r} new={d.new_value!r}")
+
+    if result.eie_diffs or result.sold_diffs or result.stations_diffs:
         raise typer.Exit(code=1)
