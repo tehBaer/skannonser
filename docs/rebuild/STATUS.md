@@ -69,7 +69,8 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
 ## Before Phase 4 cutover (publish port)
 
 - **Supervised DNB parallel run** — the DNB network path has never contacted dnbeiendom.no
-  (Phase 2's checkpoint was finn-only).
+  (Phase 2's checkpoint was finn-only). — PROVEN (2026-07-21): real dnbeiendom.no crawl on
+  the server, 350 rows crawled, all diffs classified time-drift, zero unexplained.
 - Sheet-export consumers must handle: `''`-vs-NULL text columns and postnummer leading zeros
   (legacy's CSV round-trip stripped `0581`→`581`; new pipeline preserves `0581`).
 - `run ingest`'s archive dir is `data/eiendom/html_crawled_rebuild` (separated from legacy's);
