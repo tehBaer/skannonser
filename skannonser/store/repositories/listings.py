@@ -258,3 +258,67 @@ class ListingsRepo:
             (str(finnkode).strip(), old_norm, new_norm),
         )
         return True
+
+    # -- notify: snapshot + daily-metrics accessors (db.py:729-786) ------
+
+    def previous_active_snapshot(self) -> set[str]:
+        """Port of ``db.py:get_previous_active_snapshot`` (729-735)."""
+        rows = self.conn.execute("SELECT finnkode FROM daily_listing_snapshot").fetchall()
+        return {str(r["finnkode"]).strip() for r in rows}
+
+    def replace_active_snapshot(self, finnkodes) -> None:
+        """Port of ``db.py:replace_active_snapshot`` (737-747): wholesale
+        replace of ``daily_listing_snapshot`` with the given finnkodes, as a
+        single atomic transaction (legacy's DELETE + executemany + commit)."""
+        conn = self.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("DELETE FROM daily_listing_snapshot")
+            conn.executemany(
+                "INSERT OR IGNORE INTO daily_listing_snapshot (finnkode) VALUES (?)",
+                [(str(f).strip(),) for f in finnkodes],
+            )
+        except Exception:
+            conn.rollback()
+            raise
+        conn.commit()
+
+    def record_daily_metrics(
+        self, metric_date, added, removed_sold, removed_delisted, total_active
+    ) -> None:
+        """Port of ``db.py:record_daily_metrics`` (749-760). ``metric_date``
+        is the primary key -- an ``INSERT OR REPLACE`` so re-running for the
+        same date overwrites rather than duplicating."""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO daily_metrics "
+            "(metric_date, added, removed_sold, removed_delisted, total_active) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (metric_date, added, removed_sold, removed_delisted, total_active),
+        )
+
+    def sum_daily_metrics_between(self, start_date, end_date) -> dict:
+        """Port of ``db.py:sum_daily_metrics_between`` (762-773): inclusive
+        ``[start_date, end_date]`` range, summed. Missing rows sum to 0."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(added),0) AS added, "
+            "COALESCE(SUM(removed_sold),0) AS removed_sold, "
+            "COALESCE(SUM(removed_delisted),0) AS removed_delisted "
+            "FROM daily_metrics WHERE metric_date >= ? AND metric_date <= ?",
+            (start_date, end_date),
+        ).fetchone()
+        return {
+            "added": row["added"],
+            "removed_sold": row["removed_sold"],
+            "removed_delisted": row["removed_delisted"],
+        }
+
+    def count_sold_between(self, start_date, end_date) -> int:
+        """Port of ``db.py:count_sold_between`` (775-786): count of
+        status->Solgt transitions whose ``observed_at`` date falls in the
+        inclusive ``[start_date, end_date]`` range."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM eiendom_status_history "
+            "WHERE new_status = 'Solgt' AND date(observed_at) >= ? AND date(observed_at) <= ?",
+            (start_date, end_date),
+        ).fetchone()
+        return row["c"]

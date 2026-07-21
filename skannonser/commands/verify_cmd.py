@@ -7,6 +7,7 @@ import typer
 
 from skannonser.config.settings import get_secrets
 from skannonser.verify.enrich import verify_enrich
+from skannonser.verify.metrics import verify_metrics
 from skannonser.verify.parse import verify_parse
 from skannonser.verify.sheets import verify_sheets
 
@@ -145,4 +146,39 @@ def sheets(
                 typer.echo(f"  {d.key}  {d.field}: legacy={d.legacy_value!r} new={d.new_value!r}")
 
     if result.eie_diffs or result.sold_diffs or result.stations_diffs:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def metrics(
+    db: Path | None = typer.Option(None, "--db", help="Override the DB path for this run"),
+) -> None:
+    """Compare `skannonser.notifications.compute_daily_metrics` against
+    LEGACY `main.notify.listing_metrics.compute_daily_metrics`.
+
+    Fixed synthetic scenarios reproduce every case in legacy's own
+    `tests/test_listing_metrics.py`, plus a `live_db` scenario built from a
+    disposable COPY of the DB (made here via `shutil.copy` to a tempdir --
+    the source DB is never opened for writing) using the real
+    previous-snapshot / active-tracked / currently-sold sets `daily_summary`
+    itself would compute today. Prints the diff count and the first 20
+    diffs; exits 1 if any diff remains.
+    """
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_copy = Path(tmp_dir) / db_path.name
+        shutil.copy(db_path, db_copy)
+        result = verify_metrics(db_copy)
+
+    typer.echo(f"metrics diffs: {len(result.diffs)}")
+
+    if result.diffs:
+        typer.echo("")
+        typer.echo("First 20 diffs:")
+        for d in result.diffs[:20]:
+            typer.echo(f"  [{d.scenario}] {d.field}: legacy={d.legacy_value!r} new={d.new_value!r}")
         raise typer.Exit(code=1)
