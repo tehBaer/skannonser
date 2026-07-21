@@ -1,7 +1,12 @@
-"""Listings/meta read API (Phase 5 Task 3).
+"""Listings/meta read API (Phase 5 Task 3) + annotations CRUD (Phase 5 Task 4).
 
-Everything here is a GET, served off ``ro_conn`` (never writes). Three
-listing "buckets" are merged into ``/api/listings``:
+Listings/meta/missing-coords are all GETs served off ``ro_conn`` (never
+write). The annotations routes at the bottom of this module are the
+exception: they use ``rw_conn`` to create/update/delete a single
+``annotations`` row -- see the "Annotations CRUD" section below for the
+import-protection contract those writes must uphold.
+
+Three listing "buckets" are merged into ``/api/listings``:
 
 * **Eie visible** -- ``rows.listing_rows(conn, include_hidden_fields=True)``,
   unchanged (the same visibility-filtered, donor-resolved query the Eie sheet
@@ -49,10 +54,13 @@ that in now would be speculative (no thumbs-download path exists yet).
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from skannonser.config.domain import DomainConfig, load_domain
 from skannonser.publish.rows import (
@@ -66,7 +74,7 @@ from skannonser.publish.rows import (
     _sheet_filters,
     listing_rows,
 )
-from skannonser.web.app import ro_conn
+from skannonser.web.app import ro_conn, rw_conn
 
 router = APIRouter(prefix="/api")
 
@@ -348,7 +356,8 @@ def get_meta(request: Request, conn: sqlite3.Connection = Depends(ro_conn)) -> d
     return {
         "polygon": [list(p) for p in domain.polygon_points],
         # Only client-relevant filters are exposed (sheets_max_price, min_bra_i);
-        # internal filters like price/BRA used in export queries are not sent to UI.
+        # url_max_price/include_unlisted are internal to export queries and are
+        # the ones withheld from the UI.
         "filters": {
             "sheets_max_price": domain.filters.sheets_max_price,
             "min_bra_i": domain.filters.min_bra_i,
@@ -442,6 +451,94 @@ def get_missing_coords(conn: sqlite3.Connection = Depends(ro_conn)) -> dict:
         if rec.get("_lat") is None or rec.get("_lng") is None
     ]
     return {"rows": rows}
+
+
+# ---------------------------------------------------------------------------
+# Annotations CRUD (Phase 5 Task 4)
+#
+# `annotations` is keyed by `finnkode` (PK, see migration 005): `kommentar`,
+# `tag`, `imported_at`, `updated_at`. `skannonser.publish.annotations`'s
+# sheet-import upsert only ever (re-)writes a row whose `updated_at` is NULL
+# or equal to its own `imported_at` -- see that module's "Never-clobber-the-
+# web-UI contract" docstring. The PUT route below is the web-edit side of
+# that contract: it bumps `updated_at` to now while leaving `imported_at`
+# untouched (or NULL, on a fresh insert -- never equal to a fresh non-NULL
+# `updated_at`), so a row this route ever writes is permanently protected
+# from being overwritten by a subsequent sheet import.
+# ---------------------------------------------------------------------------
+
+_FINNKODE_RE = re.compile(r"^[A-Za-z0-9:_-]{1,128}$")
+
+
+def _validate_finnkode(finnkode: str) -> None:
+    if not _FINNKODE_RE.match(finnkode or ""):
+        raise HTTPException(status_code=400, detail=f"invalid finnkode: {finnkode!r}")
+
+
+def _norm_text(value: str | None) -> str | None:
+    """``None``/blank-after-strip -> ``None``; otherwise the stripped text.
+    Lets a PUT body send either ``null`` or ``""`` to mean "no value" --
+    the contract treats them interchangeably for both the delete-trigger
+    check and what gets stored/returned."""
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
+
+
+class AnnotationBody(BaseModel):
+    """Both fields are required in the request body but nullable -- a client
+    must send `{"kommentar": ..., "tag": ...}` (possibly `null` values), not
+    omit either key."""
+
+    kommentar: str | None
+    tag: str | None
+
+
+_ANNOTATION_UPSERT_SQL = """
+INSERT INTO annotations (finnkode, kommentar, tag, imported_at, updated_at)
+VALUES (?, ?, ?, NULL, ?)
+ON CONFLICT(finnkode) DO UPDATE SET
+    kommentar = excluded.kommentar,
+    tag = excluded.tag,
+    updated_at = excluded.updated_at
+"""
+
+
+@router.get("/annotations/{finnkode}")
+def get_annotation(finnkode: str, conn: sqlite3.Connection = Depends(ro_conn)) -> dict:
+    _validate_finnkode(finnkode)
+    row = conn.execute(
+        "SELECT kommentar, tag FROM annotations WHERE finnkode = ?", (finnkode,)
+    ).fetchone()
+    if row is None:
+        return {"finnkode": finnkode, "kommentar": None, "tag": None}
+    return {
+        "finnkode": finnkode,
+        "kommentar": _norm_text(row["kommentar"]),
+        "tag": _norm_text(row["tag"]),
+    }
+
+
+@router.put("/annotations/{finnkode}")
+def put_annotation(
+    finnkode: str,
+    body: AnnotationBody,
+    conn: sqlite3.Connection = Depends(rw_conn),
+) -> dict:
+    _validate_finnkode(finnkode)
+    kommentar = _norm_text(body.kommentar)
+    tag = _norm_text(body.tag)
+
+    if kommentar is None and tag is None:
+        conn.execute("DELETE FROM annotations WHERE finnkode = ?", (finnkode,))
+        conn.commit()
+        return {"finnkode": finnkode, "kommentar": None, "tag": None}
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(_ANNOTATION_UPSERT_SQL, (finnkode, kommentar, tag, now))
+    conn.commit()
+    return {"finnkode": finnkode, "kommentar": kommentar, "tag": tag}
 
 
 __all__ = ["router"]

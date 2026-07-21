@@ -1,4 +1,5 @@
-"""Tests for skannonser.web.api (Phase 5 Task 3: listings/meta/missing-coords).
+"""Tests for skannonser.web.api (Phase 5 Task 3: listings/meta/missing-coords;
+Phase 5 Task 4: annotations CRUD).
 
 Seeds tmp DBs via raw SQL (same helpers/conventions as test_export.py -- full
 control over every column, no reliance on ListingsRepo's activation timing).
@@ -23,6 +24,7 @@ with warnings.catch_warnings():
     from fastapi.testclient import TestClient
 
 from skannonser.config.domain import load_domain
+from skannonser.publish.annotations import import_sheet_annotations
 from skannonser.store import connection, migrations
 from skannonser.web.app import create_app
 
@@ -481,3 +483,211 @@ def test_boligtype_whitespace_trimmed(db_path, client):
 
     meta = client.get("/api/meta").json()
     assert meta["boligtyper"] == ["Leilighet"]
+
+
+# ---------------------------------------------------------------------------
+# /api/annotations/{finnkode} -- CRUD (Phase 5 Task 4)
+# ---------------------------------------------------------------------------
+
+class _FakeSheetsClient:
+    """Stands in for SheetsClient in the interplay-lock tests below: `read_tab`
+    returns canned rows; any write call is a test failure (mirrors
+    tests/rebuild/test_annotations_import.py's FakeClient)."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def read_tab(self, tab):
+        return self._rows
+
+    def rewrite_tab(self, *a, **kw):
+        raise AssertionError("import_sheet_annotations must never write the sheet")
+
+
+def _annotation_row(conn, finnkode):
+    row = conn.execute(
+        "SELECT * FROM annotations WHERE finnkode = ?", (finnkode,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def test_get_annotation_absent_returns_nulls(client):
+    resp = client.get("/api/annotations/111")
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "111", "kommentar": None, "tag": None}
+
+
+def test_put_annotation_create_then_get_roundtrip(db_path, client):
+    resp = client.put(
+        "/api/annotations/222", json={"kommentar": "Fin utsikt", "tag": "A"}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "222", "kommentar": "Fin utsikt", "tag": "A"}
+
+    conn = _conn(db_path)
+    stored = _annotation_row(conn, "222")
+    conn.close()
+    assert stored["kommentar"] == "Fin utsikt"
+    assert stored["tag"] == "A"
+    assert stored["imported_at"] is None
+    assert stored["updated_at"] is not None
+
+    resp = client.get("/api/annotations/222")
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "222", "kommentar": "Fin utsikt", "tag": "A"}
+
+
+def test_put_annotation_update_changes_value_and_bumps_updated_at(db_path, client):
+    client.put("/api/annotations/333", json={"kommentar": "First", "tag": "A"})
+    conn = _conn(db_path)
+    before = _annotation_row(conn, "333")
+    conn.close()
+
+    resp = client.put(
+        "/api/annotations/333", json={"kommentar": "Second", "tag": "B"}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "333", "kommentar": "Second", "tag": "B"}
+
+    conn = _conn(db_path)
+    after = _annotation_row(conn, "333")
+    conn.close()
+    assert after["kommentar"] == "Second"
+    assert after["tag"] == "B"
+    assert after["updated_at"] != before["updated_at"]
+    assert after["imported_at"] is None  # fresh insert never had one; untouched on update
+
+
+def test_put_annotation_both_null_deletes_row(db_path, client):
+    client.put("/api/annotations/444", json={"kommentar": "Temp", "tag": "T"})
+
+    resp = client.put("/api/annotations/444", json={"kommentar": None, "tag": None})
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "444", "kommentar": None, "tag": None}
+
+    conn = _conn(db_path)
+    count = conn.execute(
+        "SELECT COUNT(*) AS c FROM annotations WHERE finnkode = ?", ("444",)
+    ).fetchone()["c"]
+    conn.close()
+    assert count == 0
+
+
+def test_put_annotation_both_empty_string_deletes_row(db_path, client):
+    """Contract treats null and "" interchangeably for the delete trigger."""
+    client.put("/api/annotations/445", json={"kommentar": "Temp", "tag": "T"})
+
+    resp = client.put("/api/annotations/445", json={"kommentar": "", "tag": "  "})
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "445", "kommentar": None, "tag": None}
+
+    conn = _conn(db_path)
+    count = conn.execute(
+        "SELECT COUNT(*) AS c FROM annotations WHERE finnkode = ?", ("445",)
+    ).fetchone()["c"]
+    conn.close()
+    assert count == 0
+
+
+@pytest.mark.parametrize(
+    "bad_finnkode",
+    # NOTE: a literal "/" (extra path segment) or "?" (query-string separator)
+    # never reaches this route/handler at all -- Starlette's default path
+    # converter excludes "/", and "?" splits the URL before path matching --
+    # so those aren't exercised here; this covers charset rejection for
+    # finnkodes that DO land as a single path segment.
+    ["bad kode", "æøå"],
+)
+def test_put_annotation_bad_finnkode_400(client, bad_finnkode):
+    resp = client.put(
+        f"/api/annotations/{bad_finnkode}", json={"kommentar": "x", "tag": None}
+    )
+    assert resp.status_code == 400
+    assert "detail" in resp.json()
+
+
+def test_get_annotation_bad_finnkode_400(client):
+    resp = client.get("/api/annotations/bad kode")
+    assert resp.status_code == 400
+    assert "detail" in resp.json()
+
+
+def test_put_annotation_missing_body_field_422(client):
+    """Both `kommentar` and `tag` are required keys in the body (nullable,
+    not omittable) -- an incomplete body is a validation error, not a 400
+    from our own finnkode check."""
+    resp = client.put("/api/annotations/446", json={"kommentar": "x"})
+    assert resp.status_code == 422
+
+
+# --- interplay lock: web edits vs. the sheet-import protection contract ----
+
+def test_web_created_annotation_survives_subsequent_sheet_import(db_path, client):
+    """Create via web PUT, then run the REAL import_sheet_annotations with a
+    fake client offering a DIFFERENT kommentar for the same finnkode. The web
+    value must survive -- import protection holds because the web PUT bumped
+    updated_at without touching imported_at (NULL), so
+    `updated_at IS NULL OR updated_at = imported_at` is false."""
+    resp = client.put(
+        "/api/annotations/12345678", json={"kommentar": "web value", "tag": "W"}
+    )
+    assert resp.status_code == 200
+
+    conn = _conn(db_path)
+    sheet_rows = [
+        ["Finnkode", "Kommentar", "Tag"],
+        ["12345678", "sheet says something else", "S"],
+    ]
+    fake_client = _FakeSheetsClient(sheet_rows)
+    result = import_sheet_annotations(conn, fake_client, tab="Eie")
+    assert result["skipped"] == 1
+    assert result["inserted"] == 0
+    assert result["updated"] == 0
+
+    row = _annotation_row(conn, "12345678")
+    conn.close()
+    assert row["kommentar"] == "web value"
+    assert row["tag"] == "W"
+
+    resp = client.get("/api/annotations/12345678")
+    assert resp.json() == {"finnkode": "12345678", "kommentar": "web value", "tag": "W"}
+
+
+def test_imported_then_web_edited_row_survives_reimport(db_path, client):
+    """Import creates a row (via the real import path), then a web PUT edits
+    it -- web wins immediately and a LATER re-import (even with yet another
+    differing sheet value) still doesn't clobber it."""
+    conn = _conn(db_path)
+    sheet_rows = [
+        ["Finnkode", "Kommentar", "Tag"],
+        ["87654321", "original sheet comment", "O"],
+    ]
+    fake_client = _FakeSheetsClient(sheet_rows)
+    result = import_sheet_annotations(conn, fake_client, tab="Eie")
+    assert result["inserted"] == 1
+    conn.close()
+
+    resp = client.put(
+        "/api/annotations/87654321", json={"kommentar": "web override", "tag": "X"}
+    )
+    assert resp.status_code == 200
+
+    conn = _conn(db_path)
+    row = _annotation_row(conn, "87654321")
+    assert row["kommentar"] == "web override"
+    assert row["updated_at"] != row["imported_at"]
+
+    # Re-import with yet another differing sheet value -- must still be a no-op.
+    sheet_rows_2 = [
+        ["Finnkode", "Kommentar", "Tag"],
+        ["87654321", "sheet changed again", "Z"],
+    ]
+    fake_client_2 = _FakeSheetsClient(sheet_rows_2)
+    result_2 = import_sheet_annotations(conn, fake_client_2, tab="Eie")
+    assert result_2["skipped"] == 1
+    assert result_2["updated"] == 0
+
+    row_after = _annotation_row(conn, "87654321")
+    conn.close()
+    assert row_after["kommentar"] == "web override"
+    assert row_after["tag"] == "X"
