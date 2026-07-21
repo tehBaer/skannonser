@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import typer
@@ -11,7 +12,9 @@ from skannonser.enrich.validate import validate_travel
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.ingest.finn.refresh import MODES as REFRESH_MODES
 from skannonser.ingest.finn.refresh import refresh_listings
+from skannonser.nightly import run_nightly, run_sheets
 from skannonser.pipeline import FAILURE_RATE_THRESHOLD, run_dnb_ingest, run_finn_ingest
+from skannonser.publish.sheets_client import SheetsClient
 from skannonser.store import connection, migrations
 
 app = typer.Typer(no_args_is_help=True, help="Run ingest pipelines")
@@ -335,3 +338,105 @@ def validate_travel_cmd(
         typer.echo(
             f"{f['score']:>5}  {f['column']:<26}  {f['finnkode']:<12}  {f['value']:>6}  {reason}"
         )
+
+
+def _require_sheets_configured() -> bool:
+    """`run sheets` / `run nightly` (without --dry-run-sheets) both need a
+    real Sheets destination -- fail loud instead of letting SheetsClient's
+    lazy `_build_service` raise deep inside the sheets step."""
+    secrets = get_secrets()
+    if not secrets.spreadsheet_id or secrets.google_service_account_file is None:
+        typer.echo(
+            "Error: spreadsheet_id / google_service_account_file not configured", err=True
+        )
+        return False
+    return True
+
+
+@app.command()
+def sheets(
+    db: Path | None = typer.Option(
+        None, "--db", help="Override the DB path for this run (supervised parallel runs)"
+    ),
+) -> None:
+    """Rewrite the Eie, Sold, DNB, and Stations Google Sheets tabs from the
+    current DB state (full clear-and-rewrite, Task 3's export builders)."""
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    conn = connection.connect(db_path)
+    if not _require_no_pending_migrations(conn):
+        raise typer.Exit(code=1)
+
+    if not _require_sheets_configured():
+        raise typer.Exit(code=1)
+
+    client = SheetsClient(get_secrets().spreadsheet_id)
+    stats = run_sheets(conn, client)
+    typer.echo(f"sheets: {stats}")
+
+
+@app.command()
+def nightly(
+    db: Path | None = typer.Option(
+        None, "--db", help="Override the DB path for this run (supervised parallel runs)"
+    ),
+    dry_run_sheets: Path | None = typer.Option(
+        None,
+        "--dry-run-sheets",
+        help=(
+            "Write sheet payloads as {eie,sold,dnb,stations}.json to DIR "
+            "instead of touching Sheets"
+        ),
+    ),
+) -> None:
+    """The legacy `make full` cron replacement: ingest finn -> ingest dnb ->
+    geocode -> enrich(all) -> enrich(mvv_uni) -> enrich-dnb ->
+    refresh(stale-open) -> sheets, run sequentially with per-step failure
+    isolation (see `skannonser/nightly.py`'s module docstring -- no step's
+    failure skips a later one; a Routes/Geocode budget stop is recorded, not
+    treated as a failure). Exits non-zero only if a real step failed; a
+    budget-exhausted-only run still exits 0."""
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    conn = connection.connect(db_path)
+    if not _require_no_pending_migrations(conn):
+        raise typer.Exit(code=1)
+
+    api_key = get_secrets().google_maps_api_key
+    if not api_key:
+        typer.echo("Error: GOOGLE_MAPS_API_KEY not set", err=True)
+        raise typer.Exit(code=1)
+
+    client = None
+    sheets_writer = None
+    if dry_run_sheets is not None:
+        dry_run_sheets.mkdir(parents=True, exist_ok=True)
+
+        def _write_payload(tab: str, header: list, rows: list) -> None:
+            path = dry_run_sheets / f"{tab.lower()}.json"
+            path.write_text(json.dumps({"header": header, "rows": rows}, default=str))
+
+        sheets_writer = _write_payload
+    else:
+        if not _require_sheets_configured():
+            raise typer.Exit(code=1)
+        client = SheetsClient(get_secrets().spreadsheet_id)
+
+    domain = load_domain()
+    gateway = Gateway(conn, domain.budget)
+
+    result = run_nightly(conn, domain, gateway, api_key, client, sheets_writer=sheets_writer)
+
+    typer.echo(f"nightly: {result}")
+    if result["budget_exhausted"]:
+        typer.echo(
+            "nightly: budget exhausted on: " + ", ".join(result["budget_exhausted"]), err=True
+        )
+    if result["failed"]:
+        raise typer.Exit(code=1)
