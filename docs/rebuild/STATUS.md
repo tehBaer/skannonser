@@ -11,6 +11,31 @@ else is history.
 
 ## Where we are
 
+- **CUTOVER LIVE 2026-07-21** (Phase 4 Task 10): the server's nightly + notify crons now run the
+  rebuilt CLI. `~/run_skannonser_daily.sh` was rewritten to call `skannonser run nightly` (one
+  section replacing the legacy `make full`/`refresh-stale-open`/`sold-sync` trio); the 07:00/Sun-08:00
+  notify crons now call `skannonser notify daily`/`weekly`. **Legacy is preserved as an unscheduled
+  fallback** at `~/run_skannonser_daily.legacy.sh` (+ original crontab at `~/crontab.precutover.bak`,
+  pre-cutover DB at `~/skannonser-precutover-20260721-141109.db`). Live DB migrated 004+005 (the one
+  sanctioned live-DB write; backed up first). Server suite: **419 passed**.
+  - **Supervised side-by-side (clean):** triggered a fresh legacy run (`full=0`), copied+migrated the
+    live DB, ran the rebuilt nightly against the copy with `--dry-run-sheets`.
+    **DIFF A (DB effects): zero unexplained** — active set identical (976); the only diffs were
+    sanctioned classes (nightly mvv_uni step 258; 6 geocode lat/lng; 37 donor links; 4 brj/mvv enrich;
+    +5 DNB crawl) plus 70 `tilgjengelighet` 'Inaktiv'→None on active listings, proven to be
+    HTML-cache-freshness drift (both parsers return identical output on identical HTML; the side-by-side
+    run's empty cache fetched fresher finn pages). **DIFF B (payloads vs real sheet): zero unexplained**
+    — the zero-network golden master `verify sheets` over the identical copy.db is **Eie 0 / Sold 0 /
+    Stations 0**, proving export fidelity; the real-sheet delta was entirely crawl-freshness drift +
+    sanctioned mvv_uni/postnummer classes; Stations matched exactly (0 diffs).
+  - **First rebuilt production publish verified:** `skannonser run sheets` against the live DB →
+    Eie 793 / Sold 3395 / DNB 3 / Stations 213 rows (exit 0); Eie read-back sane (real addresses,
+    prices, travel, GOOGLE_MAPS_URL). **DNB tab first real content** (3 rows = active DNB-unique;
+    legacy's DNB sync was unreachable dead code / a stale 3-row tab).
+  - **Annotations rescue: 0** on both laptop and the live server DB — the Eie tab has no Kommentar/Tag
+    columns, so there is nothing to preserve across the new clear-and-rewrite (anticipated outcome).
+  - **Map consumer:** unchanged this task; the Sold tab still feeds the map (Phase-5 item). User to
+    visually confirm the map still renders after the first live nightly.
 - **Phase 1 (skeleton) and Phase 2 (ingest port) are merged to master and deployed on the server**
   (`mbp2016@100.77.139.22`, repo `~/kode/skannonser`, tailnet). **Phase 3 (enrichment port +
   Google API gateway) is complete on branch `rebuild-phase-3`; merge to master is still pending.**
