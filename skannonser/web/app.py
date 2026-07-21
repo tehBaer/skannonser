@@ -146,6 +146,15 @@ def create_app(
     def get_thumb(identifier: str) -> FileResponse | JSONResponse:
         return _thumb_response(app.state.thumbs_dir, identifier)
 
+    # Phase 5 Task 8: the sortable table view. A plain FileResponse -- same
+    # posture as `index.html` (served by the StaticFiles mount below with no
+    # extra caching headers added by this app either way) -- registered
+    # ahead of the mount so it takes precedence over the extension-less path
+    # not otherwise resolving through StaticFiles(html=True).
+    @app.get("/table", response_model=None)
+    def table_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "table.html")
+
     # Deferred import: skannonser.web.api imports `ro_conn` back out of this
     # module. By the time create_app() actually RUNS, this module has already
     # finished executing (ro_conn is defined above), so the import resolves

@@ -205,3 +205,103 @@ html, body {
 .sk-editor button:disabled { opacity: 0.5; cursor: default; }
 .sk-editor .saved { font-size: 12px; color: var(--accent); }
 .sk-editor .error { font-size: 12px; color: #a2392e; }
+
+/* ---- Table view (Phase 5 Task 8) ------------------------------------- */
+
+#table-app {
+  max-width: 100%;
+  min-height: 100vh;
+  padding: 16px 20px 40px;
+}
+
+.table-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.table-header .brand { margin: 0; }
+.table-nav a { color: var(--accent); text-decoration: none; font-size: 14px; }
+.table-nav a:hover { text-decoration: underline; }
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.table-filter-input {
+  flex: 0 1 320px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+#listings-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  white-space: nowrap;
+}
+#listings-table th,
+#listings-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+#listings-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: default;
+  user-select: none;
+}
+#listings-table th.sortable { cursor: pointer; }
+#listings-table th.sortable:hover { color: var(--text); }
+#listings-table th.sort-asc::after { content: " \25B2"; }
+#listings-table th.sort-desc::after { content: " \25BC"; }
+#listings-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+#listings-table tr.sold-row { background: #f6f6f5; color: var(--muted); }
+.sold-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  border-radius: 4px;
+  background: #efefef;
+  color: #666;
+}
+
+#listings-table a { color: var(--accent); text-decoration: none; }
+#listings-table a:hover { text-decoration: underline; }
+
+.cell-edit {
+  width: 100%;
+  min-width: 100px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font: inherit;
+  background: transparent;
+}
+.cell-edit:hover,
+.cell-edit:focus {
+  border-color: var(--border);
+  background: #fff;
+}
+.cell-edit.saved { border-color: var(--accent); }
+.cell-edit.error { border-color: #a2392e; }

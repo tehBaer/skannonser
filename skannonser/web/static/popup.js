@@ -2,9 +2,12 @@
 //
 // buildPopupContent(item, destinations) returns a DOM node for
 // MapLibre's Popup.setDOMContent(). The node carries a self-contained
-// annotation editor that PUTs /api/annotations/{finnkode} on save and
-// mutates `item` (the shared per-listing object) in place so a re-open
-// reflects the saved values.
+// annotation editor that PUTs /api/annotations/{finnkode} on save (via the
+// shared ./annotations.js helper -- table.js's inline cells use the same
+// one) and mutates `item` (the shared per-listing object) in place so a
+// re-open reflects the saved values.
+
+import { saveAnnotation } from "./annotations.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -133,19 +136,7 @@ function buildEditor(item) {
     feedback.className = "";
     feedback.textContent = "Lagrer …";
     try {
-      const resp = await fetch(
-        "/api/annotations/" + encodeURIComponent(item.finnkode),
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            kommentar: komInput.value.trim() || null,
-            tag: tagInput.value.trim() || null,
-          }),
-        }
-      );
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      const saved = await resp.json();
+      const saved = await saveAnnotation(item.finnkode, komInput.value, tagInput.value);
       // Reflect the server's normalized values back into the shared item
       // so a re-open (and any table view) sees the saved state.
       item.kommentar = saved.kommentar;

@@ -138,6 +138,37 @@ def test_style_css_served(tmp_path):
     assert "text/css" in resp.headers["content-type"].lower()
 
 
+def test_table_served_at_table_route(tmp_path):
+    """Phase 5 Task 8: /table serves table.html (a FileResponse route, same
+    no-cache posture as the index -- no extra caching headers added)."""
+    resp = _client(tmp_path).get("/table")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    body = resp.text
+    assert 'id="listings-table"' in body
+    assert 'id="table-head-row"' in body and 'id="table-body"' in body
+    assert 'id="table-filter"' in body
+    assert 'id="table-sold"' in body
+    assert 'type="module"' in body and "/table.js" in body
+    # Links back to the map.
+    assert 'href="/"' in body
+
+
+def test_table_and_annotations_modules_served(tmp_path):
+    client = _client(tmp_path)
+    for name in ("table.js", "annotations.js"):
+        resp = client.get("/" + name)
+        assert resp.status_code == 200, name
+        assert "javascript" in resp.headers["content-type"].lower(), name
+
+
+def test_index_has_tabell_nav_link(tmp_path):
+    """Phase 5 Task 8: index.html gains a "Tabell" nav link to /table."""
+    body = _client(tmp_path).get("/").text
+    assert 'href="/table"' in body
+    assert ">Tabell<" in body
+
+
 # ---------------------------------------------------------------------------
 # No-CDN guarantees (grep-style, over authored files only)
 # ---------------------------------------------------------------------------
@@ -193,5 +224,14 @@ def test_index_html_scripts_and_links_are_same_origin(tmp_path):
     text = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     refs = re.findall(r'(?:src|href)\s*=\s*"([^"]+)"', text)
     assert refs, "expected at least the vendor + app asset references"
+    for ref in refs:
+        assert ref.startswith("/"), f"non-same-origin asset ref: {ref!r}"
+
+
+def test_table_html_scripts_and_links_are_same_origin(tmp_path):
+    """Same same-origin guarantee for table.html (Phase 5 Task 8)."""
+    text = (STATIC_DIR / "table.html").read_text(encoding="utf-8")
+    refs = re.findall(r'(?:src|href)\s*=\s*"([^"]+)"', text)
+    assert refs, "expected at least the style + table.js asset references"
     for ref in refs:
         assert ref.startswith("/"), f"non-same-origin asset ref: {ref!r}"

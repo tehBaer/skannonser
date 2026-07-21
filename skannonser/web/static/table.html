@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>skannonser – tabell</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="table-app">
+    <header class="table-header">
+      <h1 class="brand">skannonser</h1>
+      <nav class="table-nav"><a href="/">&larr; Kart</a></nav>
+    </header>
+
+    <div class="table-toolbar">
+      <input type="text" id="table-filter" class="table-filter-input"
+             placeholder="Filtrer adresse, postnummer, boligtype …">
+      <label class="toggle"><input type="checkbox" id="table-sold"> Vis solgte</label>
+      <span id="table-status" class="muted"></span>
+    </div>
+
+    <div class="table-wrap">
+      <table id="listings-table">
+        <thead>
+          <tr id="table-head-row"></tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script type="module" src="/table.js"></script>
+</body>
+</html>
