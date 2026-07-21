@@ -387,6 +387,8 @@ def sheets(
     client = SheetsClient(get_secrets().spreadsheet_id)
     stats = run_sheets(conn, client)
     typer.echo(f"sheets: {stats}")
+    if "failed_tab" in stats:
+        raise typer.Exit(code=1)
 
 
 @app.command()

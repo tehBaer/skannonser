@@ -645,3 +645,28 @@ def test_cli_sheets_missing_service_account_file_exits_1(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     assert "not found" in result.output
+
+
+def test_cli_sheets_exits_nonzero_on_publish_failure(tmp_path, monkeypatch):
+    """When run_sheets returns a partial-failure dict (failed_tab key), the
+    CLI must exit with code 1 and surface the failure."""
+    monkeypatch.setenv("SPREADSHEET_ID", "SHEET1")
+    sa_path = tmp_path / "sa.json"
+    sa_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(sa_path))
+    db = _seeded_db(tmp_path)
+
+    def fake_run_sheets_failing(conn, client):
+        # Simulate mid-tab failure: Eie completed, Sold raised, DNB/Stations not attempted
+        return {
+            "tabs": {"Eie": {"rows": 0, "cells": 1}},
+            "failed_tab": "Sold",
+            "error": "sheets API exploded",
+            "unattempted": ["DNB", "Stations"],
+        }
+
+    monkeypatch.setattr(run_cmd, "run_sheets", fake_run_sheets_failing)
+
+    result = CliRunner().invoke(app, ["run", "sheets", "--db", str(db)])
+    assert result.exit_code == 1, result.output
+    assert "failed_tab" in result.output

@@ -124,7 +124,11 @@ def _publish(conn: sqlite3.Connection, *, client=None, sheets_writer=None) -> di
 def run_sheets(conn: sqlite3.Connection, client) -> dict:
     """Rewrite the Eie, Sold, DNB, and Stations tabs from the current DB
     state (Task 3's builders), via `client.rewrite_tab`. Returns per-tab
-    `{"rows": n, "cells": n}` counts."""
+    `{"rows": n, "cells": n}` counts on success, or on mid-tab failure
+    returns `{"tabs": {...tabs completed...}, "failed_tab": name,
+    "error": str, "unattempted": [tab names not yet tried]}` -- the partial
+    failure shape ensures already-published tabs' stats are preserved and
+    exactly which tabs didn't get attempted are clear."""
     return _publish(conn, client=client)
 
 
