@@ -446,21 +446,28 @@ def test_dnb_only_row_uses_own_travel(conn):
     assert row["MVV UNI RUSH"] == ""
 
 
-def test_dnb_matched_row_inherits_finn_donor_values(conn):
-    # FINN listing F with a donor G supplying donor-resolved travel.
+def test_dnb_rows_exclude_finn_matched(conn):
+    # FINN listing F with a donor G supplying donor-resolved travel -- present
+    # only to prove a matched DNB row does NOT pull it in.
     _ins_eiendom(conn, "G", tilgjengelighet="Solgt", active=0)
     _ins_processed(conn, "G", brj=111, mvv=222, mvv_uni=333)
     _ins_eiendom(conn, "F")
     _ins_processed(conn, "F", brj=None, mvv=None, mvv_uni=None, travel_copy_from_finnkode="G")
-    # Matched DNB row inherits F's donor-resolved travel (incl. MVV UNI RUSH),
-    # ignoring its own dnbeiendom travel columns.
+    # Matched DNB row: legacy (sync_dnbeiendom_sheet.py:100-105) excludes these
+    # entirely -- the sheet has no Finnkode column to dedupe against Eie, so a
+    # matched row surviving here would double-pin the same property on the map.
     _ins_dnb(conn, "https://dnb.no/matched", duplicate_of_finnkode="F", brj=1, mvv=2)
+    # Unmatched DNB row: stays, using its own dnbeiendom travel values.
+    _ins_dnb(conn, "https://dnb.no/unmatched", duplicate_of_finnkode=None, brj=15, mvv=25)
 
     header, rows = dnb_rows(conn)
+    urls = {dict(zip(header, r))["URL"] for r in rows}
+    assert urls == {"https://dnb.no/unmatched"}
+
     row = dict(zip(header, rows[0]))
-    assert row["PENDL RUSH BRJ"] == 111
-    assert row["PENDL RUSH MVV"] == 222
-    assert row["MVV UNI RUSH"] == 333
+    assert row["PENDL RUSH BRJ"] == 15
+    assert row["PENDL RUSH MVV"] == 25
+    assert row["MVV UNI RUSH"] == ""
 
 
 def test_dnb_price_cap_filter(conn):

@@ -442,10 +442,16 @@ def dnb_rows(conn: sqlite3.Connection) -> tuple[list[str], list[list]]:
     ``info_usable_i_area`` column, so no MIN_BRA_I filter). Travel columns come
     from the ``dnbeiendom`` travel columns added in migration 004
     (``pendl_rush_brj``, ``pendl_rush_mvv``; there is no ``mvv_uni`` column on
-    ``dnbeiendom`` so ``MVV UNI RUSH`` is blank for DNB-only rows). A row matched
-    to a FINN listing (``duplicate_of_finnkode`` set) instead INHERITS that FINN
-    row's donor-resolved travel (same CASE/COALESCE as Eie), which also supplies
-    ``MVV UNI RUSH``.
+    ``dnbeiendom`` so ``MVV UNI RUSH`` is always blank here).
+
+    DNB-ONLY-UNIQUE, not matched-row inheritance (controller ruling, plan
+    defect amended in commit 548e008): rows with a non-blank
+    ``duplicate_of_finnkode`` are EXCLUDED entirely, exactly like legacy's
+    predicate (``scripts/sync_dnbeiendom_sheet.py:100-105``:
+    ``duplicate_of_finnkode IS NULL OR TRIM(duplicate_of_finnkode) = ''``). The
+    DNB sheet payload carries no Finnkode column, so the Apps Script map has no
+    way to dedupe a matched DNB row against its Eie counterpart -- keeping it
+    would double-pin the same property on the map.
     """
     max_price, _min_bra_i = _sheet_filters()
     sql = (
@@ -457,31 +463,17 @@ def dnb_rows(conn: sqlite3.Connection) -> tuple[list[str], list[list]]:
         '    d.url AS "URL",'
         '    d.lat AS "LAT",'
         '    d.lng AS "LNG",'
-        '    d.duplicate_of_finnkode AS "duplicate_of_finnkode",'
-        '    d.pendl_rush_brj AS "dnb_brj",'
-        '    d.pendl_rush_mvv AS "dnb_mvv",'
-        "    " + _DONOR_TRAVEL_SQL.replace('"PENDL RUSH BRJ"', '"finn_brj"')
-        .replace('"PENDL RUSH MVV"', '"finn_mvv"')
-        .replace('"MVV UNI RUSH"', '"finn_mvv_uni"')
+        '    d.pendl_rush_brj AS "PENDL RUSH BRJ",'
+        '    d.pendl_rush_mvv AS "PENDL RUSH MVV"'
         + " FROM dnbeiendom d"
-        + " LEFT JOIN eiendom_processed ep ON ep.finnkode = d.duplicate_of_finnkode"
-        + " LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode"
         + " WHERE d.active = 1 AND COALESCE(d.pris, 0) <= ?"
+        + " AND (d.duplicate_of_finnkode IS NULL OR TRIM(d.duplicate_of_finnkode) = '')"
         + " ORDER BY d.scraped_at DESC"
     )
     records = _rows_from_cursor(conn.execute(sql, (max_price,)))
 
     rows: list[list] = []
     for rec in records:
-        matched = bool(str(rec.get("duplicate_of_finnkode") or "").strip())
-        if matched:
-            brj = rec.get("finn_brj")
-            mvv = rec.get("finn_mvv")
-            mvv_uni = rec.get("finn_mvv_uni")
-        else:
-            brj = rec.get("dnb_brj")
-            mvv = rec.get("dnb_mvv")
-            mvv_uni = None  # no dnbeiendom source column for mvv_uni
         row = [
             norm_cell(rec.get("Adresse")),
             norm_postnummer(rec.get("Postnummer")),
@@ -490,9 +482,9 @@ def dnb_rows(conn: sqlite3.Connection) -> tuple[list[str], list[list]]:
             norm_cell(rec.get("URL")),
             norm_cell(rec.get("LAT")),
             norm_cell(rec.get("LNG")),
-            _int_or_empty(brj),
-            _int_or_empty(mvv),
-            _int_or_empty(mvv_uni),
+            _int_or_empty(rec.get("PENDL RUSH BRJ")),
+            _int_or_empty(rec.get("PENDL RUSH MVV")),
+            "",  # no dnbeiendom source column for mvv_uni
         ]
         rows.append(row)
     return list(DNB_HEADER), rows
