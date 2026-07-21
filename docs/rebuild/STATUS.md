@@ -121,7 +121,7 @@ gitignored ledger.**
   sheet-update prompt (EOF under cron), so travel/coords enrichment + part of sheet sync were
   stale since ~Jul 12. Remedies applied 2026-07-20: cron moved 00:00→**01:00** (DNS dodge) and
   `SHEETS_AUTO_CONFIRM=1` exported in `~/run_skannonser_daily.sh`.
-  **VERIFY: the first ~01:00 log after Jul 20 in `~/skannonser-logs/` should end `full=0`.**
+  **PROVEN 2026-07-21: `full_2026-07-21_010001.log` ends `full=0 refresh=0 sold=0` — first fully clean nightly since ~Jul 12; both fixes work.**
 - Google Maps API key lives in `.env` on both machines (0600, gitignored); `main/config/config.py`
   is env-first with a `.env` fallback; the wrapper sources `.env`. Key was NOT rotated (never in
   git history — verified). Optional: confirm API restrictions in Cloud Console.
