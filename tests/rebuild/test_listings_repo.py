@@ -29,15 +29,9 @@ def test_upsert_inserts_then_updates(repo):
     assert r2["inserted"] == 0
 
 
-def test_insert_inactive_until_second_appearance_legacy_semantics(repo):
-    # Legacy quirk preserved deliberately: new listings activate on 2nd crawl. Candidate fix post-cutover.
-    repo.upsert([_listing("111")])
-    row = repo.conn.execute(
-        "SELECT active FROM eiendom WHERE finnkode = '111'"
-    ).fetchone()
-    assert row["active"] == 0
-    assert repo.active_finnkodes() != {"111"}
-
+def test_insert_active_on_first_appearance(repo):
+    # User mandate 2026-07-20 (STATUS backlog #1, landed with phase-4 cutover):
+    # listings are active from FIRST appearance - same-day export/notify.
     repo.upsert([_listing("111")])
     row = repo.conn.execute(
         "SELECT active FROM eiendom WHERE finnkode = '111'"
@@ -76,17 +70,19 @@ def test_excluded_urls_are_skipped_and_counted(repo):
     )
     r = repo.upsert([bad, _listing("111")])
     assert r == {"inserted": 1, "updated": 0, "excluded": 1}
-    # Second appearance activates "111" under legacy semantics; the excluded
-    # listing is skipped both times and never persisted.
+    # "111" is active from this first upsert; the excluded listing is
+    # skipped and never persisted.
+    assert repo.active_finnkodes() == {"111"}
+
+    # Re-scan: "111" is unchanged (no update fires), the excluded listing is
+    # still skipped both times and never persisted.
     r2 = repo.upsert([bad, _listing("111")])
-    assert r2 == {"inserted": 0, "updated": 1, "excluded": 1}
+    assert r2 == {"inserted": 0, "updated": 0, "excluded": 1}
     assert repo.active_finnkodes() == {"111"}
 
 
 def test_mark_inactive_deactivates_missing_never_deletes(repo):
-    repo.upsert([_listing("111"), _listing("222")])
-    # Second appearance activates both under legacy semantics.
-    repo.upsert([_listing("111"), _listing("222")])
+    repo.upsert([_listing("111"), _listing("222")])  # both active on first upsert
     n = repo.mark_inactive(["111"])
     assert n == 1
     assert repo.active_finnkodes() == {"111"}
@@ -95,9 +91,7 @@ def test_mark_inactive_deactivates_missing_never_deletes(repo):
 
 
 def test_mark_inactive_empty_list_deactivates_all(repo):
-    repo.upsert([_listing("111"), _listing("222")])
-    # Second appearance activates both under legacy semantics.
-    repo.upsert([_listing("111"), _listing("222")])
+    repo.upsert([_listing("111"), _listing("222")])  # both active on first upsert
     n = repo.mark_inactive([])
     assert n == 2
     assert repo.active_finnkodes() == set()

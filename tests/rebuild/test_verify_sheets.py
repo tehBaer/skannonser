@@ -36,8 +36,9 @@ def _seed_listing(
     pris=5_000_000,
     active=True,
 ):
-    """Seed an eiendom row via the real repo (two upserts -> active=1),
-    legacy-style, matching test_verify_enrich.py's `_seed_listing`."""
+    """Seed an eiendom row via the real repo. Active from the single upsert
+    (listings activate on first appearance, user mandate 2026-07-20); pass
+    ``active=False`` to force an inactive row via a direct SQL update."""
     repo = ListingsRepo(conn)
     listing = NormalizedListing(
         **{
@@ -50,8 +51,8 @@ def _seed_listing(
         }
     )
     repo.upsert([listing])
-    if active:
-        repo.upsert([listing])
+    if not active:
+        conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = ?", (finnkode,))
 
 
 def _seed_processed(conn, finnkode, *, lat=None, lng=None, travel=None, link=None, adresse="Gata 1"):

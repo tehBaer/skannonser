@@ -37,7 +37,8 @@ def db_path(tmp_path) -> Path:
 
 
 def _seed_listing(conn, finnkode, *, adresse, postnummer="0575", pris=3_000_000):
-    """Seed an ACTIVE eiendom row (two upserts -> active=1), legacy-style."""
+    """Seed an ACTIVE eiendom row (active from the first upsert -- listings
+    activate on first appearance, user mandate 2026-07-20)."""
     repo = ListingsRepo(conn)
     listing = NormalizedListing(
         **{
@@ -48,7 +49,6 @@ def _seed_listing(conn, finnkode, *, adresse, postnummer="0575", pris=3_000_000)
             "Pris": pris,
         }
     )
-    repo.upsert([listing])
     repo.upsert([listing])
 
 

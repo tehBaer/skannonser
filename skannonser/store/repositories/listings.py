@@ -151,15 +151,12 @@ class ListingsRepo:
                 ).fetchone()
 
                 if existing is None:
-                    # Legacy's INSERT never sets ``active`` — the schema default
-                    # (``active BOOLEAN DEFAULT 0``) applies, so a new finnkode
-                    # only becomes active on its SECOND appearance (see the
-                    # UPDATE branch below, which does set active=1). This is a
-                    # deliberate legacy quirk, not an oversight — do not "fix"
-                    # it here without a controller ruling.
-                    cols = ["finnkode"] + _DATA_COLUMNS
+                    # User mandate 2026-07-20 (STATUS backlog #1, landed with
+                    # phase-4 cutover): listings are active from FIRST
+                    # appearance - same-day export/notify.
+                    cols = ["finnkode", "active"] + _DATA_COLUMNS
                     placeholders = ", ".join("?" * len(cols))
-                    params = [data["finnkode"]] + [data[c] for c in _DATA_COLUMNS]
+                    params = [data["finnkode"], 1] + [data[c] for c in _DATA_COLUMNS]
                     conn.execute(
                         f"INSERT INTO eiendom ({', '.join(cols)}) VALUES ({placeholders})",
                         params,

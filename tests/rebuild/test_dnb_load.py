@@ -54,11 +54,13 @@ def test_polygon_filter_drops_outside_rows(conn, domain):
 
 
 def test_finn_match_sets_duplicate_of_finnkode(conn, domain):
-    # Seed one eiendom row via ListingsRepo with a known address+postcode.
-    # A single upsert leaves it inactive under legacy's "second appearance"
-    # quirk -- deliberately used here to prove the FINN matcher does NOT
-    # restrict to active eiendom rows (legacy's CSV-based matcher loaded the
-    # whole FINN dataset with no active/inactive filtering at all).
+    # Seed one eiendom row via ListingsRepo with a known address+postcode,
+    # then force it inactive via direct SQL (listings now activate on FIRST
+    # appearance -- user mandate 2026-07-20 -- so a plain upsert alone would
+    # no longer produce an inactive row here). The inactive state is
+    # deliberately used to prove the FINN matcher does NOT restrict to
+    # active eiendom rows (legacy's CSV-based matcher loaded the whole FINN
+    # dataset with no active/inactive filtering at all).
     listings_repo = ListingsRepo(conn)
     listings_repo.upsert(
         [
@@ -70,6 +72,7 @@ def test_finn_match_sets_duplicate_of_finnkode(conn, domain):
             )
         ]
     )
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '123456'")
     assert listings_repo.active_finnkodes() == set()  # still inactive
 
     dnb_row = _dnb_row(

@@ -137,8 +137,7 @@ def test_status_history_scoped_per_finnkode(repo):
 
 def test_refresh_updates_status_from_html(conn, domain, tmp_path):
     repo = ListingsRepo(conn)
-    repo.upsert([_listing("999", Tilgjengelighet="Til salgs")])
-    repo.upsert([_listing("999", Tilgjengelighet="Til salgs")])  # activate (legacy quirk)
+    repo.upsert([_listing("999", Tilgjengelighet="Til salgs")])  # active on first upsert
     assert repo.active_finnkodes() == {"999"}
 
     html = (FINN_FIXTURES / "451631591.html").read_text(encoding="utf-8", errors="replace")
@@ -182,7 +181,6 @@ def test_refresh_updates_status_from_html(conn, domain, tmp_path):
 def test_refresh_no_change_records_no_history(conn, domain, tmp_path):
     repo = ListingsRepo(conn)
     repo.upsert([_listing("999", Tilgjengelighet="Solgt")])
-    repo.upsert([_listing("999", Tilgjengelighet="Solgt")])
 
     html = (FINN_FIXTURES / "451631591.html").read_text(encoding="utf-8", errors="replace")
 
@@ -208,7 +206,6 @@ def test_refresh_no_change_records_no_history(conn, domain, tmp_path):
 
 def test_refresh_fetch_error_counted_and_no_update(conn, domain, tmp_path):
     repo = ListingsRepo(conn)
-    repo.upsert([_listing("999", Tilgjengelighet="Til salgs")])
     repo.upsert([_listing("999", Tilgjengelighet="Til salgs")])
 
     def flaky_fetch(url):
@@ -242,8 +239,12 @@ def test_stale_open_mode_selects_correct_rows(conn, domain, tmp_path):
     max_price = domain.filters.sheets_max_price
     min_bra_i = domain.filters.min_bra_i
 
+    # Listings activate on first appearance (user mandate 2026-07-20), so
+    # every upsert below produces an active row; B-G need `active=0` forced
+    # via direct SQL afterward to exercise the inactive-scoped selection
+    # queries below, matching each case's stated intent.
+
     # A: active -> excluded from any inactive-scoped mode.
-    repo.upsert([_listing("100", Tilgjengelighet="Til salgs", Pris=1000000)])
     repo.upsert([_listing("100", Tilgjengelighet="Til salgs", Pris=1000000)])
 
     # B: inactive but already closed (Solgt) -> excluded from stale-open.
@@ -251,35 +252,41 @@ def test_stale_open_mode_selects_correct_rows(conn, domain, tmp_path):
         "200", Tilgjengelighet="Solgt", Pris=1000000,
         **{"Internt bruksareal (BRA-i)": min_bra_i + 10},
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '200'")
 
     # C: inactive but already closed (Inaktiv, mixed case) -> excluded.
     repo.upsert([_listing(
         "300", Tilgjengelighet="inaktiv", Pris=1000000,
         **{"Internt bruksareal (BRA-i)": min_bra_i + 10},
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '300'")
 
     # D: inactive, open status, but price above the sheet filter -> excluded.
     repo.upsert([_listing(
         "400", Tilgjengelighet="Til salgs", Pris=max_price + 1,
         **{"Internt bruksareal (BRA-i)": min_bra_i + 10},
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '400'")
 
     # E: inactive, open status, but area below the sheet filter -> excluded.
     repo.upsert([_listing(
         "500", Tilgjengelighet="Til salgs", Pris=1000000,
         **{"Internt bruksareal (BRA-i)": min_bra_i - 10},
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '500'")
 
     # F: inactive, open status, within both filters -> INCLUDED.
     repo.upsert([_listing(
         "600", Tilgjengelighet="Til salgs", Pris=1000000,
         **{"Internt bruksareal (BRA-i)": min_bra_i + 10},
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '600'")
 
     # G: inactive, never-checked (no status yet), within filters -> INCLUDED.
     repo.upsert([_listing(
         "700", Pris=1000000, **{"Internt bruksareal (BRA-i)": min_bra_i + 10}
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '700'")
 
     calls = []
 
@@ -303,14 +310,19 @@ def test_inactive_mode_includes_closed_statuses(conn, domain, tmp_path):
     repo = ListingsRepo(conn)
     min_bra_i = domain.filters.min_bra_i
 
+    # Both rows must be inactive to be candidates for mode="inactive" (its
+    # query is `WHERE active = 0`); force that via direct SQL since a single
+    # upsert now activates on first appearance (user mandate 2026-07-20).
     repo.upsert([_listing(
         "200", Tilgjengelighet="Solgt", Pris=1000000,
         **{"Internt bruksareal (BRA-i)": min_bra_i + 10},
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '200'")
     repo.upsert([_listing(
         "600", Tilgjengelighet="Til salgs", Pris=1000000,
         **{"Internt bruksareal (BRA-i)": min_bra_i + 10},
     )])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '600'")
 
     calls = []
 
@@ -329,8 +341,7 @@ def test_inactive_mode_includes_closed_statuses(conn, domain, tmp_path):
 
 def test_all_mode_includes_active_rows(conn, domain, tmp_path):
     repo = ListingsRepo(conn)
-    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])
-    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])  # activate
+    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])  # active on first upsert
     assert repo.active_finnkodes() == {"100"}
 
     calls = []
@@ -363,11 +374,8 @@ def test_unknown_mode_rejected(conn, domain, tmp_path):
 def test_listing_delay_fires_between_listings_not_after_last(conn, domain, tmp_path):
     repo = ListingsRepo(conn)
     repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])
-    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])  # activate
     repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])
-    repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])  # activate
     repo.upsert([_listing("300", Tilgjengelighet="Til salgs")])
-    repo.upsert([_listing("300", Tilgjengelighet="Til salgs")])  # activate
     assert repo.active_finnkodes() == {"100", "200", "300"}
 
     delay_calls = []
@@ -398,8 +406,6 @@ def test_listing_delay_default_sleeps_0_2s(conn, domain, tmp_path, monkeypatch):
 
     repo = ListingsRepo(conn)
     repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])
-    repo.upsert([_listing("100", Tilgjengelighet="Til salgs")])
-    repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])
     repo.upsert([_listing("200", Tilgjengelighet="Til salgs")])
 
     sleep_calls = []

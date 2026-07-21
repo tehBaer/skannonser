@@ -117,14 +117,14 @@ _EMPTY_PAYLOAD = {"status": "OK", "results": []}
 
 def _seed_eiendom(listings_repo: ListingsRepo, finnkode: str, *, adresse="Storgata 1", postnummer="0575"):
     """Seed an active `eiendom` row -- FK target for `eiendom_processed`.
-    Two upserts, matching ListingsRepo's activate-on-second-appearance quirk."""
+    Active from the single upsert (listings activate on first appearance,
+    user mandate 2026-07-20)."""
     listing = NormalizedListing(
         Finnkode=finnkode,
         URL=f"https://www.finn.no/realestate/ad.html?finnkode={finnkode}",
         Adresse=adresse,
         Postnummer=postnummer,
     )
-    listings_repo.upsert([listing])
     listings_repo.upsert([listing])
 
 
@@ -368,7 +368,11 @@ def test_run_geocode_include_inactive(conn, domain, gateway, listings):
         Adresse="Storgata 1",
         Postnummer="0575",
     )
-    listings.upsert([listing])  # single upsert -> stays inactive (legacy quirk)
+    listings.upsert([listing])
+    # Listings activate on first appearance now (user mandate 2026-07-20);
+    # force this row inactive via direct SQL so the test still proves
+    # include_inactive's effect on candidacy, not just "a row exists".
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = '111'")
 
     get = lambda *a, **k: FakeResponse(200, _payload(_result(postal="0575")))
 

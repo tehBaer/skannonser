@@ -33,9 +33,9 @@ def repo(conn):
 def _seed_eiendom(listings_repo, finnkode: str, *, tilgjengelighet=None, active=True):
     """Seed an ``eiendom`` row (FK target for ``eiendom_processed``).
 
-    Legacy quirk: a finnkode only becomes ``active`` on its SECOND upsert
-    appearance (see ``ListingsRepo``/``test_listings_repo.py``), so we upsert
-    twice when the caller wants an active row.
+    Listings activate on first appearance (user mandate 2026-07-20), so a
+    single upsert already produces an active row; pass ``active=False`` to
+    force an inactive row via a direct SQL update afterward.
     """
     listing = NormalizedListing(
         Finnkode=finnkode,
@@ -43,8 +43,10 @@ def _seed_eiendom(listings_repo, finnkode: str, *, tilgjengelighet=None, active=
         Tilgjengelighet=tilgjengelighet,
     )
     listings_repo.upsert([listing])
-    if active:
-        listings_repo.upsert([listing])
+    if not active:
+        listings_repo.conn.execute(
+            "UPDATE eiendom SET active = 0 WHERE finnkode = ?", (finnkode,)
+        )
 
 
 # -- module-level pure helpers -------------------------------------------

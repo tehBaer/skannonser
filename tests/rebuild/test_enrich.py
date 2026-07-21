@@ -105,7 +105,8 @@ def gateway(conn):
 def _seed_listing(
     conn, finnkode, *, adresse=None, postnummer="0575", pris=None, primary_area=None
 ):
-    """Seed an ACTIVE eiendom row (two upserts -> active=1)."""
+    """Seed an ACTIVE eiendom row (active from the first upsert -- listings
+    activate on first appearance, user mandate 2026-07-20)."""
     repo = ListingsRepo(conn)
     listing = NormalizedListing(
         **{
@@ -117,7 +118,6 @@ def _seed_listing(
             "Primærrom": primary_area,
         }
     )
-    repo.upsert([listing])
     repo.upsert([listing])
 
 

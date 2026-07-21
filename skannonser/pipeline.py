@@ -29,13 +29,15 @@ Two guards are ledgered as MANDATORY for this task:
    accepting them.
 
 This pipeline calls `upsert()` exactly once per run for each source.
-`ListingsRepo`/`DnbRepo` preserve legacy's "activate only on second
-appearance" quirk (a fresh INSERT leaves `active` at its schema default,
-0/NULL; only an UPDATE hard-sets `active = 1` -- see those modules'
-docstrings, reaffirmed at Task 6/11 review, and pinned exactly at the
-pipeline layer too -- Task 13 review). A listing this pipeline has never
-seen before stays inactive after this run and activates on the run that
-next observes it, matching legacy exactly.
+`ListingsRepo` (FINN/`eiendom`) activates a listing on its FIRST appearance
+-- INSERT writes `active=1` directly -- per user mandate 2026-07-20 (STATUS
+backlog #1, landed with the Phase 4 cutover / Task 11): a listing this
+pipeline has never seen before is immediately visible to export/notify, no
+second-crawl delay. `DnbRepo` (`dnbeiendom`) still preserves the separate,
+live-schema-driven "activate only on second appearance" quirk (a fresh
+INSERT leaves `active` at its schema default, 0/NULL; only an UPDATE
+hard-sets `active = 1` -- see that module's docstring) -- that quirk was
+never part of this task's scope and stays as-is.
 """
 
 import random

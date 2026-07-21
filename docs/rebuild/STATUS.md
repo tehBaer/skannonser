@@ -71,9 +71,13 @@ else is history.
    `main/sync/update_rows_in_sheet.py` — API-derived changes auto-accept, non-API auto-skip.
 
 Preserved legacy quirks (deliberate, test-pinned — change only with an explicit ruling):
-- **Activate-on-second-appearance**: new listings stay `active=0` until their 2nd crawl (delays
-  export/notify by one cycle). Twice attempted as a "fix", twice reverted to keep equivalence.
-  → **User has ruled it a bug: scheduled for removal right after Phase 4 cutover (see Backlog).**
+- **Activate-on-second-appearance (`eiendom`/`ListingsRepo`)**: new listings stayed `active=0`
+  until their 2nd crawl (delayed export/notify by one cycle). Twice attempted as a "fix", twice
+  reverted to keep equivalence during phases 2-4. → **removed 2026-07-21 per user mandate
+  (Task 11): `ListingsRepo.upsert`'s INSERT now writes `active=1` — listings activate on FIRST
+  appearance.** The equivalent quirk on `dnbeiendom`/`DnbRepo` (driven by the live schema's own
+  missing `active` default, not application code) is a SEPARATE, still-preserved quirk — out of
+  this task's scope.
 - DNB matcher ignores `active`; `deactivate_missing([])` deactivates everything (pipeline guards it).
 
 ## Phase 3 named deliverables (enrichment port + Google API gateway)
@@ -114,16 +118,18 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
 ## Backlog: approved fixes for after cutover
 
 **1. KILL the activate-on-second-appearance quirk — USER DECISION 2026-07-20 (re-confirmed 2026-07-21): fix it.**
-**BINDING: the Phase 4 implementation plan MUST include this as its FINAL task, executed immediately after the cron cutover is verified — Phase 4 is not complete until new listings activate (and therefore export/notify) on FIRST appearance. Do not write the Phase 4 plan without this task.**
-Today a newly discovered listing stays `active=0` (invisible to sheet export and the daily
-"added" notification) until the SECOND crawl that sees it — a full day's delay on exactly the
-listings the user most wants to hear about. Preserved during the rebuild only because phases 2-4
-require byte-equivalence with legacy for the golden-master/parallel-run comparisons. **Scheduled:
-first change after Phase 4 cutover** — make listings active on first appearance (insert with
-`active=1` in `ListingsRepo.upsert`), update the pinning tests (`test_insert_inactive_until_
-second_appearance_legacy_semantics` and the pipeline e2e), and expect the daily notify "added"
-count to shift by design. The reverted implementations from Tasks 6/13 show exactly where the
-one-line change goes.
+**— LANDED (2026-07-21, pending first-nightly observation).**
+`ListingsRepo.upsert`'s INSERT now writes `active=1` (Task 11): a newly discovered listing is
+active — and therefore visible to sheet export and the daily "added" notification — from the
+FIRST crawl that sees it, no more one-day delay. Pinning tests updated (`test_insert_active_on_
+first_appearance` in `test_listings_repo.py`, plus the `test_pipeline.py` e2e and every other
+seeding site across `tests/rebuild` that relied on the old two-upsert-to-activate behavior — see
+the Task 11 commit/report for the full list, including the handful of tests whose POINT was an
+inactive row and now force it via a direct SQL `UPDATE eiendom SET active = 0` after upsert). The
+daily/weekly notify "added" count will shift by design (no longer undercounts same-day new
+listings by one cycle) — **watch the first post-Task-11 nightly** to confirm a genuinely new
+listing appears in the sheet + notification the same day it's first crawled, and record the
+observation here once seen.
 
 Other decided-later items (surface each for a go/no-go when its phase arrives):
 - Sheet Postnummer display: legacy (and phase-4 bug-compatible export) lets USER_ENTERED coerce "0581"→581 in the sheet (verified live 2026-07-21). One-line fix (apostrophe-prefix at row construction) once the Apps Script map is retired or verified tolerant — or moot at Phase 5 (web UI reads the DB's correct values).

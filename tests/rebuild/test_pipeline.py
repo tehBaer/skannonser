@@ -69,11 +69,12 @@ def test_finn_pipeline_offline_end_to_end(tmp_path):
 
     assert stats["parsed"] == 2 and stats["failed"] == 0
     assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] == 2
-    # Legacy quirk preserved: first-seen listings activate on 2nd appearance (Task 6 ruling).
-    assert conn.execute("SELECT COUNT(*) FROM eiendom WHERE active=1").fetchone()[0] == 0
+    # User mandate 2026-07-20 (STATUS backlog #1, landed with phase-4 cutover):
+    # listings are active from FIRST appearance - same-day export/notify.
+    assert conn.execute("SELECT COUNT(*) FROM eiendom WHERE active=1").fetchone()[0] == 2
 
-    # Running the same ingest again (same finnkodes) hits the UPDATE branch,
-    # which activates them -- and nothing gets deactivated in the process.
+    # Running the same ingest again (same finnkodes, unchanged data) hits the
+    # UPDATE branch as a no-op -- still 2 active, nothing deactivated.
     stats2 = run_finn_ingest(
         load_domain(), conn, proj, fetch=_fail_if_called, skip_crawl_urls=urls
     )
@@ -112,14 +113,12 @@ def test_finn_pipeline_reports_crawled_upserted_deactivated(tmp_path):
 
 
 def test_finn_mark_inactive_skipped_when_crawl_yields_zero_urls(conn, domain, tmp_path):
-    # Seed one already-active listing (two upserts to clear the legacy
-    # activate-on-second-appearance quirk).
+    # Seed one already-active listing (active from the first upsert).
     repo = ListingsRepo(conn)
     listing = NormalizedListing(
         Finnkode="999",
         URL="https://www.finn.no/realestate/homes/ad.html?finnkode=999",
     )
-    repo.upsert([listing])
     repo.upsert([listing])
     assert repo.active_finnkodes() == {"999"}
 
@@ -188,7 +187,6 @@ def test_finn_mark_inactive_skipped_when_failure_rate_too_high(conn, domain, tmp
         Finnkode="999",
         URL="https://www.finn.no/realestate/homes/ad.html?finnkode=999",
     )
-    repo.upsert([listing])
     repo.upsert([listing])
     assert repo.active_finnkodes() == {"999"}
 

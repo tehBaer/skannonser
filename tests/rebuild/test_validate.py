@@ -59,7 +59,8 @@ def domain():
 
 
 def _seed_listing(conn, finnkode, *, adresse, postnummer, pris=3_000_000):
-    """Seed an ACTIVE eiendom row (two upserts -> active=1), legacy-style."""
+    """Seed an ACTIVE eiendom row (active from the first upsert -- listings
+    activate on first appearance, user mandate 2026-07-20)."""
     repo = ListingsRepo(conn)
     listing = NormalizedListing(
         **{
@@ -70,7 +71,6 @@ def _seed_listing(conn, finnkode, *, adresse, postnummer, pris=3_000_000):
             "Pris": pris,
         }
     )
-    repo.upsert([listing])
     repo.upsert([listing])
 
 
@@ -229,9 +229,15 @@ def test_postcode_outlier_flagged_when_local_check_cannot_fire(db_path, domain):
 def test_donor_distance_outlier_flagged(db_path, domain):
     conn = connection.connect(db_path)
 
-    # Donor: a single upsert leaves it inactive (activate-on-2nd-appearance,
-    # see STATUS.md) -- donor_seed() reads eiendom_processed alone (no
-    # active filter), so an inactive donor still resolves. Its own brj (50)
+    # Donor: forced inactive via direct SQL after the upsert (listings now
+    # activate on first appearance -- user mandate 2026-07-20 -- so a plain
+    # upsert alone would no longer leave it inactive here). It must stay
+    # inactive: `_SHEET_QUERY` scopes its candidate/dedup scan to `active =
+    # 1`, so an active DONOR (valid brj=50) would become its own dedup-group
+    # representative and collapse DONEE out of the candidate set entirely,
+    # defeating this test's point. `donor_seed()` (used for the donor-coords
+    # / donor-link graph) reads `eiendom_processed` alone with no active
+    # filter, so an inactive donor still resolves there -- its own brj (50)
     # is what DONEE's donor-resolved value below picks up.
     donor_listing = NormalizedListing(
         **{
@@ -243,6 +249,7 @@ def test_donor_distance_outlier_flagged(db_path, domain):
         }
     )
     ListingsRepo(conn).upsert([donor_listing])
+    conn.execute("UPDATE eiendom SET active = 0 WHERE finnkode = 'DONOR'")
     _seed_processed(conn, "DONOR", lat=_north(20_000), lng=OSLO_LNG, brj=50, postnummer="3009")
 
     # Donee: active, geographically isolated (unique postnummer, no nearby
