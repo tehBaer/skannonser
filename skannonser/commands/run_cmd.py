@@ -343,11 +343,22 @@ def validate_travel_cmd(
 def _require_sheets_configured() -> bool:
     """`run sheets` / `run nightly` (without --dry-run-sheets) both need a
     real Sheets destination -- fail loud instead of letting SheetsClient's
-    lazy `_build_service` raise deep inside the sheets step."""
+    lazy `_build_service` raise deep inside the sheets step (for `nightly`,
+    that means only AFTER the whole -- potentially hours-long, budget-
+    consuming -- pipeline has already run). Checks both that the values are
+    present AND that the configured service-account path actually exists on
+    disk, so a stale/typo'd path is caught up front too."""
     secrets = get_secrets()
     if not secrets.spreadsheet_id or secrets.google_service_account_file is None:
         typer.echo(
             "Error: spreadsheet_id / google_service_account_file not configured", err=True
+        )
+        return False
+    if not secrets.google_service_account_file.exists():
+        typer.echo(
+            "Error: google_service_account_file not found at "
+            f"{secrets.google_service_account_file}",
+            err=True,
         )
         return False
     return True

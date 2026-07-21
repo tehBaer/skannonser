@@ -85,6 +85,15 @@ def _publish(conn: sqlite3.Connection, *, client=None, sheets_writer=None) -> di
     for every other pipeline function this module calls) takes effect --
     a module-level constant built from the imported names once at import
     time would freeze stale references instead.
+
+    Each tab's write is its own try/except -- a mid-loop exception (e.g. the
+    3rd of 4 tabs) must not discard the tabs already rewritten in the live
+    spreadsheet. On success this returns a flat `{tab: {"rows", "cells"}}`
+    mapping, same as before. On a tab failure it instead returns
+    `{"tabs": {...tabs completed before the failure...}, "failed_tab": name,
+    "error": str, "unattempted": [names not yet tried]}` -- `_run_step`
+    recognizes this shape and records the step as failed while still
+    surfacing exactly what did and didn't get published.
     """
     builders: list[tuple[str, Callable[[sqlite3.Connection], tuple[list[str], list[list]]]]] = [
         ("Eie", eie_rows),
@@ -92,16 +101,24 @@ def _publish(conn: sqlite3.Connection, *, client=None, sheets_writer=None) -> di
         ("DNB", dnb_rows),
         ("Stations", stations_rows),
     ]
-    result: dict = {}
-    for tab, builder in builders:
+    tabs: dict = {}
+    for i, (tab, builder) in enumerate(builders):
         header, rows = builder(conn)
-        if sheets_writer is not None:
-            sheets_writer(tab, header, rows)
-            result[tab] = {"rows": len(rows), "cells": 0}
-        else:
-            cells = client.rewrite_tab(tab, [header] + rows)
-            result[tab] = {"rows": len(rows), "cells": cells}
-    return result
+        try:
+            if sheets_writer is not None:
+                sheets_writer(tab, header, rows)
+                tabs[tab] = {"rows": len(rows), "cells": 0}
+            else:
+                cells = client.rewrite_tab(tab, [header] + rows)
+                tabs[tab] = {"rows": len(rows), "cells": cells}
+        except Exception as exc:  # noqa: BLE001 - recorded, not swallowed silently
+            return {
+                "tabs": tabs,
+                "failed_tab": tab,
+                "error": str(exc),
+                "unattempted": [t for t, _ in builders[i + 1 :]],
+            }
+    return tabs
 
 
 def run_sheets(conn: sqlite3.Connection, client) -> dict:
@@ -144,6 +161,15 @@ def _run_step(
 
     if isinstance(stats, dict) and stats.get("budget_exhausted"):
         _record_budget_exhausted(steps, budget_exhausted, name, stats)
+        return
+
+    # `_publish`'s partial-failure shape (see its docstring): a mid-loop tab
+    # write blew up, but `stats` still carries the tabs completed before it.
+    # Record the step as failed WITHOUT collapsing that partial state down
+    # to just an error string (that's exactly what Fix 1 corrects).
+    if isinstance(stats, dict) and "failed_tab" in stats:
+        steps[name] = {"ok": False, "error": stats["error"], "stats": stats}
+        failed.append(name)
         return
 
     steps[name] = {"ok": True, "stats": stats}

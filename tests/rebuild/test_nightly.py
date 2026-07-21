@@ -384,6 +384,46 @@ def _ins_eiendom(conn, finnkode, **kw):
     conn.commit()
 
 
+class FailingOnSecondTabClient:
+    """Fake `SheetsClient` that writes the 1st tab fine, then raises on the
+    2nd -- proves `_publish` preserves the already-completed tab's stats
+    instead of discarding them when a later tab's write blows up."""
+
+    def __init__(self):
+        self.calls = []
+
+    def rewrite_tab(self, tab, rows):
+        self.calls.append(tab)
+        if tab == "Sold":
+            raise RuntimeError("sheets API exploded")
+        return len(rows)
+
+
+def test_publish_mid_loop_failure_preserves_completed_tab_stats(conn, domain, gateway, monkeypatch):
+    """A client that raises on the 2nd tab (Sold) must not wipe out the 1st
+    tab's (Eie) already-written stats -- the sheets step still fails, but
+    the report shows exactly what got published before the blowup, plus
+    which tabs were never attempted."""
+    order = []
+    _install_happy_fakes(monkeypatch, order)
+    client = FailingOnSecondTabClient()
+
+    result = run_nightly(conn, domain, gateway, "K", client)
+
+    assert "sheets" in result["failed"]
+    assert result["steps"]["sheets"]["ok"] is False
+
+    stats = result["steps"]["sheets"]["stats"]
+    assert stats["tabs"]["Eie"] == {"rows": 0, "cells": 1}
+    assert "Sold" not in stats["tabs"]
+    assert "DNB" not in stats["tabs"]
+    assert "Stations" not in stats["tabs"]
+    assert stats["failed_tab"] == "Sold"
+    assert "sheets API exploded" in stats["error"]
+    assert stats["unattempted"] == ["DNB", "Stations"]
+    assert "sheets API exploded" in result["steps"]["sheets"]["error"]
+
+
 def test_run_sheets_per_tab_counts(conn):
     _ins_eiendom(conn, "111")
     _ins_eiendom(conn, "222")
@@ -437,7 +477,9 @@ def test_cli_sheets_missing_spreadsheet_config_exits_1(tmp_path, monkeypatch):
 
 def test_cli_sheets_routes_to_run_sheets(tmp_path, monkeypatch):
     monkeypatch.setenv("SPREADSHEET_ID", "SHEET1")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(tmp_path / "sa.json"))
+    sa_path = tmp_path / "sa.json"
+    sa_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(sa_path))
     db = _seeded_db(tmp_path)
     calls = []
 
@@ -493,7 +535,9 @@ def test_cli_nightly_missing_spreadsheet_config_exits_1(tmp_path, monkeypatch):
 def test_cli_nightly_real_step_failure_exits_nonzero(tmp_path, monkeypatch):
     monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "K")
     monkeypatch.setenv("SPREADSHEET_ID", "SHEET1")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(tmp_path / "sa.json"))
+    sa_path = tmp_path / "sa.json"
+    sa_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(sa_path))
     db = _seeded_db(tmp_path)
 
     def fake_run_nightly(conn, domain, gateway, api_key, client, fetch=None, post=None, sheets_writer=None):
@@ -512,7 +556,9 @@ def test_cli_nightly_real_step_failure_exits_nonzero(tmp_path, monkeypatch):
 def test_cli_nightly_budget_exhausted_only_exits_0(tmp_path, monkeypatch):
     monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "K")
     monkeypatch.setenv("SPREADSHEET_ID", "SHEET1")
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(tmp_path / "sa.json"))
+    sa_path = tmp_path / "sa.json"
+    sa_path.write_text("{}")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(sa_path))
     db = _seeded_db(tmp_path)
 
     def fake_run_nightly(conn, domain, gateway, api_key, client, fetch=None, post=None, sheets_writer=None):
@@ -562,3 +608,40 @@ def test_cli_nightly_dry_run_sheets_writes_four_json_files_and_skips_config_chec
         payload = json.loads(path.read_text())
         assert "header" in payload
         assert "rows" in payload
+
+
+def test_cli_nightly_missing_service_account_file_exits_1_before_any_step_runs(
+    tmp_path, monkeypatch
+):
+    """`spreadsheet_id`/`google_service_account_file` being *set* isn't
+    enough -- a stale/typo'd path must be caught before the (potentially
+    hours-long, budget-consuming) pipeline runs at all, not discovered only
+    when the sheets step tries to use it at the very end."""
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "K")
+    monkeypatch.setenv("SPREADSHEET_ID", "SHEET1")
+    monkeypatch.setenv(
+        "GOOGLE_SERVICE_ACCOUNT_FILE", str(tmp_path / "does-not-exist-sa.json")
+    )
+    db = _seeded_db(tmp_path)
+
+    order = []
+    _install_happy_fakes(monkeypatch, order)
+
+    result = CliRunner().invoke(app, ["run", "nightly", "--db", str(db)])
+
+    assert result.exit_code == 1, result.output
+    assert "not found" in result.output
+    assert order == []  # no pipeline step executed -- the config check ran first
+
+
+def test_cli_sheets_missing_service_account_file_exits_1(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPREADSHEET_ID", "SHEET1")
+    monkeypatch.setenv(
+        "GOOGLE_SERVICE_ACCOUNT_FILE", str(tmp_path / "does-not-exist-sa.json")
+    )
+    db = _seeded_db(tmp_path)
+
+    result = CliRunner().invoke(app, ["run", "sheets", "--db", str(db)])
+
+    assert result.exit_code == 1
+    assert "not found" in result.output
