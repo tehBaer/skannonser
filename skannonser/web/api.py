@@ -235,7 +235,19 @@ def _eie_item(rec: dict, domain: DomainConfig, *, sold: bool) -> dict:
     }
 
 
-def _dnb_item(rec: dict, domain: DomainConfig) -> dict:
+def _dnb_item(
+    rec: dict,
+    domain: DomainConfig,
+    annotation: tuple[str | None, str | None] | None = None,
+) -> dict:
+    """``annotation``, when given, is the ``(kommentar, tag)`` pair already
+    looked up by the caller for this row's synthetic id (see
+    ``_dnb_annotations``/callers) -- DNB rows have no FK to join against, so
+    the lookup can't happen in the SQL that builds ``rec``. NOTE: the sheet
+    export (``export.dnb_rows``) stays untouched -- the DNB tab has no
+    Kommentar/Tag columns (legacy parity), so these annotations are web-only
+    by design."""
+    kommentar, tag = annotation if annotation is not None else (None, None)
     return {
         "finnkode": _dnb_identifier(rec.get("URL")),
         "adresse": rec.get("Adresse"),
@@ -251,11 +263,27 @@ def _dnb_item(rec: dict, domain: DomainConfig) -> dict:
         "byggeaar": None,  # dnbeiendom has no construction-year column
         "url": rec.get("URL"),
         "image": False,  # dnbeiendom has no image_url column
-        "kommentar": None,
-        "tag": None,
+        "kommentar": kommentar,
+        "tag": tag,
         "source": "dnb",
         "sold": False,
     }
+
+
+def _dnb_annotations(
+    conn: sqlite3.Connection,
+) -> dict[str, tuple[str | None, str | None]]:
+    """``{dnb-synthetic-id: (kommentar, tag)}`` for every annotation row keyed
+    by a ``dnb:...`` id -- fetched once so ``/api/listings`` doesn't issue one
+    query per DNB row. The annotations PK is the synthetic id itself (the PUT
+    route already stores it verbatim, same as any other finnkode), so a
+    ``LIKE 'dnb:%'`` scan of the small ``annotations`` table is all that's
+    needed; no join is possible since the id is a hash, not a stored column
+    on ``dnbeiendom`` (same rationale as ``_find_dnb_record``)."""
+    rows = conn.execute(
+        "SELECT finnkode, kommentar, tag FROM annotations WHERE finnkode LIKE 'dnb:%'"
+    ).fetchall()
+    return {r["finnkode"]: (r["kommentar"], r["tag"]) for r in rows}
 
 
 def _sold_from_hidden(rec: dict) -> bool:
@@ -283,7 +311,11 @@ def get_listings(
         _eie_item(rec, domain, sold=False)
         for rec in listing_rows(conn, include_hidden_fields=True)
     ]
-    items += [_dnb_item(rec, domain) for rec in _dnb_records(conn)]
+    dnb_annotations = _dnb_annotations(conn)
+    items += [
+        _dnb_item(rec, domain, dnb_annotations.get(_dnb_identifier(rec.get("URL"))))
+        for rec in _dnb_records(conn)
+    ]
     if sold:
         items += [_eie_item(rec, domain, sold=True) for rec in _sold_records(conn)]
     return {"listings": items}
@@ -335,7 +367,11 @@ def get_listing_detail(
 
     dnb_rec = _find_dnb_record(conn, finnkode)
     if dnb_rec is not None:
-        item = _dnb_item(dnb_rec, domain)
+        ann_row = conn.execute(
+            "SELECT kommentar, tag FROM annotations WHERE finnkode = ?", (finnkode,)
+        ).fetchone()
+        annotation = (ann_row["kommentar"], ann_row["tag"]) if ann_row is not None else None
+        item = _dnb_item(dnb_rec, domain, annotation)
         raw = {k: v for k, v in dnb_rec.items() if k != "dnb_id"}
         return {**raw, **item}
 
@@ -465,6 +501,22 @@ def get_missing_coords(conn: sqlite3.Connection = Depends(ro_conn)) -> dict:
 # untouched (or NULL, on a fresh insert -- never equal to a fresh non-NULL
 # `updated_at`), so a row this route ever writes is permanently protected
 # from being overwritten by a subsequent sheet import.
+#
+# TOMBSTONE DECISION (controller ruling): a both-null/both-empty PUT used to
+# unconditionally DELETE the row. But for a row an import created
+# (`imported_at IS NOT NULL`), physically deleting it re-opens the door for
+# the NEXT sheet import to resurrect the old value -- the row is gone, so
+# `updated_at IS NULL OR updated_at = imported_at` is vacuously satisfied by
+# a fresh INSERT, and the import's upsert has no memory that a human ever
+# cleared it. Instead: if the existing row has `imported_at IS NOT NULL`,
+# TOMBSTONE it -- UPDATE `kommentar = NULL, tag = NULL, updated_at = now`,
+# leaving `imported_at` exactly as stored. The row survives as a web-edit
+# marker: `updated_at` (now) can never again equal `imported_at` (frozen at
+# whatever the last import set), so the import-protection WHERE clause
+# permanently blocks that finnkode from being touched again. A row that was
+# NEVER imported (`imported_at IS NULL`) has nothing to protect against --
+# there's no import that could resurrect it -- so it's still physically
+# DELETEd (a no-op if the row is already absent), same as before.
 # ---------------------------------------------------------------------------
 
 _FINNKODE_RE = re.compile(r"^[A-Za-z0-9:_-]{1,128}$")
@@ -531,7 +583,20 @@ def put_annotation(
     tag = _norm_text(body.tag)
 
     if kommentar is None and tag is None:
-        conn.execute("DELETE FROM annotations WHERE finnkode = ?", (finnkode,))
+        existing = conn.execute(
+            "SELECT imported_at FROM annotations WHERE finnkode = ?", (finnkode,)
+        ).fetchone()
+        if existing is not None and existing["imported_at"] is not None:
+            # TOMBSTONE (see "TOMBSTONE DECISION" above): keep the row so a
+            # later sheet import can never resurrect the cleared value.
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "UPDATE annotations SET kommentar = NULL, tag = NULL, updated_at = ? "
+                "WHERE finnkode = ?",
+                (now, finnkode),
+            )
+        else:
+            conn.execute("DELETE FROM annotations WHERE finnkode = ?", (finnkode,))
         conn.commit()
         return {"finnkode": finnkode, "kommentar": None, "tag": None}
 

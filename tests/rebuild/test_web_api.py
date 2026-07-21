@@ -559,7 +559,13 @@ def test_put_annotation_update_changes_value_and_bumps_updated_at(db_path, clien
 
 
 def test_put_annotation_both_null_deletes_row(db_path, client):
+    """Never-imported row (created only via web PUT, so `imported_at IS
+    NULL`) -- nothing for a later import to resurrect, so the both-null PUT
+    still physically DELETEs, per the "TOMBSTONE DECISION" in api.py."""
     client.put("/api/annotations/444", json={"kommentar": "Temp", "tag": "T"})
+    conn = _conn(db_path)
+    assert _annotation_row(conn, "444")["imported_at"] is None
+    conn.close()
 
     resp = client.put("/api/annotations/444", json={"kommentar": None, "tag": None})
     assert resp.status_code == 200
@@ -587,6 +593,22 @@ def test_put_annotation_both_empty_string_deletes_row(db_path, client):
     ).fetchone()["c"]
     conn.close()
     assert count == 0
+
+
+def test_put_annotation_partial_null_stores_real_sql_null(db_path, client):
+    """kommentar set, tag null -> tag round-trips as an actual SQL NULL (not
+    the string "None" or an empty string) on direct-SQL readback."""
+    resp = client.put(
+        "/api/annotations/447", json={"kommentar": "Only kommentar", "tag": None}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "447", "kommentar": "Only kommentar", "tag": None}
+
+    conn = _conn(db_path)
+    row = _annotation_row(conn, "447")
+    conn.close()
+    assert row["kommentar"] == "Only kommentar"
+    assert row["tag"] is None
 
 
 @pytest.mark.parametrize(
@@ -691,3 +713,92 @@ def test_imported_then_web_edited_row_survives_reimport(db_path, client):
     conn.close()
     assert row_after["kommentar"] == "web override"
     assert row_after["tag"] == "X"
+
+
+def test_delete_of_imported_row_tombstones_and_blocks_reimport_of_old_value(
+    db_path, client
+):
+    """TOMBSTONE DECISION regression: an import-created row (`imported_at
+    IS NOT NULL`) that a web user then clears (both-null PUT) must NOT be
+    physically deleted -- a later re-import offering the SAME old sheet
+    value would otherwise resurrect it (an absent row looks identical to a
+    never-imported one, so the import's protection WHERE clause has nothing
+    to block on). Uses the REAL import_sheet_annotations with a fake client,
+    same as the interplay-lock tests above."""
+    conn = _conn(db_path)
+    sheet_rows = [
+        ["Finnkode", "Kommentar", "Tag"],
+        ["55555555", "old sheet value", "S"],
+    ]
+    fake_client = _FakeSheetsClient(sheet_rows)
+    result = import_sheet_annotations(conn, fake_client, tab="Eie")
+    assert result["inserted"] == 1
+    conn.close()
+
+    # Web user clears both fields.
+    resp = client.put(
+        "/api/annotations/55555555", json={"kommentar": None, "tag": None}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"finnkode": "55555555", "kommentar": None, "tag": None}
+
+    conn = _conn(db_path)
+    row = _annotation_row(conn, "55555555")
+    conn.close()
+    # Row SURVIVES as a tombstone -- not physically deleted.
+    assert row is not None
+    assert row["kommentar"] is None
+    assert row["tag"] is None
+    assert row["imported_at"] is not None  # untouched
+    assert row["updated_at"] != row["imported_at"]  # bumped past it, permanently
+
+    # GET still reads as absent-like nulls even though the row exists.
+    resp = client.get("/api/annotations/55555555")
+    assert resp.json() == {"finnkode": "55555555", "kommentar": None, "tag": None}
+
+    # A later re-import offering the SAME old sheet value must not resurrect it.
+    conn = _conn(db_path)
+    fake_client_2 = _FakeSheetsClient(sheet_rows)
+    result_2 = import_sheet_annotations(conn, fake_client_2, tab="Eie")
+    assert result_2["skipped"] == 1
+    assert result_2["updated"] == 0
+    row_after = _annotation_row(conn, "55555555")
+    conn.close()
+    assert row_after["kommentar"] is None
+    assert row_after["tag"] is None
+
+
+# ---------------------------------------------------------------------------
+# /api/listings + /api/listings/{finnkode} -- DNB annotations wiring (Fix 2)
+# ---------------------------------------------------------------------------
+
+def test_put_annotation_on_dnb_id_surfaces_in_listings_and_detail(db_path, client):
+    """A PUT against a `dnb:...` synthetic id was previously accepted and
+    stored, but `_dnb_item` hardcoded kommentar/tag to None (the DNB listing
+    query has no annotations join) -- so the value never surfaced anywhere.
+    Both `/api/listings`'s DNB item and the detail endpoint must reflect it."""
+    conn = _conn(db_path)
+    _ins_dnb(conn, "https://dnb.no/annotate-me", brj=1)
+    conn.close()
+
+    listings = client.get("/api/listings").json()["listings"]
+    dnb_item = next(i for i in listings if i["source"] == "dnb")
+    finnkode = dnb_item["finnkode"]
+    assert finnkode.startswith("dnb:")
+    assert dnb_item["kommentar"] is None
+    assert dnb_item["tag"] is None
+
+    resp = client.put(
+        f"/api/annotations/{finnkode}", json={"kommentar": "DNB note", "tag": "D"}
+    )
+    assert resp.status_code == 200
+
+    listings = client.get("/api/listings").json()["listings"]
+    dnb_item = next(i for i in listings if i["source"] == "dnb")
+    assert dnb_item["kommentar"] == "DNB note"
+    assert dnb_item["tag"] == "D"
+
+    detail = client.get(f"/api/listings/{finnkode}").json()
+    assert detail["source"] == "dnb"
+    assert detail["kommentar"] == "DNB note"
+    assert detail["tag"] == "D"

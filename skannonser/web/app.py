@@ -2,8 +2,9 @@
 
 Per-request sqlite connections: GET endpoints open a read-only connection
 (`file:...?mode=ro` URI) via `ro_conn` and close it after the request; a
-writable variant (`rw_conn`) is provided for later tasks (e.g. the
-annotations PUT endpoint) but unused here.
+writable variant (`rw_conn`) is used by the annotations PUT endpoint (see
+`skannonser/web/api.py`) to create/update/tombstone a single `annotations`
+row.
 
 `/healthz` deliberately avoids `migrations.pending()`'s implicit
 `CREATE TABLE IF NOT EXISTS schema_migrations` on a connection that might be
@@ -48,8 +49,9 @@ def ro_conn(request: Request) -> Iterator[sqlite3.Connection]:
 
 
 def rw_conn(request: Request) -> Iterator[sqlite3.Connection]:
-    """Per-request writable connection dependency (unused by any route yet
-    -- reserved for the annotations PUT endpoint in a later task)."""
+    """Per-request writable connection dependency -- wired to
+    ``PUT /api/annotations/{finnkode}`` (see ``skannonser/web/api.py``'s
+    "Annotations CRUD" section)."""
     conn = connection_module.connect(request.app.state.db_path)
     try:
         yield conn
