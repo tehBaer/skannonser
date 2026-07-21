@@ -98,6 +98,7 @@ count to shift by design. The reverted implementations from Tasks 6/13 show exac
 one-line change goes.
 
 Other decided-later items (surface each for a go/no-go when its phase arrives):
+- Sheet Postnummer display: legacy (and phase-4 bug-compatible export) lets USER_ENTERED coerce "0581"→581 in the sheet (verified live 2026-07-21). One-line fix (apostrophe-prefix at row construction) once the Apps Script map is retired or verified tolerant — or moot at Phase 5 (web UI reads the DB's correct values).
 - **Targeted travel-value re-request tool** (a separate legacy script from
   `main/tools/validate_travel_values.py`, whose scoring core Task 10 ported to
   `skannonser/enrich/validate.py`) stays legacy-manual until Phase 4 — port scoped to the
