@@ -7,7 +7,13 @@ from skannonser.store import connection, migrations
 EXPECTED_TABLES = {
     "eiendom", "eiendom_processed", "dnbeiendom", "manual_overrides",
     "listing_comments", "stations", "station_lines", "station_travel",
+    "annotations",
 }
+
+ALL_MIGRATIONS = [
+    "001_adopt_live_schema", "002_notify_tables", "003_api_usage",
+    "004_dnb_travel", "005_annotations",
+]
 
 
 def _tables(conn):
@@ -20,7 +26,7 @@ def _tables(conn):
 def test_migrate_fresh_db_creates_full_schema(tmp_path):
     conn = connection.connect(tmp_path / "fresh.db")
     ran = migrations.migrate(conn)
-    assert ran == ["001_adopt_live_schema", "002_notify_tables", "003_api_usage"]
+    assert ran == ALL_MIGRATIONS
     assert EXPECTED_TABLES <= _tables(conn)
     assert "schema_migrations" in _tables(conn)
 
@@ -38,7 +44,7 @@ def test_migrate_adopts_preexisting_schema(tmp_path):
     sql = (migrations.MIGRATIONS_DIR / "001_adopt_live_schema.sql").read_text(encoding="utf-8")
     conn.executescript(sql)  # pre-existing schema, no migration bookkeeping
     ran = migrations.migrate(conn)
-    assert ran == ["001_adopt_live_schema", "002_notify_tables", "003_api_usage"]
+    assert ran == ALL_MIGRATIONS
     assert EXPECTED_TABLES <= _tables(conn)
 
 
@@ -91,7 +97,7 @@ def test_failed_migration_rolls_back_and_is_not_recorded(tmp_path, monkeypatch):
 def test_migration_002_creates_notify_tables(tmp_path):
     conn = connection.connect(tmp_path / "fresh.db")
     ran = migrations.migrate(conn)
-    assert ran == ["001_adopt_live_schema", "002_notify_tables", "003_api_usage"]
+    assert ran == ALL_MIGRATIONS
     tables = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"eiendom_status_history", "daily_listing_snapshot", "daily_metrics"} <= tables
@@ -111,6 +117,27 @@ def test_migration_003_creates_api_usage_table(tmp_path):
     indexes = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='api_usage'")}
     assert "idx_api_usage_called_at" in indexes
+
+
+def test_migration_004_adds_dnb_travel_columns(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    ran = migrations.migrate(conn)
+    assert "004_dnb_travel" in ran
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(dnbeiendom)")}
+    assert {"pendl_rush_brj", "pendl_rush_mvv"} <= cols
+
+
+def test_migration_005_creates_annotations_table(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    ran = migrations.migrate(conn)
+    assert "005_annotations" in ran
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "annotations" in tables
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(annotations)")}
+    assert cols == {"finnkode", "kommentar", "tag", "imported_at", "updated_at"}
+    pk_cols = [r["name"] for r in conn.execute("PRAGMA table_info(annotations)") if r["pk"]]
+    assert pk_cols == ["finnkode"]
 
 
 def test_statements_keeps_trigger_block_intact():
