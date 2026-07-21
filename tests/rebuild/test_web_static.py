@@ -50,7 +50,10 @@ def _client(tmp_path):
 # Hosts an authored static file may legitimately reference at all.
 #  * tile.openstreetmap.org -- the raster tile source (map base) + attribution.
 #  * www.google.com -- the popup's "Google Maps" user-navigation hyperlink.
-_ALLOWED_HTTP_HOSTS = {"tile.openstreetmap.org", "www.google.com"}
+#  * www.finn.no -- the missing-coords panel's "open the Finn ad" hyperlink
+#    (Task 7). Like the Google Maps link it is a user-navigation `href`
+#    (click-only), NOT a passive resource load -- see the NO-CDN ALLOWLIST NOTE.
+_ALLOWED_HTTP_HOSTS = {"tile.openstreetmap.org", "www.google.com", "www.finn.no"}
 # Hosts allowed in a *resource* position (script/link/@import/url()).
 _ALLOWED_RESOURCE_HOSTS = {"tile.openstreetmap.org"}
 
@@ -84,6 +87,29 @@ def test_index_served_at_root(tmp_path):
     assert 'type="module"' in body and "/app.js" in body
 
 
+def test_index_has_task7_sidebar_sections(tmp_path):
+    """The Task 7 sidebar sections (filters, per-boligtype visibility, station
+    overlays + commute filter, missing-coords) and their mount points are
+    present in index.html."""
+    body = _client(tmp_path).get("/").text
+    # Metric filters + dim, boligtype visibility, stations, missing-coords.
+    for anchor in (
+        'id="metric-filters"',
+        'id="boligtype-filter"',
+        'id="stations-panel"',
+        'id="toggle-stations"',
+        'id="toggle-hide-outside"',
+        'id="sandvika-max"',
+        'id="toggle-transfer"',
+        'id="line-toggles"',
+        'id="missing-coords"',
+    ):
+        assert anchor in body, anchor
+    # Task 7 modules are loaded (via app.js's static imports, but assert the
+    # files are referenced by the app module graph entrypoint at minimum).
+    assert 'src="/app.js"' in body
+
+
 def test_vendor_js_served_with_js_content_type(tmp_path):
     resp = _client(tmp_path).get("/vendor/maplibre-gl.js")
     assert resp.status_code == 200
@@ -100,7 +126,7 @@ def test_vendor_css_served_with_css_content_type(tmp_path):
 
 def test_app_modules_served(tmp_path):
     client = _client(tmp_path)
-    for name in ("app.js", "map.js", "popup.js"):
+    for name in ("app.js", "map.js", "popup.js", "filters.js", "stations.js"):
         resp = client.get("/" + name)
         assert resp.status_code == 200, name
         assert "javascript" in resp.headers["content-type"].lower(), name

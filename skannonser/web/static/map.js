@@ -33,7 +33,6 @@ export const FIXED_BOLIGTYPE_DEFAULT_COLORS = { tomannsbolig: "#f2d34f" };
 export const DEFAULT_UNKNOWN_TYPE_COLOR = "#6f7e76";
 
 const SOLD_COLOR = "#9aa5a0";
-const DNB_COLOR = "#0f4c81";
 
 const OSM_STYLE = {
   version: 8,
@@ -79,29 +78,53 @@ export function createMap(container) {
   });
 }
 
-// A filled square icon for DNB points (no sprite sheet needed).
-function ensureDnbIcon(map) {
-  if (map.hasImage("dnb-square")) return;
-  const size = 18;
-  const cvs = document.createElement("canvas");
-  cvs.width = size;
-  cvs.height = size;
-  const ctx = cvs.getContext("2d");
-  ctx.fillStyle = DNB_COLOR;
-  ctx.fillRect(0, 0, size, size);
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(1, 1, size - 2, size - 2);
-  const data = ctx.getImageData(0, 0, size, size);
-  map.addImage("dnb-square", { width: size, height: size, data: data.data });
+// A filled square icon for DNB points, PER boligtype colour (legacy parity:
+// map.html 2802 `getBoligtypeColor(...)` colours DNB squares too -- only the
+// SHAPE differs from Eie circles). No sprite sheet: one small canvas icon per
+// distinct palette colour, registered once, keyed by colour hex. Returns an
+// `icon-image` match expression on ['get','boligtype'] so each DNB square draws
+// in its type's colour (unknown/"" boligtype -> the grey default square).
+function dnbIconExpression(map, colorByType) {
+  const iconName = (color) => "dnb-sq-" + color.replace(/[^a-z0-9]/gi, "");
+  const ensureSquareIcon = (color) => {
+    const name = iconName(color);
+    if (map.hasImage(name)) return name;
+    const size = 18;
+    const cvs = document.createElement("canvas");
+    cvs.width = size;
+    cvs.height = size;
+    const ctx = cvs.getContext("2d");
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, size - 2, size - 2);
+    const data = ctx.getImageData(0, 0, size, size);
+    map.addImage(name, { width: size, height: size, data: data.data });
+    return name;
+  };
+
+  const unknownIcon = ensureSquareIcon(DEFAULT_UNKNOWN_TYPE_COLOR);
+  const pairs = [];
+  Object.keys(colorByType).forEach((typeName) => {
+    pairs.push(typeName, ensureSquareIcon(colorByType[typeName]));
+  });
+  return pairs.length
+    ? ["match", ["get", "boligtype"], ...pairs, unknownIcon]
+    : unknownIcon;
 }
 
 const NOT_CLUSTER = ["!", ["has", "point_count"]];
 
+// Per-feature opacity: app.js precomputes an `op` property (1, or the dimmed
+// residual) on every listing feature; clusters have no `op` (coalesce -> 1).
+const OP = ["coalesce", ["get", "op"], 1];
+
 // Adds the clustered source + unclustered GL layers. `colorExpr` is the
-// boligtype match expression for Eie circles.
-export function addListingLayers(map, colorExpr, onListingClick) {
-  ensureDnbIcon(map);
+// boligtype match expression for Eie circles; `colorByType` drives the
+// per-boligtype DNB square icons.
+export function addListingLayers(map, colorExpr, colorByType, onListingClick) {
+  const dnbIcon = dnbIconExpression(map, colorByType);
 
   map.addSource(SOURCE_ID, {
     type: "geojson",
@@ -122,6 +145,8 @@ export function addListingLayers(map, colorExpr, onListingClick) {
       "circle-radius": 6,
       "circle-stroke-width": 1.5,
       "circle-stroke-color": "#ffffff",
+      "circle-opacity": OP,
+      "circle-stroke-opacity": OP,
     },
   });
 
@@ -141,19 +166,24 @@ export function addListingLayers(map, colorExpr, onListingClick) {
       "circle-radius": 7,
       "circle-stroke-width": 1.5,
       "circle-stroke-color": "#ffffff",
+      "circle-opacity": OP,
+      "circle-stroke-opacity": OP,
     },
   });
 
-  // DNB (square symbol).
+  // DNB (square symbol, coloured per boligtype -- see dnbIconExpression).
   map.addLayer({
     id: "unclustered-dnb",
     type: "symbol",
     source: SOURCE_ID,
     filter: ["all", NOT_CLUSTER, ["==", ["get", "source"], "dnb"]],
     layout: {
-      "icon-image": "dnb-square",
+      "icon-image": dnbIcon,
       "icon-size": 1,
       "icon-allow-overlap": true,
+    },
+    paint: {
+      "icon-opacity": OP,
     },
   });
 

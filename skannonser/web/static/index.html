@@ -19,16 +19,39 @@
         <label class="toggle"><input type="checkbox" id="toggle-sold"> Solgt</label>
       </section>
 
-      <section class="panel" id="boligtype-legend-panel">
+      <section class="panel" id="boligtype-filter-panel">
         <h2>Boligtype</h2>
-        <div id="boligtype-legend" class="legend muted">Laster …</div>
+        <div id="boligtype-filter" class="legend muted">Laster …</div>
+        <div id="source-legend" class="legend legend-keys"></div>
       </section>
 
-      <!-- Placeholders for later Phase 5 tasks (table, filters, stations). -->
-      <section class="panel placeholder">
+      <section class="panel" id="filter-panel">
         <h2>Filtre</h2>
-        <p class="muted">Kommer (senere oppgave).</p>
+        <div id="metric-filters" class="muted">Laster …</div>
       </section>
+
+      <section class="panel" id="stations-panel">
+        <h2>Stasjoner</h2>
+        <label class="toggle"><input type="checkbox" id="toggle-stations"> Vis stasjoner og radius</label>
+        <label class="toggle"><input type="checkbox" id="toggle-hide-outside"> Ton ned utenfor radius</label>
+        <div class="filter-row">
+          <div class="filter-head">
+            <span>Maks tid til Sandvika</span>
+            <span class="filter-val" id="sandvika-val"></span>
+          </div>
+          <input type="range" id="sandvika-max" min="0" max="120" step="1">
+        </div>
+        <label class="toggle"><input type="checkbox" id="toggle-transfer"> Inkluder bytte (via Oslo S)</label>
+        <h3 class="subhead">Linjer</h3>
+        <div id="line-toggles" class="legend muted">Laster …</div>
+      </section>
+
+      <section class="panel" id="missing-coords-panel">
+        <h2>Uten koordinater</h2>
+        <div id="missing-coords" class="muted">Laster …</div>
+      </section>
+
+      <!-- Placeholder for a later Phase 5 task (table). -->
       <section class="panel placeholder">
         <h2>Tabell</h2>
         <p class="muted">Kommer (senere oppgave).</p>

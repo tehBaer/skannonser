@@ -87,6 +87,38 @@ html, body {
 }
 .legend-swatch.square { border-radius: 2px; }
 
+.panel h3.subhead {
+  margin: 12px 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.legend-keys { margin-top: 10px; }
+.boligtype-toggle, .line-toggle { font-size: 13px; }
+
+/* ---- Filter sliders -------------------------------------------------- */
+.filter-row { margin: 10px 0; }
+.filter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.filter-val { color: var(--accent); font-size: 12px; font-weight: 600; }
+.filter-row input[type="range"] { width: 100%; }
+
+/* ---- Missing-coords panel ------------------------------------------- */
+.missing-summary { font-size: 12px; margin: 0 0 6px; }
+.missing-row { font-size: 12px; padding: 2px 0; }
+.missing-row a { color: var(--accent); text-decoration: none; }
+.missing-row a:hover { text-decoration: underline; }
+
+/* ---- Station name hover popup --------------------------------------- */
+.sk-station-name { font-size: 12px; font-weight: 600; padding: 2px 4px; }
+
 /* ---- Cluster markers (DOM) ------------------------------------------ */
 .cluster-marker {
   display: flex;

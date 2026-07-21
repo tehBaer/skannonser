@@ -1,7 +1,8 @@
-// Orchestrates the map core (Phase 5 Task 6): fetch meta + listings, set up
-// the palette/layers, wire the sidebar toggles (with localStorage-persisted
-// state and lazy Sold loading), draw the FINN boundary, render popups, and
-// honour a `#<finnkode>` hash by flying to that listing.
+// Orchestrates the map (Phase 5 Task 6 core + Task 7 filters/stations):
+// fetch meta + listings, set up palette/layers, wire the sidebar (layer
+// toggles, metric filters, per-boligtype visibility, station overlays +
+// commute filter, missing-coords panel), all persisted to one localStorage
+// key, draw the FINN boundary, render popups, honour a `#<finnkode>` hash.
 
 import {
   createMap,
@@ -13,36 +14,96 @@ import {
   DEFAULT_UNKNOWN_TYPE_COLOR,
 } from "./map.js";
 import { buildPopupContent } from "./popup.js";
+import {
+  defaultFilterState,
+  metricDimmed,
+  boligtypeHidden,
+  residualOpacity,
+  buildMetricFilterUI,
+  buildBoligtypeFilterUI,
+} from "./filters.js";
+import {
+  addStationLayers,
+  updateStationLayers,
+  wireStationNamePopup,
+  distinctLines,
+  visibleLineSet,
+  nearestCoveringStation,
+  effectiveSandvikaMinutes,
+  anyLineVisibleStation,
+  commuteDisabled,
+  SANDVIKA_MAX,
+} from "./stations.js";
 
 /* global maplibregl */
 
 const STORAGE_KEY = "skannonser.ui.v1";
-const DEFAULT_TOGGLES = { eie: true, dnb: true, sold: false };
+
+// One versioned UI-state object (merged over stored values on load). Task 6
+// shipped only {eie,dnb,sold} under this key; the deep-merge below keeps those
+// working while filling in the Task 7 fields.
+function defaultUi(meta) {
+  return {
+    eie: true,
+    dnb: true,
+    sold: false,
+    filters: defaultFilterState(meta),
+    dimIntensity: 75, // % dimming for non-matching listings
+    boligtypeHidden: {},
+    stations: {
+      show: false,
+      hideOutside: false,
+      includeTransfer: false,
+      sandvikaMax: SANDVIKA_MAX, // == max -> commute filter off
+      lineHidden: {},
+    },
+  };
+}
 
 const state = {
   meta: null,
   destinations: [],
-  itemsById: new Map(), // finnkode -> full listing item
+  itemsById: new Map(),
   soldLoaded: false,
-  toggles: loadToggles(),
+  ui: null,
   clusterMarkers: {},
   map: null,
   popup: null,
+  colorByType: {},
 };
 
-function loadToggles() {
+function loadUi(meta) {
+  const base = defaultUi(meta);
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_TOGGLES, ...JSON.parse(raw) };
+    if (raw) {
+      const stored = JSON.parse(raw);
+      return {
+        ...base,
+        ...stored,
+        filters: {
+          ...base.filters,
+          ...(stored.filters || {}),
+          travelMax: { ...base.filters.travelMax, ...((stored.filters || {}).travelMax || {}) },
+        },
+        boligtypeHidden: { ...(stored.boligtypeHidden || {}) },
+        stations: {
+          ...base.stations,
+          ...(stored.stations || {}),
+          lineHidden: { ...((stored.stations || {}).lineHidden || {}) },
+        },
+      };
+    }
   } catch (_) {
-    /* ignore malformed storage */
+    /* malformed storage -> defaults */
   }
-  return { ...DEFAULT_TOGGLES };
+  return base;
 }
 
-function saveToggles() {
+function saveUi() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.toggles));
+    const { _allLines, ...persist } = state.ui; // _allLines is derived at load
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persist));
   } catch (_) {
     /* storage may be unavailable; non-fatal */
   }
@@ -53,14 +114,36 @@ function setStatus(text) {
   if (node) node.textContent = text || "";
 }
 
-// Which toggle bucket a listing belongs to.
 function bucketOf(item) {
   if (item.sold) return "sold";
   if (item.source === "dnb") return "dnb";
   return "eie";
 }
 
-function itemToFeature(item) {
+// Per-listing dim decision: metric filters OR commute OR hide-outside-radius.
+// `ctx` carries the once-per-recompute station context.
+function isDimmed(item, ctx) {
+  if (metricDimmed(item, state.ui, state.meta)) return true;
+
+  const st = state.ui.stations;
+  const covering = nearestCoveringStation(item, ctx.stations, ctx.visibleLines);
+
+  // Commute: nearest in-radius station's effective minutes must be <= threshold.
+  if (ctx.commuteEnabled && covering) {
+    const mins = effectiveSandvikaMinutes(covering.station, {
+      visibleLines: ctx.visibleLines,
+      includeTransfer: st.includeTransfer,
+    });
+    if (mins == null || mins > st.sandvikaMax) return true;
+  }
+
+  // Hide-outside: dim listings not within any line-visible station's radius.
+  if (st.hideOutside && ctx.anyStation && !covering) return true;
+
+  return false;
+}
+
+function itemToFeature(item, op) {
   return {
     type: "Feature",
     geometry: { type: "Point", coordinates: [item.lng, item.lat] },
@@ -68,31 +151,46 @@ function itemToFeature(item) {
       finnkode: item.finnkode,
       source: item.source,
       sold: !!item.sold,
-      // null boligtype omitted -> match expression falls to unknown default
       boligtype: item.boligtype || "",
+      op, // 1, or the dimmed residual opacity (see filters.residualOpacity)
     },
   };
 }
 
 function currentFeatureCollection() {
+  const ctx = {
+    stations: state.meta.stations || [],
+    visibleLines: visibleLineSet(state.ui),
+    commuteEnabled: !commuteDisabled(state.ui.stations.sandvikaMax),
+    anyStation: anyLineVisibleStation(state.meta.stations || [], visibleLineSet(state.ui)),
+  };
+  const residual = residualOpacity(state.ui);
   const features = [];
   state.itemsById.forEach((item) => {
-    if (item.lat == null || item.lng == null) return; // skip null coords
-    if (!state.toggles[bucketOf(item)]) return;
-    features.push(itemToFeature(item));
+    if (item.lat == null || item.lng == null) return;
+    if (!state.ui[bucketOf(item)]) return; // layer toggle
+    if (boligtypeHidden(item, state.ui)) return; // per-type visibility (hidden)
+    const op = isDimmed(item, ctx) ? residual : 1;
+    features.push(itemToFeature(item, op));
   });
   return { type: "FeatureCollection", features };
 }
 
-function applyToggles() {
-  const src = state.map.getSource(SOURCE_ID);
-  if (src) src.setData(currentFeatureCollection());
+// Full re-render after any filter/station change: listing source + stations.
+let rafPending = false;
+function applyAll() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    const src = state.map.getSource(SOURCE_ID);
+    if (src) src.setData(currentFeatureCollection());
+    updateStationLayers(state.map, state.meta.stations || [], state.ui);
+  });
 }
 
 function ingestItems(items) {
-  items.forEach((item) => {
-    state.itemsById.set(item.finnkode, item);
-  });
+  items.forEach((item) => state.itemsById.set(item.finnkode, item));
 }
 
 async function ensureSoldLoaded() {
@@ -100,38 +198,18 @@ async function ensureSoldLoaded() {
   setStatus("Laster solgte …");
   const resp = await fetch("/api/listings?sold=1");
   const data = await resp.json();
-  // Only merge the genuinely-sold rows (the payload also re-includes the
-  // active Eie + DNB buckets, already loaded).
   ingestItems((data.listings || []).filter((it) => it.sold));
   state.soldLoaded = true;
   setStatus("");
 }
 
-function renderLegend(colorByType) {
-  const node = document.getElementById("boligtype-legend");
+function renderSourceLegend() {
+  const node = document.getElementById("source-legend");
   if (!node) return;
   node.innerHTML = "";
-  node.classList.remove("muted");
-  const types = Object.keys(colorByType);
-  if (!types.length) {
-    node.textContent = "Ingen boligtyper.";
-    node.classList.add("muted");
-  }
-  types.forEach((typeName) => {
-    const row = document.createElement("div");
-    row.className = "legend-row";
-    const sw = document.createElement("span");
-    sw.className = "legend-swatch";
-    sw.style.background = colorByType[typeName];
-    row.appendChild(sw);
-    row.appendChild(document.createTextNode(typeName));
-    node.appendChild(row);
-  });
-  // DNB + Sold key entries.
   [
-    ["DNB", "#0f4c81", true],
+    ["DNB (kvadrat)", DEFAULT_UNKNOWN_TYPE_COLOR, true],
     ["Solgt", "#9aa5a0", false],
-    ["Ukjent boligtype", DEFAULT_UNKNOWN_TYPE_COLOR, false],
   ].forEach(([label, color, square]) => {
     const row = document.createElement("div");
     row.className = "legend-row";
@@ -148,24 +226,22 @@ function openPopup(finnkode, coordinates) {
   const item = state.itemsById.get(finnkode);
   if (!item) return;
   const content = buildPopupContent(item, state.destinations);
-  if (!state.popup) {
-    state.popup = new maplibregl.Popup({ maxWidth: "300px" });
-  }
+  if (!state.popup) state.popup = new maplibregl.Popup({ maxWidth: "300px" });
   state.popup
     .setLngLat(coordinates || [item.lng, item.lat])
     .setDOMContent(content)
     .addTo(state.map);
 }
 
-function wireToggles() {
+function wireLayerToggles() {
   const map = { eie: "toggle-eie", dnb: "toggle-dnb", sold: "toggle-sold" };
   Object.entries(map).forEach(([bucket, id]) => {
     const input = document.getElementById(id);
     if (!input) return;
-    input.checked = !!state.toggles[bucket];
+    input.checked = !!state.ui[bucket];
     input.addEventListener("change", async () => {
-      state.toggles[bucket] = input.checked;
-      saveToggles();
+      state.ui[bucket] = input.checked;
+      saveUi();
       if (bucket === "sold" && input.checked) {
         input.disabled = true;
         try {
@@ -174,8 +250,111 @@ function wireToggles() {
           input.disabled = false;
         }
       }
-      applyToggles();
+      applyAll();
     });
+  });
+}
+
+function wireStationControls() {
+  const st = state.ui.stations;
+  const bindCheckbox = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.checked = !!st[key];
+    el.addEventListener("change", () => {
+      st[key] = el.checked;
+      saveUi();
+      applyAll();
+    });
+  };
+  bindCheckbox("toggle-stations", "show");
+  bindCheckbox("toggle-hide-outside", "hideOutside");
+  bindCheckbox("toggle-transfer", "includeTransfer");
+
+  const slider = document.getElementById("sandvika-max");
+  const label = document.getElementById("sandvika-val");
+  if (slider) {
+    slider.max = String(SANDVIKA_MAX);
+    slider.value = String(st.sandvikaMax);
+    const paint = () => {
+      const v = Number(slider.value);
+      if (label) label.textContent = v >= SANDVIKA_MAX ? "Av" : "≤ " + v + " min";
+    };
+    paint();
+    slider.addEventListener("input", () => {
+      st.sandvikaMax = Number(slider.value);
+      paint();
+      saveUi();
+      applyAll();
+    });
+  }
+
+  // Line visibility toggles.
+  const container = document.getElementById("line-toggles");
+  if (container) {
+    container.innerHTML = "";
+    container.classList.remove("muted");
+    const lines = state.ui._allLines || [];
+    if (!lines.length) {
+      container.textContent = "Ingen linjer.";
+      container.classList.add("muted");
+    }
+    lines.forEach((line) => {
+      const row = document.createElement("label");
+      row.className = "toggle line-toggle";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !st.lineHidden[line];
+      cb.addEventListener("change", () => {
+        if (cb.checked) delete st.lineHidden[line];
+        else st.lineHidden[line] = true;
+        saveUi();
+        applyAll();
+      });
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(line));
+      container.appendChild(row);
+    });
+  }
+}
+
+async function loadMissingCoords() {
+  const node = document.getElementById("missing-coords");
+  if (!node) return;
+  let rows;
+  try {
+    const resp = await fetch("/api/missing-coords");
+    rows = (await resp.json()).rows || [];
+  } catch (_) {
+    node.textContent = "Kunne ikke laste.";
+    return;
+  }
+  node.innerHTML = "";
+  if (!rows.length) {
+    node.textContent = "Alle synlige annonser har koordinater.";
+    node.classList.add("muted");
+    return;
+  }
+  node.classList.remove("muted");
+  const summary = document.createElement("p");
+  summary.className = "muted missing-summary";
+  summary.textContent = rows.length + " uten koordinater";
+  node.appendChild(summary);
+  rows.forEach((row) => {
+    const line = document.createElement("div");
+    line.className = "missing-row";
+    // finnkode -> Finn ad (user-navigation hyperlink, click-only).
+    const link = document.createElement("a");
+    link.href = "https://www.finn.no/realestate/homes/ad.html?finnkode=" +
+      encodeURIComponent(row.finnkode);
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = row.finnkode;
+    line.appendChild(link);
+    if (row.adresse) {
+      line.appendChild(document.createTextNode(" — " + row.adresse));
+    }
+    node.appendChild(line);
   });
 }
 
@@ -203,34 +382,52 @@ async function init() {
   }
   state.meta = meta;
   state.destinations = meta.destinations || [];
+  state.ui = loadUi(meta);
+  state.ui._allLines = distinctLines(meta.stations || []);
   ingestItems(listings.listings || []);
 
   const { colorByType, expression } = boligtypePalette(meta.boligtyper || []);
-  renderLegend(colorByType);
+  state.colorByType = colorByType;
 
   const map = createMap("map");
   state.map = map;
 
   map.on("load", () => {
-    // The flex layout may not have settled the #map height when the Map was
-    // constructed; resize once now so tile coverage matches the final size.
     map.resize();
-    addListingLayers(map, expression, openPopup);
+    addListingLayers(map, expression, colorByType, openPopup);
+    addStationLayers(map);
+    wireStationNamePopup(map);
     addBoundary(map, meta.polygon || []);
-    applyToggles();
-    wireToggles();
+
+    // Sidebar UI.
+    buildBoligtypeFilterUI(
+      document.getElementById("boligtype-filter"),
+      meta,
+      { ...colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
+      state.ui,
+      () => { saveUi(); applyAll(); }
+    );
+    renderSourceLegend();
+    buildMetricFilterUI(
+      document.getElementById("metric-filters"),
+      meta,
+      state.ui,
+      () => { saveUi(); applyAll(); }
+    );
+    wireLayerToggles();
+    wireStationControls();
+    loadMissingCoords();
+
+    applyAll();
 
     map.on("render", () => syncClusterMarkers(map, state.clusterMarkers));
     map.on("moveend", () => syncClusterMarkers(map, state.clusterMarkers));
 
-    // Sold may be persisted-on from a previous visit: lazy-load then re-apply.
-    if (state.toggles.sold && !state.soldLoaded) {
-      ensureSoldLoaded().then(applyToggles);
+    if (state.ui.sold && !state.soldLoaded) {
+      ensureSoldLoaded().then(applyAll);
     }
 
-    const count = state.itemsById.size;
-    setStatus(count + " annonser lastet");
-
+    setStatus(state.itemsById.size + " annonser lastet");
     handleHash();
     window.addEventListener("hashchange", handleHash);
   });
