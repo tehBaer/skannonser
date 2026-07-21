@@ -275,3 +275,29 @@ def test_verify_sheets_detects_desync_stations(db_path, monkeypatch):
     assert all(
         d.new_value == "999" for d in result.stations_diffs if d.field == "TO_SANDVIKA"
     )
+
+
+def test_verify_sheets_handles_empty_migrated_db(db_path):
+    """Verify that verify_sheets runs safely on a migrated-but-empty DB,
+    returning all-empty diffs without crashing. This tests the short-circuit
+    path in _legacy_sold_df's docstring: when the post-filter frame is empty,
+    we run it through the normalization steps (all safe/no-op on empty frame)
+    rather than short-circuiting, ensuring a zero-row DataFrame is produced
+    and compared correctly."""
+    # db_path fixture creates a fresh migrated DB with no data
+    result = verify_sheets(db_path)
+
+    assert result.eie_diffs == []
+    assert result.sold_diffs == []
+    assert result.stations_diffs == []
+
+
+def test_verify_sheets_empty_db_makes_zero_api_calls(db_path):
+    """Verify that verify_sheets makes no API calls even on an empty DB."""
+    verify_sheets(db_path)
+
+    conn = connection.connect(db_path)
+    try:
+        assert _api_usage_count(conn) == 0
+    finally:
+        conn.close()

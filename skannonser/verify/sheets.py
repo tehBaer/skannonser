@@ -52,6 +52,7 @@ from __future__ import annotations
 import math
 import numbers
 import sys
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -69,23 +70,23 @@ _EIE_NEW_ONLY_COLUMNS = ("Kommentar", "Tag")
 # Columns where legacy's `sanitize_for_sheets` can emit a numeric-looking
 # STRING instead of a native number, purely as a side effect of pandas
 # dtype mechanics -- NOT a real data difference. Mechanism (verified
-# empirically while building this harness): for LAT/LNG and every
-# area/commute/year column in `sanitize_for_sheets`'s `commute_cols`/
-# `area_cols`/`year_cols` lists (helper:156-168), if EVEN ONE row in the
-# (already visibility-filtered) frame has a missing value in that column,
-# the whole-dataframe `df.fillna('')` (helper:181) upcasts that column's
-# dtype from float64 to `object` (mixing real floats with `''`). The
-# column-specific `.apply(lambda x: int(x) ... )` re-cast (helper:184-192)
-# that follows then produces a Series of Python `int`s mixed with `''` --
-# still heterogeneous, so pandas cannot infer it back to a native int64
-# dtype -- so it STAYS `object`. The final generic "stringify every object
-# column" loop (helper:195-197) then catches it and turns every value,
-# including the real numbers, into a string (e.g. `59.91` -> `"59.91"`).
-# A column with NO missing values in the frame skips this entirely (the
-# re-cast Series is homogeneous ints, pandas infers int64, the generic loop
-# skips it since dtype != 'object') -- so this is real-data-dependent, not
-# a constant offset, and will very likely appear on any DB where some
-# visible listing is still missing a coordinate or a travel/area value.
+# empirically while building this harness): for every area/commute/year
+# column in `sanitize_for_sheets`'s `commute_cols`/`area_cols`/`year_cols`
+# lists (helper:156-168), if EVEN ONE row in the (already visibility-filtered)
+# frame has a missing value in that column, the whole-dataframe `df.fillna('')`
+# (helper:181) upcasts that column's dtype from float64 to `object` (mixing real
+# floats with `''`). The column-specific `.apply(lambda x: int(x) ... )`
+# re-cast (helper:184-192) that follows then produces a Series of Python `int`s
+# mixed with `''` -- still heterogeneous, so pandas cannot infer it back to a
+# native int64 dtype -- so it STAYS `object`. The final generic "stringify every
+# object column" loop (helper:195-197) then catches it and turns every value,
+# including the real numbers, into a string (e.g. `59.91` -> `"59.91"`). LAT/LNG
+# follow the same shorter path (whole-df fillna('') → generic object-column
+# stringify) without the per-column int-recast. A column with NO missing values
+# in the frame skips this entirely (the re-cast Series is homogeneous ints,
+# pandas infers int64, the generic loop skips it since dtype != 'object') -- so
+# this is real-data-dependent, not a constant offset, and will very likely appear
+# on any DB where some visible listing is still missing a travel/area value.
 # It is MOOT for the actual rendered sheet: both the legacy and the new
 # payload go through Sheets' `USER_ENTERED` value-input option, which
 # parses a numeric-looking string right back into the same number -- so
@@ -203,9 +204,12 @@ def _legacy_eie_df(PropertyDatabase, helper, db_path: Path) -> pd.DataFrame:
          normalization (None/NaN -> "", area/year/commute -> int-or-blank,
          Pris/PRIS KVM already int from step 1, text cleaned).
     """
-    db = PropertyDatabase(str(db_path))
-    df = db.get_eiendom_for_sheets()
-    df = helper.filter_rows_for_sheet_visibility(df, db)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Downcasting object dtype arrays", category=FutureWarning)
+        # legacy pandas idiom; suppressed narrowly per review
+        db = PropertyDatabase(str(db_path))
+        df = db.get_eiendom_for_sheets()
+        df = helper.filter_rows_for_sheet_visibility(df, db)
     df = helper.filter_hidden_sheet_columns(df)
     df = helper.dedupe_and_canonicalize_dataframe_columns(df)
     df = helper.sanitize_for_sheets(df)
@@ -236,8 +240,11 @@ def _legacy_sold_df(PropertyDatabase, helper, db_path: Path) -> pd.DataFrame:
     circuiting, since a zero-row DataFrame is what matters for comparison,
     not which unreachable-here code path technically produced it.
     """
-    db = PropertyDatabase(str(db_path))
-    df = db.get_stale_eiendom_for_sheets()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Downcasting object dtype arrays", category=FutureWarning)
+        # legacy pandas idiom; suppressed narrowly per review
+        db = PropertyDatabase(str(db_path))
+        df = db.get_stale_eiendom_for_sheets()
 
     sheets_max_price, min_bra_i = _import_legacy_filters()
     include_mask = pd.Series(True, index=df.index)
