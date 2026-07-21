@@ -147,6 +147,26 @@ _EIE_SQL = (
 )
 
 
+def _add_hidden_fields(records: list[dict]) -> list[dict]:
+    """Attach the underscore-prefixed hidden fields (see ``listing_rows``
+    docstring for the full field list/rationale) to each Eie/Sold-shaped
+    record dict, IN PLACE. Returns the same list back for convenience.
+
+    Extracted out of ``listing_rows`` so a second Eie-shaped query (the web
+    API's ``sold=1`` fetch, same ``_EIE_SELECT_*``/``_EIE_JOINS`` fragments,
+    different WHERE) can get the identical hidden-field treatment without
+    duplicating this loop.
+    """
+    for rec in records:
+        rec["_finnkode"] = rec.get("Finnkode")
+        rec["_active"] = rec.get("active")
+        rec["_lat"] = _as_float(rec.get("LAT"))
+        rec["_lng"] = _as_float(rec.get("LNG"))
+        rec["_boligtype_raw"] = rec.get("Boligtype")
+        rec["_image_url"] = rec.get("IMAGE_URL")
+    return records
+
+
 def listing_rows(
     conn: sqlite3.Connection, *, include_hidden_fields: bool = False
 ) -> list[dict]:
@@ -182,12 +202,4 @@ def listing_rows(
     if not include_hidden_fields:
         return records
 
-    for rec in records:
-        rec["_finnkode"] = rec.get("Finnkode")
-        rec["_active"] = rec.get("active")
-        rec["_lat"] = _as_float(rec.get("LAT"))
-        rec["_lng"] = _as_float(rec.get("LNG"))
-        rec["_boligtype_raw"] = rec.get("Boligtype")
-        rec["_image_url"] = rec.get("IMAGE_URL")
-
-    return records
+    return _add_hidden_fields(records)

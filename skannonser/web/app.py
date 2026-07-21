@@ -106,9 +106,17 @@ def create_app(
     def healthz() -> JSONResponse | dict:
         return _healthz(app.state.db_path)
 
+    # Deferred import: skannonser.web.api imports `ro_conn` back out of this
+    # module. By the time create_app() actually RUNS, this module has already
+    # finished executing (ro_conn is defined above), so the import resolves
+    # cleanly -- a top-of-file import would instead race a half-initialized
+    # module during the very first import of either file.
+    from skannonser.web.api import router as api_router
+
     # Registered before the static mount so it always takes precedence
     # (StaticFiles(html=True) would otherwise happily 404/serve for
     # anything not matched by an earlier route).
+    app.include_router(api_router)
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
     return app
