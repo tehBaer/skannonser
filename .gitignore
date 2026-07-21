@@ -1,4 +1,5 @@
 ﻿*.html
+!skannonser/web/static/**
 *.csv
 *.pyc
 credentials.json

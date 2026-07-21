@@ -16,10 +16,12 @@ dependencies = [
     "pandas>=2.2",
     "google-api-python-client>=2.100",
     "google-auth>=2.20",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
 skannonser = "skannonser.cli:main"
@@ -29,6 +31,13 @@ include = ["skannonser*"]
 
 [tool.setuptools.package-data]
 "skannonser.store" = ["migrations/*.sql"]
+"skannonser.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/rebuild"]
+filterwarnings = [
+    # starlette's TestClient nudges toward the httpx2 fork; the contract
+    # pins plain httpx (>=0.27) for the dev extra, and it works fine here --
+    # this just silences the nag so the suite stays warning-free.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
