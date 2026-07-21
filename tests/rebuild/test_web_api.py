@@ -335,13 +335,46 @@ def test_listing_detail_dnb(db_path, client):
 
     listings = client.get("/api/listings").json()["listings"]
     finnkode = next(i["finnkode"] for i in listings if i["source"] == "dnb")
-    assert finnkode == "dnb:XYZ123"
+    # Even with dnb_id="XYZ123", finnkode is derived from url hash, not dnb_id.
+    assert finnkode.startswith("dnb:")
+    assert len(finnkode) == 20  # "dnb:" (4) + 16 hex chars
+    assert finnkode != "dnb:XYZ123"
 
     resp = client.get(f"/api/listings/{finnkode}")
     assert resp.status_code == 200
     body = resp.json()
     assert body["source"] == "dnb"
     assert body["URL"] == "https://dnb.no/detail-me"
+
+
+def test_dnb_identifier_url_hash_stable_regardless_of_dnb_id(db_path, client):
+    """Verify that a DNB row WITH a populated dnb_id still gets the url-hash
+    identifier format, ensuring id stability across scrapes regardless of when
+    dnb_id is populated. The identity/upsert-match key is url, not dnb_id."""
+    conn = _conn(db_path)
+    url1 = "https://dnb.no/stable-url-1"
+    url2 = "https://dnb.no/stable-url-2"
+    _ins_dnb(conn, url1, dnb_id="has_dnb_id", brj=5)
+    _ins_dnb(conn, url2, dnb_id=None, brj=6)
+    conn.close()
+
+    listings = client.get("/api/listings").json()["listings"]
+    dnb_items = [i for i in listings if i["source"] == "dnb"]
+    assert len(dnb_items) == 2
+
+    # Both should have url-hash-derived finnkodes.
+    finnkodes = {i["finnkode"] for i in dnb_items}
+    for fk in finnkodes:
+        assert fk.startswith("dnb:")
+        digest_part = fk[4:]  # strip "dnb:" prefix
+        assert len(digest_part) == 16
+        assert all(c in "0123456789abcdef" for c in digest_part)
+
+    # Lookup detail by url-hash id should work.
+    item1 = next(i for i in dnb_items if i["url"] == url1)
+    resp = client.get(f"/api/listings/{item1['finnkode']}")
+    assert resp.status_code == 200
+    assert resp.json()["URL"] == url1
 
 
 def test_listing_detail_404(db_path, client):

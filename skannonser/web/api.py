@@ -25,11 +25,12 @@ listing "buckets" are merged into ``/api/listings``:
 DNB IDENTIFIER DECISION: ``dnbeiendom`` has no ``finnkode``, so DNB rows need
 a synthetic, STABLE, path-safe id for the ``finnkode`` field (used both in
 the listing payload and as the ``/api/listings/{finnkode}`` detail path
-param): ``f"dnb:{dnb_id}"`` when ``dnb_id`` is populated, else
-``f"dnb:{sha1(url)[:16]}"`` (``url`` is UNIQUE on ``dnbeiendom`` and never
-changes for a given crawled listing, so the hash is stable across requests).
-A raw url can't be used directly as a path segment (embedded ``/`` would
-break FastAPI's path-param matching).
+param): ``f"dnb:{sha1(url)[:16]}"`` unconditionally (``url`` is the table's
+identity/upsert-match key, UNIQUE on ``dnbeiendom`` and never changes for a
+given crawled listing). This derivation is provably stable across scrapes
+regardless of whether ``dnb_id`` is ever populated. A raw url can't be used
+directly as a path segment (embedded ``/`` would break FastAPI's path-param
+matching).
 
 BOLIGTYPE TRIM DECISION: the API serves ``boligtype`` (and ``/api/meta``'s
 ``boligtyper`` list) TRIMMED of surrounding whitespace, unlike the raw
@@ -105,11 +106,12 @@ def _travel_from_record(rec: dict, domain: DomainConfig) -> dict[str, Any]:
     return {dest.key: rec.get(dest.df_column) for dest in domain.destinations}
 
 
-def _dnb_identifier(dnb_id: Any, url: Any) -> str:
-    """Stable, path-safe synthetic id for a DNB row -- see module docstring
-    "DNB IDENTIFIER DECISION"."""
-    if dnb_id is not None and str(dnb_id).strip():
-        return f"dnb:{dnb_id}"
+def _dnb_identifier(url: Any) -> str:
+    """Stable, path-safe synthetic id for a DNB row derived from url hash.
+
+    See module docstring "DNB IDENTIFIER DECISION" — id is provably stable
+    across scrapes since url is the table's identity/upsert-match key.
+    """
     digest = hashlib.sha1(str(url or "").encode("utf-8")).hexdigest()[:16]
     return f"dnb:{digest}"
 
@@ -227,7 +229,7 @@ def _eie_item(rec: dict, domain: DomainConfig, *, sold: bool) -> dict:
 
 def _dnb_item(rec: dict, domain: DomainConfig) -> dict:
     return {
-        "finnkode": _dnb_identifier(rec.get("dnb_id"), rec.get("URL")),
+        "finnkode": _dnb_identifier(rec.get("URL")),
         "adresse": rec.get("Adresse"),
         "postnummer": rec.get("Postnummer"),
         "pris": rec.get("Pris"),
@@ -304,7 +306,7 @@ def _find_dnb_record(conn: sqlite3.Connection, finnkode: str) -> dict | None:
     unavoidable since the id is a hash, not a stored column. Fine at current
     DNB row counts (hundreds); revisit if that changes."""
     for rec in _dnb_records_all(conn):
-        if _dnb_identifier(rec.get("dnb_id"), rec.get("URL")) == finnkode:
+        if _dnb_identifier(rec.get("URL")) == finnkode:
             return rec
     return None
 
@@ -345,6 +347,8 @@ def get_meta(request: Request, conn: sqlite3.Connection = Depends(ro_conn)) -> d
     )
     return {
         "polygon": [list(p) for p in domain.polygon_points],
+        # Only client-relevant filters are exposed (sheets_max_price, min_bra_i);
+        # internal filters like price/BRA used in export queries are not sent to UI.
         "filters": {
             "sheets_max_price": domain.filters.sheets_max_price,
             "min_bra_i": domain.filters.min_bra_i,
