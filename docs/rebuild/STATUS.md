@@ -174,8 +174,6 @@ Other decided-later items (surface each for a go/no-go when its phase arrives):
   `skannonser/enrich/validate.py`) stays legacy-manual until Phase 4 — port scoped to the
   read-only validator only; the tool that re-requests flagged rows' travel times was
   intentionally left out of Task 10's scope.
-- Untrack `main/database/properties.db` from git (currently tracked+perpetually dirty; the
-  stash-dance in every server pull exists because of this) — vs keeping git as a sync channel.
 - Deferred minors: `deactivate_missing` empty-list guard in repos; AliasChoices for
   `SKANNONSER_DB_PATH`; anchor `DEFAULT_DOMAIN_PATH`; `require_db()` helper on a 4th db command;
   supercronic checksum in Dockerfile; backup `PRAGMA journal_mode=DELETE`; USER/HEALTHCHECK in
@@ -198,9 +196,17 @@ gitignored ledger.**
   is env-first with a `.env` fallback; the wrapper sources `.env`. Key was NOT rotated (never in
   git history — verified). Optional: confirm API restrictions in Cloud Console.
 - Docker scheduler container runs nightly `skannonser db backup --keep 30` at 03:00 UTC.
-- The server's `properties.db` is the authoritative live DB (laptop copy goes stale). It is
-  git-tracked: every server pull needs the stash-dance (`git stash push main/database/properties.db`,
-  pull, `git checkout stash@{0} -- …`, drop).
+- **Phase 6 Task 3 (2026-07-22): `main/database/properties.db` is UNTRACKED from git** (`git rm
+  --cached` + `.gitignore` entries for `main/database/properties.db`, `main/database/*.db-wal`,
+  `main/database/*.db-shm`; commit `91f09b1`). Server transition done outside the nightly window:
+  safety copy to `~/skannonser-preuntrack-20260722-094457.db`, DB moved to `/tmp/db-hold.db`,
+  `git pull --ff-only` (fast-forwarded `be10f4f..91f09b1`, deleting the tracked blob), DB moved
+  back into place — now untracked+ignored. `git status --short` shows nothing for the db;
+  `db stats` and `/healthz` confirmed the DB intact; `docker compose ps` showed `scheduler` and
+  `web` both `Up`/`Up (healthy)` throughout (volume mount unaffected by the git-side change).
+  **The stash-dance is dead** — plain `git pull --ff-only` is now sufficient for every future
+  server pull; the server's `properties.db` remains the authoritative live DB (laptop copy goes
+  stale), it's just no longer synced through git.
 
 ## Review findings log (RESOLVED — do not re-litigate, do not undo)
 
