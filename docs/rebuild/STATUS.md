@@ -11,6 +11,14 @@ else is history.
 
 ## Where we are
 
+- **WEB APP LIVE (trial) 2026-07-22** at `http://100.77.139.22:8377` — tailnet-only (Phase 5
+  Task 9): the `web` service (docker-compose, same image as `scheduler`, `user: "1000:1000"`,
+  `restart: unless-stopped`) is up and healthy; `/healthz` → `{"status":"ok","db":true}` over the
+  tailnet; confirmed refused on the server's LAN interface (192.168.1.x) — port is bound to
+  `100.77.139.22:8377` only, not `0.0.0.0`. Thumbnail catch-up run supervised against the live DB
+  (read-only DB access, writes only to `data/thumbs/`): 964/964 candidates cached, 0 failures.
+  `/` serves the map HTML, `/api/listings` returns 787 listings, thumb spot-check → 200.
+  **Apps Script map retirement is pending user approval after the trial.**
 - **CUTOVER LIVE 2026-07-21** (Phase 4 Task 10): the server's nightly + notify crons now run the
   rebuilt CLI. `~/run_skannonser_daily.sh` was rewritten to call `skannonser run nightly` (one
   section replacing the legacy `make full`/`refresh-stale-open`/`sold-sync` trio); the 07:00/Sun-08:00
