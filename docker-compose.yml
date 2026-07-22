@@ -15,3 +15,35 @@ services:
       - ./config:/app/config
       - ./backups:/app/backups
     restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["skannonser", "web", "--host", "0.0.0.0", "--port", "8000"]
+    init: true
+    user: "1000:1000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SKANNONSER_DB_PATH: /app/main/database/properties.db
+    volumes:
+      - ./main/database:/app/main/database
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./backups:/app/backups
+    ports:
+      - "100.77.139.22:8377:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=5).status==200 else 1)",
+        ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
