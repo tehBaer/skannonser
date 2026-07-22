@@ -6,12 +6,13 @@
 
 import {
   createMap,
-  addListingLayers,
+  addListingGroups,
+  buildGroups,
+  groupIdForItem,
   addBoundary,
   boligtypePalette,
   syncClusterMarkers,
   clearClusterCache,
-  SOURCE_ID,
   DEFAULT_UNKNOWN_TYPE_COLOR,
 } from "./map.js";
 import { buildPopupContent } from "./popup.js";
@@ -71,6 +72,8 @@ const state = {
   map: null,
   popup: null,
   colorByType: {},
+  groups: [],
+  validGroupIds: new Set(),
 };
 
 function loadUi(meta) {
@@ -158,7 +161,9 @@ function itemToFeature(item, op) {
   };
 }
 
-function currentFeatureCollection() {
+// Bucket the visible listings into one FeatureCollection per group source
+// (sold group + per-boligtype groups), so each source clusters independently.
+function featureCollectionsByGroup() {
   const ctx = {
     stations: state.meta.stations || [],
     visibleLines: visibleLineSet(state.ui),
@@ -166,32 +171,38 @@ function currentFeatureCollection() {
     anyStation: anyLineVisibleStation(state.meta.stations || [], visibleLineSet(state.ui)),
   };
   const residual = residualOpacity(state.ui);
-  const features = [];
+  const byGroup = {};
+  state.groups.forEach((g) => (byGroup[g.id] = []));
   state.itemsById.forEach((item) => {
     if (item.lat == null || item.lng == null) return;
-    if (!state.ui[bucketOf(item)]) return; // layer toggle
+    if (!state.ui[bucketOf(item)]) return; // layer toggle (eie/dnb/sold)
     if (boligtypeHidden(item, state.ui)) return; // per-type visibility (hidden)
+    const gid = groupIdForItem(item, state.validGroupIds);
+    if (!byGroup[gid]) return; // safety: no source for this group
     const op = isDimmed(item, ctx) ? residual : 1;
-    features.push(itemToFeature(item, op));
+    byGroup[gid].push(itemToFeature(item, op));
   });
-  return { type: "FeatureCollection", features };
+  return byGroup;
 }
 
-// Full re-render after any filter/station change: listing source + stations.
+// Full re-render after any filter/station change: all group sources + stations.
 let rafPending = false;
 function applyAll() {
   if (rafPending) return;
   rafPending = true;
   requestAnimationFrame(() => {
     rafPending = false;
-    const src = state.map.getSource(SOURCE_ID);
-    if (src) {
-      // Clear cached cluster markers BEFORE setData -- see clearClusterCache's
-      // doc comment in map.js. Reused cluster_ids after a data change would
-      // otherwise leave stale bubbles (wrong count/position) on screen.
-      clearClusterCache(state.clusterMarkers);
-      src.setData(currentFeatureCollection());
-    }
+    const byGroup = featureCollectionsByGroup();
+    // Clear cached cluster markers BEFORE setData -- see clearClusterCache's
+    // doc comment in map.js. Reused cluster_ids after a data change would
+    // otherwise leave stale bubbles (wrong count/position) on screen.
+    clearClusterCache(state.clusterMarkers);
+    state.groups.forEach((g) => {
+      const src = state.map.getSource(g.id);
+      if (src) {
+        src.setData({ type: "FeatureCollection", features: byGroup[g.id] || [] });
+      }
+    });
     updateStationLayers(state.map, state.meta.stations || [], state.ui);
   });
 }
@@ -393,15 +404,17 @@ async function init() {
   state.ui._allLines = distinctLines(meta.stations || []);
   ingestItems(listings.listings || []);
 
-  const { colorByType, expression } = boligtypePalette(meta.boligtyper || []);
+  const { colorByType } = boligtypePalette(meta.boligtyper || []);
   state.colorByType = colorByType;
+  state.groups = buildGroups(meta.boligtyper || [], colorByType);
+  state.validGroupIds = new Set(state.groups.map((g) => g.id));
 
   const map = createMap("map");
   state.map = map;
 
   map.on("load", () => {
     map.resize();
-    addListingLayers(map, expression, colorByType, openPopup);
+    addListingGroups(map, state.groups, openPopup);
     addStationLayers(map);
     wireStationNamePopup(map);
     addBoundary(map, meta.polygon || []);
@@ -427,8 +440,8 @@ async function init() {
 
     applyAll();
 
-    map.on("render", () => syncClusterMarkers(map, state.clusterMarkers));
-    map.on("moveend", () => syncClusterMarkers(map, state.clusterMarkers));
+    map.on("render", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));
+    map.on("moveend", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));
 
     if (state.ui.sold && !state.soldLoaded) {
       ensureSoldLoaded().then(applyAll);
