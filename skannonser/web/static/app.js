@@ -172,8 +172,9 @@ function featureCollectionsByGroup() {
     anyStation: anyLineVisibleStation(state.meta.stations || [], visibleLineSet(state.ui)),
   };
   const residual = residualOpacity(state.ui);
-  // Independent "solgt nedtoning": an extra multiplier applied only to sold
-  // listings, on top of any filter dimming.
+  // Sold listings are DETACHED from the filters + "Nedtoning": their opacity is
+  // driven solely by the separate "Solgt nedtoning" slider (uniform). Active
+  // listings are driven solely by the filters + "Nedtoning".
   const soldPct = Math.max(0, Math.min(100, Number(state.ui.soldDim) || 0));
   const soldOpacity = 1 - soldPct / 100;
   const byGroup = {};
@@ -184,8 +185,7 @@ function featureCollectionsByGroup() {
     if (boligtypeHidden(item, state.ui)) return; // per-type visibility (hidden)
     const gid = groupIdForItem(item, state.validGroupIds);
     if (!byGroup[gid]) return; // safety: no source for this group
-    let op = isDimmed(item, ctx) ? residual : 1;
-    if (item.sold) op *= soldOpacity;
+    const op = item.sold ? soldOpacity : isDimmed(item, ctx) ? residual : 1;
     byGroup[gid].push(itemToFeature(item, op));
   });
   return byGroup;
