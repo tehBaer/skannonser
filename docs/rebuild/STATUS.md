@@ -18,7 +18,7 @@ else is history.
   `100.77.139.22:8377` only, not `0.0.0.0`. Thumbnail catch-up run supervised against the live DB
   (read-only DB access, writes only to `data/thumbs/`): 964/964 candidates cached, 0 failures.
   `/` serves the map HTML, `/api/listings` returns 787 listings, thumb spot-check → 200.
-  **PHASE 6 GATE PROVEN EARLY 2026-07-22:** supervised nightly on current master exited nightly=0 (all steps green), and first-appearance activation was proven end-to-end with a real finn.no crawl against a DB copy — a removed listing (Inges gate 6A, 470374293) was re-discovered as a genuine first insert, came out active=1 immediately, and appeared in the Eie sheet payload. Same-day visibility CONFIRMED; backlog item 1 fully closed. **USER ACCEPTED the web app 2026-07-22** (map walkthrough passed; 07:00 daily notification delivery also confirmed on the phone). Trial running; **Apps Script map retirement decision comes after the trial.**
+  **PHASE 6 GATE PROVEN EARLY 2026-07-22:** supervised nightly on current master exited nightly=0 (all steps green), and first-appearance activation was proven end-to-end with a real finn.no crawl against a DB copy — a removed listing (Inges gate 6A, 470374293) was re-discovered as a genuine first insert, came out active=1 immediately, and appeared in the Eie sheet payload. Same-day visibility CONFIRMED; backlog item 1 fully closed. **USER ACCEPTED the web app 2026-07-22** (map walkthrough passed; 07:00 daily notification delivery also confirmed on the phone). Trial running. **Apps Script map RETIRED 2026-07-22** (Phase 6 Task 4) — see "Map consumer" below.
 - **CUTOVER LIVE 2026-07-21** (Phase 4 Task 10): the server's nightly + notify crons now run the
   rebuilt CLI. `~/run_skannonser_daily.sh` was rewritten to call `skannonser run nightly` (one
   section replacing the legacy `make full`/`refresh-stale-open`/`sold-sync` trio); the 07:00/Sun-08:00
@@ -42,8 +42,10 @@ else is history.
     legacy's DNB sync was unreachable dead code / a stale 3-row tab).
   - **Annotations rescue: 0** on both laptop and the live server DB — the Eie tab has no Kommentar/Tag
     columns, so there is nothing to preserve across the new clear-and-rewrite (anticipated outcome).
-  - **Map consumer:** unchanged this task; the Sold tab still feeds the map (Phase-5 item). User to
-    visually confirm the map still renders after the first live nightly.
+  - **Map consumer:** Apps Script map RETIRED 2026-07-22; the web app (tailnet :8377) is the only
+    map. Sheet remains as the read-only spreadsheet view (nightly export continues). All 20
+    web-app deployments on the Apps Script project were `clasp undeploy`'d (Phase 6 Task 4); the
+    user's live `/exec` URL now 404s. Only the `@HEAD` (read-only, unpublished) entry remains.
 - **Phase 1 (skeleton) and Phase 2 (ingest port) are merged to master and deployed on the server**
   (`mbp2016@100.77.139.22`, repo `~/kode/skannonser`, tailnet). **Phase 3 (enrichment port +
   Google API gateway) is complete on branch `rebuild-phase-3`; merge to master is still pending.**
