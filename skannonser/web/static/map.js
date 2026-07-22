@@ -131,10 +131,12 @@ const NOT_CLUSTER = ["!", ["has", "point_count"]];
 // residual) on every listing feature; clusters have no `op` (coalesce -> 1).
 const OP = ["coalesce", ["get", "op"], 1];
 
-// One small white-bordered square canvas icon per colour (DNB points), keyed by
-// colour hex, registered once.
-function ensureSquareIcon(map, color) {
-  const name = "dnb-sq-" + color.replace(/[^a-z0-9]/gi, "");
+// One small bordered square canvas icon per (fill, stroke) colour pair (DNB
+// points), keyed by both, registered once.
+function ensureSquareIcon(map, color, strokeColor) {
+  const stroke = strokeColor || "#ffffff";
+  const safe = (c) => c.replace(/[^a-z0-9]/gi, "");
+  const name = "dnb-sq-" + safe(color) + "-" + safe(stroke);
   if (map.hasImage(name)) return name;
   const size = 18;
   const cvs = document.createElement("canvas");
@@ -143,7 +145,7 @@ function ensureSquareIcon(map, color) {
   const ctx = cvs.getContext("2d");
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, size, size);
-  ctx.strokeStyle = "#ffffff";
+  ctx.strokeStyle = stroke;
   ctx.lineWidth = 2;
   ctx.strokeRect(1, 1, size - 2, size - 2);
   const data = ctx.getImageData(0, 0, size, size);
@@ -151,11 +153,16 @@ function ensureSquareIcon(map, color) {
   return name;
 }
 
+// Border convention: ACTIVE listings get a black border, SOLD keep a white
+// border (both are coloured by boligtype).
+const ACTIVE_BORDER = "#111111";
+const SOLD_BORDER = "#ffffff";
+
 // Adds one clustered source per group, with unclustered GL layers:
-//  * sold group -> grey circle
-//  * type group -> Eie circle + DNB square, both in the type's colour
+//  * sold group -> circle coloured by boligtype (soldColorExpr), white border
+//  * type group -> Eie circle + DNB square in the type's colour, black border
 // So a cluster only merges same-boligtype listings; sold stays its own group.
-export function addListingGroups(map, groups, onListingClick) {
+export function addListingGroups(map, groups, soldColorExpr, onListingClick) {
   const clickLayers = [];
   groups.forEach((g) => {
     map.addSource(g.id, {
@@ -166,8 +173,11 @@ export function addListingGroups(map, groups, onListingClick) {
       clusterMaxZoom: CLUSTER_MAX_ZOOM,
       // Aggregate each member's per-feature opacity so a cluster bubble can be
       // faded in proportion to how many of its listings are dimmed (nedtoning).
+      // `op` is always set on every feature (app.js itemToFeature), so the
+      // plain documented [operator, ['get', prop]] form is used -- richer
+      // expressions (coalesce) in this reduce context are unreliable.
       clusterProperties: {
-        op_sum: ["+", ["coalesce", ["get", "op"], 1]],
+        op_sum: ["+", ["get", "op"]],
       },
     });
 
@@ -178,10 +188,10 @@ export function addListingGroups(map, groups, onListingClick) {
         source: g.id,
         filter: NOT_CLUSTER,
         paint: {
-          "circle-color": SOLD_COLOR,
+          "circle-color": soldColorExpr, // sold coloured by boligtype
           "circle-radius": 6,
           "circle-stroke-width": 1.5,
-          "circle-stroke-color": "#ffffff",
+          "circle-stroke-color": SOLD_BORDER, // sold = white border
           "circle-opacity": OP,
           "circle-stroke-opacity": OP,
         },
@@ -197,7 +207,7 @@ export function addListingGroups(map, groups, onListingClick) {
           "circle-color": g.color,
           "circle-radius": 7,
           "circle-stroke-width": 1.5,
-          "circle-stroke-color": "#ffffff",
+          "circle-stroke-color": ACTIVE_BORDER, // active = black border
           "circle-opacity": OP,
           "circle-stroke-opacity": OP,
         },
@@ -208,7 +218,7 @@ export function addListingGroups(map, groups, onListingClick) {
         source: g.id,
         filter: ["all", NOT_CLUSTER, ["==", ["get", "source"], "dnb"]],
         layout: {
-          "icon-image": ensureSquareIcon(map, g.color),
+          "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
           "icon-size": 1,
           "icon-allow-overlap": true,
         },

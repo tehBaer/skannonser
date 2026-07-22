@@ -196,6 +196,19 @@ export function buildMetricFilterUI(container, meta, ui, onChange) {
       onChange();
     },
   });
+
+  rangeRow(container, {
+    label: "Solgt nedtoning",
+    min: 0,
+    max: 100,
+    step: 5,
+    value: ui.soldDim || 0,
+    fmt: (v) => (v <= 0 ? "Av" : v + " %"),
+    onInput: (v) => {
+      ui.soldDim = v;
+      onChange();
+    },
+  });
 }
 
 // Per-boligtype visibility checkboxes (checked = visible). `colorByType` gives

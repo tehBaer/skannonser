@@ -51,6 +51,7 @@ function defaultUi(meta) {
     sold: false,
     filters: defaultFilterState(meta),
     dimIntensity: 75, // % dimming for non-matching listings
+    soldDim: 0, // % extra dimming applied to sold listings only (independent slider)
     boligtypeHidden: {},
     stations: {
       show: false,
@@ -171,6 +172,10 @@ function featureCollectionsByGroup() {
     anyStation: anyLineVisibleStation(state.meta.stations || [], visibleLineSet(state.ui)),
   };
   const residual = residualOpacity(state.ui);
+  // Independent "solgt nedtoning": an extra multiplier applied only to sold
+  // listings, on top of any filter dimming.
+  const soldPct = Math.max(0, Math.min(100, Number(state.ui.soldDim) || 0));
+  const soldOpacity = 1 - soldPct / 100;
   const byGroup = {};
   state.groups.forEach((g) => (byGroup[g.id] = []));
   state.itemsById.forEach((item) => {
@@ -179,7 +184,8 @@ function featureCollectionsByGroup() {
     if (boligtypeHidden(item, state.ui)) return; // per-type visibility (hidden)
     const gid = groupIdForItem(item, state.validGroupIds);
     if (!byGroup[gid]) return; // safety: no source for this group
-    const op = isDimmed(item, ctx) ? residual : 1;
+    let op = isDimmed(item, ctx) ? residual : 1;
+    if (item.sold) op *= soldOpacity;
     byGroup[gid].push(itemToFeature(item, op));
   });
   return byGroup;
@@ -404,8 +410,9 @@ async function init() {
   state.ui._allLines = distinctLines(meta.stations || []);
   ingestItems(listings.listings || []);
 
-  const { colorByType } = boligtypePalette(meta.boligtyper || []);
+  const { colorByType, expression } = boligtypePalette(meta.boligtyper || []);
   state.colorByType = colorByType;
+  state.soldColorExpr = expression; // sold circles coloured by boligtype
   state.groups = buildGroups(meta.boligtyper || [], colorByType);
   state.validGroupIds = new Set(state.groups.map((g) => g.id));
 
@@ -414,7 +421,7 @@ async function init() {
 
   map.on("load", () => {
     map.resize();
-    addListingGroups(map, state.groups, openPopup);
+    addListingGroups(map, state.groups, state.soldColorExpr, openPopup);
     addStationLayers(map);
     wireStationNamePopup(map);
     addBoundary(map, meta.polygon || []);
