@@ -31,7 +31,7 @@ include = ["skannonser*"]
 
 [tool.setuptools.package-data]
 "skannonser.store" = ["migrations/*.sql"]
-"skannonser.web" = ["static/*"]
+"skannonser.web" = ["static/*", "static/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/rebuild"]

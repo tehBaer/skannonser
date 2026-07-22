@@ -10,6 +10,7 @@ import {
   addBoundary,
   boligtypePalette,
   syncClusterMarkers,
+  clearClusterCache,
   SOURCE_ID,
   DEFAULT_UNKNOWN_TYPE_COLOR,
 } from "./map.js";
@@ -184,7 +185,13 @@ function applyAll() {
   requestAnimationFrame(() => {
     rafPending = false;
     const src = state.map.getSource(SOURCE_ID);
-    if (src) src.setData(currentFeatureCollection());
+    if (src) {
+      // Clear cached cluster markers BEFORE setData -- see clearClusterCache's
+      // doc comment in map.js. Reused cluster_ids after a data change would
+      // otherwise leave stale bubbles (wrong count/position) on screen.
+      clearClusterCache(state.clusterMarkers);
+      src.setData(currentFeatureCollection());
+    }
     updateStationLayers(state.map, state.meta.stations || [], state.ui);
   });
 }

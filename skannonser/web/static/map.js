@@ -202,6 +202,24 @@ export function addListingLayers(map, colorExpr, colorByType, onListingClick) {
   });
 }
 
+// Removes and forgets every cached cluster DOM marker. MUST be called
+// before any source.setData() that can change the clustered feature set
+// (filter toggles, sold-visibility toggle, boligtype visibility, ...).
+// WHY: supercluster assigns cluster_id values from a reusable pool keyed by
+// tree position, not by cluster identity -- after setData() rebuilds the
+// tree, a given cluster_id can now refer to a different cluster (different
+// point_count and/or screen position) than before. `syncClusterMarkers`
+// treats any cache hit as "already correct" (`if (cache[id]) return;`), so
+// a stale entry left behind after setData() shows the old bubble's count
+// and position until an unrelated pan/zoom happens to evict it. Clearing
+// the cache forces every marker to be rebuilt fresh from the new tree.
+export function clearClusterCache(cache) {
+  Object.keys(cache).forEach((id) => {
+    cache[id].remove();
+    delete cache[id];
+  });
+}
+
 // DOM cluster markers synced to the current viewport. `cache` is a caller-held
 // object mapping cluster_id -> maplibregl.Marker; call on 'render'/'moveend'.
 export function syncClusterMarkers(map, cache) {
