@@ -209,6 +209,32 @@ gitignored ledger.**
   **The stash-dance is dead** — plain `git pull --ff-only` is now sufficient for every future
   server pull; the server's `properties.db` remains the authoritative live DB (laptop copy goes
   stale), it's just no longer synced through git.
+- **Phase 6 Task 6 (2026-07-22): server is on the slimmed tree (post-teardown)** since 2026-07-22.
+  Safety copy taken (`~/skannonser-preteardown-20260722-101909.db`), then the FIRST clean
+  `git pull --ff-only` (no stash-dance) fast-forwarded `91f09b1..e2b6dc6` ("delete legacy system —
+  one codebase remains"), deleting ~90 tracked legacy files. `main/database/properties.db` and the
+  gitignored `main/config/thumbnail-service-key.json` credential (referenced by `.env`'s
+  `GOOGLE_SERVICE_ACCOUNT_FILE`) both survived untouched, as expected (untracked/ignored). Residue
+  left under `main/` as expected: `main/config/{config.py,credentials.json,drive_token.json,
+  token.json,thumbnail-service-key.json}`, `main/temp/*.py`, and `__pycache__` dirs under
+  `config/database/extractors/notify/runners/sync/tools/main` — all untracked leftovers, harmless.
+  `pip install -e '.[dev]'` + `pytest tests/rebuild` → **499 passed, zero warnings**. Rebuilt
+  `docker compose build web scheduler` from the slimmed tree and `docker compose up -d`; both
+  containers came up `Up`/`Up (healthy)`; `/healthz` → `{"status":"ok","db":true}`; `db stats`
+  sane. Legacy fallback artifacts removed (rollback target no longer exists in the repo):
+  `~/run_skannonser_daily.legacy.sh`, `~/crontab.precutover.bak`. `crontab -l` unchanged — wrapper
+  (`run_skannonser_daily.sh` @ 01:00) + `notify daily`/`weekly`/`battery`/`heartbeat`, nothing
+  legacy. DB safety copies **kept** (cheap insurance, for eventual manual cleanup) at:
+  `~/skannonser-predeploy-20260720-133616.db` (4,886,528 B),
+  `~/skannonser-prephase2-20260720-184918.db` (4,898,816 B),
+  `~/skannonser-prephase3-20260721-071949.db` (4,911,104 B),
+  `~/skannonser-precutover-20260721-141109.db` (4,919,296 B),
+  `~/skannonser-prep5deploy-1784701969.db` (4,956,160 B),
+  `~/skannonser-prephase4merge-20260722-081522.db` (4,956,160 B),
+  `~/skannonser-preuntrack-20260722-094457.db` (4,956,160 B),
+  `~/skannonser-preteardown-20260722-101909.db` (4,956,160 B).
+  **Next nightly (01:00) is the first to run on the slimmed tree** — watch-item: check
+  `~/skannonser-logs/` / the scheduler container log after it runs.
 
 ## Review findings log (RESOLVED — do not re-litigate, do not undo)
 
