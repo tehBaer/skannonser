@@ -1,28 +1,25 @@
-// MapLibre map core: OSM raster base, clustered listings source, unclustered
-// per-source layers, and DOM cluster markers (Phase 5 Task 6).
+// MapLibre map core: OSM raster base, PER-GROUP clustered sources, unclustered
+// GL layers, and DOM cluster markers.
 //
-// Cluster COUNT rendering uses DOM markers rather than a GL symbol/text
-// layer on purpose: GL text needs a `glyphs` font-server URL, and the only
-// options are an external CDN (banned -- this app must serve zero external
-// URLs beyond the OSM tiles, and must work offline) or vendoring glyph PBFs.
-// The DOM-marker pattern is the documented offline-safe way to show cluster
-// counts, so unclustered points are GL layers and clusters are synced DOM
-// bubbles.
+// CLUSTER PARTITIONING: MapLibre/supercluster clusters every point in a source
+// together, so to make a cluster only ever combine listings of the SAME
+// boligtype we use one clustered source per boligtype (plus a separate "sold"
+// group). Each group's cluster bubbles are coloured by that group's colour.
+//
+// Cluster COUNT rendering uses DOM markers rather than a GL symbol/text layer on
+// purpose: GL text needs a `glyphs` font-server URL, and the only options are an
+// external CDN (banned) or vendoring glyph PBFs. The DOM-marker pattern is the
+// documented offline-safe way to show cluster counts.
 //
 // BOLIGTYPE PALETTE: ported verbatim from apps_script/map/map.html --
 //   * TYPE_COLOR_PALETTE            -> map.html lines 1046-1048
 //   * FIXED_BOLIGTYPE_DEFAULT_COLORS -> map.html lines 1065-1067
 //   * DEFAULT_UNKNOWN_TYPE_COLOR     -> map.html line 1042
-//   * assignment order / override    -> getDefaultBoligtypeColor, map.html
-//                                       lines 3863-3872; getBoligtypeColor
-//                                       (unknown -> default) lines 4248-4254.
 // We assign palette colours over the alphabetically-sorted boligtyper from
-// /api/meta (deterministic), applying the tomannsbolig fixed override and
-// the grey unknown default -- the same colour set, same rules.
+// /api/meta (deterministic), applying the tomannsbolig fixed override and the
+// grey unknown default -- the same colour set, same rules.
 
 /* global maplibregl */
-
-export const SOURCE_ID = "listings";
 
 // --- ported palette (see header) ---
 export const TYPE_COLOR_PALETTE = [
@@ -33,6 +30,11 @@ export const FIXED_BOLIGTYPE_DEFAULT_COLORS = { tomannsbolig: "#f2d34f" };
 export const DEFAULT_UNKNOWN_TYPE_COLOR = "#6f7e76";
 
 const SOLD_COLOR = "#9aa5a0";
+
+// Clustering knobs. Lower clusterMaxZoom => clusters break into individual
+// points sooner as you zoom in; smaller clusterRadius => fewer points merge.
+const CLUSTER_RADIUS = 28;
+const CLUSTER_MAX_ZOOM = 12;
 
 const OSM_STYLE = {
   version: 8,
@@ -78,40 +80,49 @@ export function createMap(container) {
   });
 }
 
-// A filled square icon for DNB points, PER boligtype colour (legacy parity:
-// map.html 2802 `getBoligtypeColor(...)` colours DNB squares too -- only the
-// SHAPE differs from Eie circles). No sprite sheet: one small canvas icon per
-// distinct palette colour, registered once, keyed by colour hex. Returns an
-// `icon-image` match expression on ['get','boligtype'] so each DNB square draws
-// in its type's colour (unknown/"" boligtype -> the grey default square).
-function dnbIconExpression(map, colorByType) {
-  const iconName = (color) => "dnb-sq-" + color.replace(/[^a-z0-9]/gi, "");
-  const ensureSquareIcon = (color) => {
-    const name = iconName(color);
-    if (map.hasImage(name)) return name;
-    const size = 18;
-    const cvs = document.createElement("canvas");
-    cvs.width = size;
-    cvs.height = size;
-    const ctx = cvs.getContext("2d");
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, size, size);
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, size - 2, size - 2);
-    const data = ctx.getImageData(0, 0, size, size);
-    map.addImage(name, { width: size, height: size, data: data.data });
-    return name;
-  };
+// --- group model ------------------------------------------------------------
+// One clustered source per group: a single "sold" group (all sold together,
+// grey) + one per boligtype (coloured) + an unknown/"" bucket.
 
-  const unknownIcon = ensureSquareIcon(DEFAULT_UNKNOWN_TYPE_COLOR);
-  const pairs = [];
-  Object.keys(colorByType).forEach((typeName) => {
-    pairs.push(typeName, ensureSquareIcon(colorByType[typeName]));
+export const SOLD_GROUP_ID = "listings-sold";
+const TYPE_GROUP_PREFIX = "listings-type-";
+const UNKNOWN_TYPE_KEY = "__unknown__";
+
+function typeKey(type) {
+  return (
+    String(type || "").toLowerCase().replace(/[^a-z0-9]/gi, "") || UNKNOWN_TYPE_KEY
+  );
+}
+function typeGroupId(type) {
+  return TYPE_GROUP_PREFIX + typeKey(type);
+}
+
+export function buildGroups(boligtyper, colorByType) {
+  const groups = [
+    { id: SOLD_GROUP_ID, isSold: true, type: null, color: SOLD_COLOR },
+  ];
+  const seen = new Set();
+  (boligtyper || []).concat([""]).forEach((t) => {
+    const id = typeGroupId(t);
+    if (seen.has(id)) return;
+    seen.add(id);
+    groups.push({
+      id,
+      isSold: false,
+      type: t,
+      color: (colorByType && colorByType[t]) || DEFAULT_UNKNOWN_TYPE_COLOR,
+    });
   });
-  return pairs.length
-    ? ["match", ["get", "boligtype"], ...pairs, unknownIcon]
-    : unknownIcon;
+  return groups;
+}
+
+// Which group a listing belongs to. Sold always -> the sold group; otherwise by
+// boligtype. `validIds` (optional) folds an unrecognised type into unknown.
+export function groupIdForItem(item, validIds) {
+  if (item.sold) return SOLD_GROUP_ID;
+  const id = typeGroupId(item.boligtype || "");
+  if (validIds && !validIds.has(id)) return typeGroupId("");
+  return id;
 }
 
 const NOT_CLUSTER = ["!", ["has", "point_count"]];
@@ -120,74 +131,88 @@ const NOT_CLUSTER = ["!", ["has", "point_count"]];
 // residual) on every listing feature; clusters have no `op` (coalesce -> 1).
 const OP = ["coalesce", ["get", "op"], 1];
 
-// Adds the clustered source + unclustered GL layers. `colorExpr` is the
-// boligtype match expression for Eie circles; `colorByType` drives the
-// per-boligtype DNB square icons.
-export function addListingLayers(map, colorExpr, colorByType, onListingClick) {
-  const dnbIcon = dnbIconExpression(map, colorByType);
+// One small white-bordered square canvas icon per colour (DNB points), keyed by
+// colour hex, registered once.
+function ensureSquareIcon(map, color) {
+  const name = "dnb-sq-" + color.replace(/[^a-z0-9]/gi, "");
+  if (map.hasImage(name)) return name;
+  const size = 18;
+  const cvs = document.createElement("canvas");
+  cvs.width = size;
+  cvs.height = size;
+  const ctx = cvs.getContext("2d");
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, size - 2, size - 2);
+  const data = ctx.getImageData(0, 0, size, size);
+  map.addImage(name, { width: size, height: size, data: data.data });
+  return name;
+}
 
-  map.addSource(SOURCE_ID, {
-    type: "geojson",
-    data: { type: "FeatureCollection", features: [] },
-    cluster: true,
-    clusterRadius: 40,
-    clusterMaxZoom: 15,
+// Adds one clustered source per group, with unclustered GL layers:
+//  * sold group -> grey circle
+//  * type group -> Eie circle + DNB square, both in the type's colour
+// So a cluster only merges same-boligtype listings; sold stays its own group.
+export function addListingGroups(map, groups, onListingClick) {
+  const clickLayers = [];
+  groups.forEach((g) => {
+    map.addSource(g.id, {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+      cluster: true,
+      clusterRadius: CLUSTER_RADIUS,
+      clusterMaxZoom: CLUSTER_MAX_ZOOM,
+    });
+
+    if (g.isSold) {
+      map.addLayer({
+        id: g.id + "-pt",
+        type: "circle",
+        source: g.id,
+        filter: NOT_CLUSTER,
+        paint: {
+          "circle-color": SOLD_COLOR,
+          "circle-radius": 6,
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#ffffff",
+          "circle-opacity": OP,
+          "circle-stroke-opacity": OP,
+        },
+      });
+      clickLayers.push(g.id + "-pt");
+    } else {
+      map.addLayer({
+        id: g.id + "-eie",
+        type: "circle",
+        source: g.id,
+        filter: ["all", NOT_CLUSTER, ["==", ["get", "source"], "eie"]],
+        paint: {
+          "circle-color": g.color,
+          "circle-radius": 7,
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#ffffff",
+          "circle-opacity": OP,
+          "circle-stroke-opacity": OP,
+        },
+      });
+      map.addLayer({
+        id: g.id + "-dnb",
+        type: "symbol",
+        source: g.id,
+        filter: ["all", NOT_CLUSTER, ["==", ["get", "source"], "dnb"]],
+        layout: {
+          "icon-image": ensureSquareIcon(map, g.color),
+          "icon-size": 1,
+          "icon-allow-overlap": true,
+        },
+        paint: { "icon-opacity": OP },
+      });
+      clickLayers.push(g.id + "-eie", g.id + "-dnb");
+    }
   });
 
-  // Sold (grey) at the bottom.
-  map.addLayer({
-    id: "unclustered-sold",
-    type: "circle",
-    source: SOURCE_ID,
-    filter: ["all", NOT_CLUSTER, ["==", ["get", "sold"], true]],
-    paint: {
-      "circle-color": SOLD_COLOR,
-      "circle-radius": 6,
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff",
-      "circle-opacity": OP,
-      "circle-stroke-opacity": OP,
-    },
-  });
-
-  // Eie (circle coloured by boligtype).
-  map.addLayer({
-    id: "unclustered-eie",
-    type: "circle",
-    source: SOURCE_ID,
-    filter: [
-      "all",
-      NOT_CLUSTER,
-      ["==", ["get", "source"], "eie"],
-      ["==", ["get", "sold"], false],
-    ],
-    paint: {
-      "circle-color": colorExpr,
-      "circle-radius": 7,
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff",
-      "circle-opacity": OP,
-      "circle-stroke-opacity": OP,
-    },
-  });
-
-  // DNB (square symbol, coloured per boligtype -- see dnbIconExpression).
-  map.addLayer({
-    id: "unclustered-dnb",
-    type: "symbol",
-    source: SOURCE_ID,
-    filter: ["all", NOT_CLUSTER, ["==", ["get", "source"], "dnb"]],
-    layout: {
-      "icon-image": dnbIcon,
-      "icon-size": 1,
-      "icon-allow-overlap": true,
-    },
-    paint: {
-      "icon-opacity": OP,
-    },
-  });
-
-  const clickLayers = ["unclustered-sold", "unclustered-eie", "unclustered-dnb"];
   clickLayers.forEach((layerId) => {
     map.on("click", layerId, (e) => {
       const f = e.features && e.features[0];
@@ -202,17 +227,19 @@ export function addListingLayers(map, colorExpr, colorByType, onListingClick) {
   });
 }
 
-// Removes and forgets every cached cluster DOM marker. MUST be called
-// before any source.setData() that can change the clustered feature set
-// (filter toggles, sold-visibility toggle, boligtype visibility, ...).
-// WHY: supercluster assigns cluster_id values from a reusable pool keyed by
-// tree position, not by cluster identity -- after setData() rebuilds the
-// tree, a given cluster_id can now refer to a different cluster (different
-// point_count and/or screen position) than before. `syncClusterMarkers`
-// treats any cache hit as "already correct" (`if (cache[id]) return;`), so
-// a stale entry left behind after setData() shows the old bubble's count
-// and position until an unrelated pan/zoom happens to evict it. Clearing
-// the cache forces every marker to be rebuilt fresh from the new tree.
+// Continuous cluster-bubble size (px), scaling with sqrt(count) so a 200-point
+// cluster reads clearly bigger than a 20-point one, clamped to a sane range.
+export function clusterSize(count) {
+  return Math.max(26, Math.min(60, Math.round(20 + 5.5 * Math.sqrt(count))));
+}
+
+// Removes and forgets every cached cluster DOM marker. MUST be called before
+// any setData() that can change a clustered feature set (filter toggles,
+// sold-visibility, boligtype visibility, ...). WHY: supercluster reuses
+// cluster_id values keyed by tree position, so after setData() a given id can
+// refer to a different cluster; syncClusterMarkers treats a cache hit as
+// "already correct", so a stale entry would show the wrong bubble until an
+// unrelated pan/zoom evicts it. Clearing forces a fresh rebuild.
 export function clearClusterCache(cache) {
   Object.keys(cache).forEach((id) => {
     cache[id].remove();
@@ -220,43 +247,46 @@ export function clearClusterCache(cache) {
   });
 }
 
-// DOM cluster markers synced to the current viewport. `cache` is a caller-held
-// object mapping cluster_id -> maplibregl.Marker; call on 'render'/'moveend'.
-export function syncClusterMarkers(map, cache) {
-  if (!map.getSource(SOURCE_ID) || !map.isSourceLoaded(SOURCE_ID)) return;
-  const features = map.querySourceFeatures(SOURCE_ID, {
-    filter: ["has", "point_count"],
-  });
-
+// DOM cluster markers across ALL group sources, each coloured by its group.
+// `cache` is a caller-held object mapping key -> maplibregl.Marker; call on
+// 'render'/'moveend'. Keys are namespaced by group id because cluster_id is only
+// unique within a single source.
+export function syncClusterMarkers(map, groups, cache) {
   const seen = {};
-  features.forEach((f) => {
-    const id = f.properties.cluster_id;
-    seen[id] = true;
-    if (cache[id]) return;
-    const count = f.properties.point_count;
-    const size = count < 25 ? 34 : count < 100 ? 42 : 52;
-    const div = document.createElement("div");
-    div.className = "cluster-marker";
-    div.style.width = size + "px";
-    div.style.height = size + "px";
-    div.textContent = f.properties.point_count_abbreviated;
-    div.addEventListener("click", () => {
-      map
-        .getSource(SOURCE_ID)
-        .getClusterExpansionZoom(id)
-        .then((zoom) => {
-          map.easeTo({ center: f.geometry.coordinates, zoom });
-        });
+  groups.forEach((g) => {
+    const src = map.getSource(g.id);
+    if (!src || !map.isSourceLoaded(g.id)) return;
+    const features = map.querySourceFeatures(g.id, {
+      filter: ["has", "point_count"],
     });
-    cache[id] = new maplibregl.Marker({ element: div }).setLngLat(
-      f.geometry.coordinates
-    ).addTo(map);
+    features.forEach((f) => {
+      const key = g.id + ":" + f.properties.cluster_id;
+      seen[key] = true;
+      if (cache[key]) return;
+      const size = clusterSize(f.properties.point_count);
+      const div = document.createElement("div");
+      div.className = "cluster-marker";
+      div.style.width = size + "px";
+      div.style.height = size + "px";
+      div.style.background = g.color;
+      div.textContent = f.properties.point_count_abbreviated;
+      const clusterId = f.properties.cluster_id;
+      const coords = f.geometry.coordinates;
+      div.addEventListener("click", () => {
+        src.getClusterExpansionZoom(clusterId).then((zoom) => {
+          map.easeTo({ center: coords, zoom });
+        });
+      });
+      cache[key] = new maplibregl.Marker({ element: div })
+        .setLngLat(coords)
+        .addTo(map);
+    });
   });
 
-  Object.keys(cache).forEach((id) => {
-    if (!seen[id]) {
-      cache[id].remove();
-      delete cache[id];
+  Object.keys(cache).forEach((key) => {
+    if (!seen[key]) {
+      cache[key].remove();
+      delete cache[key];
     }
   });
 }
