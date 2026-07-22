@@ -7,12 +7,13 @@ from skannonser.store import connection, migrations
 EXPECTED_TABLES = {
     "eiendom", "eiendom_processed", "dnbeiendom", "manual_overrides",
     "listing_comments", "stations", "station_lines", "station_travel",
-    "annotations",
+    "annotations", "sold_prices", "sold_sweep_state",
 }
 
 ALL_MIGRATIONS = [
     "001_adopt_live_schema", "002_notify_tables", "003_api_usage",
-    "004_dnb_travel", "005_annotations",
+    "004_dnb_travel", "005_annotations", "006_sold_prices",
+    "007_sold_sweep_state",
 ]
 
 

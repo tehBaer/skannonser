@@ -40,9 +40,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
-import requests
-
 from skannonser.config.domain import DomainConfig
+from skannonser.http import browser_get
 from skannonser.ingest.finn import html_cache
 from skannonser.ingest.finn import parse as finn_parse
 from skannonser.store.repositories.listings import ListingsRepo
@@ -94,7 +93,7 @@ def refresh_listings(
     domain: DomainConfig,
     project_dir: Path,
     mode: str,
-    fetch=requests.get,
+    fetch=browser_get,
     fetch_delay: Callable[[], None] | None = None,
     listing_delay: Callable[[], None] | None = None,
 ) -> dict:

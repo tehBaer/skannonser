@@ -101,7 +101,10 @@ def _install_happy_fakes(monkeypatch, order):
     return a canned OK stats dict -- the "everything succeeds" baseline
     fixture shared by several tests below."""
 
-    def fake_finn(domain, conn, project_dir, fetch=None, archive_dir=None):
+    def fake_finn(
+        domain, conn, project_dir, fetch=None, archive_dir=None,
+        page_delay=None, fetch_delay=None,
+    ):
         order.append("ingest_finn")
         return dict(_INGEST_OK)
 
@@ -121,7 +124,10 @@ def _install_happy_fakes(monkeypatch, order):
         order.append("enrich_dnb")
         return dict(_DNB_TRAVEL_OK)
 
-    def fake_refresh(conn, domain, project_dir, mode, fetch=None):
+    def fake_refresh(
+        conn, domain, project_dir, mode, fetch=None,
+        fetch_delay=None, listing_delay=None,
+    ):
         order.append(f"refresh:{mode}")
         return dict(_REFRESH_OK)
 
@@ -218,7 +224,10 @@ def test_refresh_failure_does_not_skip_thumbs_or_sheets(conn, domain, gateway, m
     order = []
     _install_happy_fakes(monkeypatch, order)
 
-    def failing_refresh(conn, domain, project_dir, mode, fetch=None):
+    def failing_refresh(
+        conn, domain, project_dir, mode, fetch=None,
+        fetch_delay=None, listing_delay=None,
+    ):
         order.append(f"refresh:{mode}(FAIL)")
         raise RuntimeError("refresh boom")
 
@@ -281,7 +290,10 @@ def test_ingest_finn_failure_does_not_skip_ingest_dnb(conn, domain, gateway, mon
     order = []
     _install_happy_fakes(monkeypatch, order)
 
-    def failing_finn(domain, conn, project_dir, fetch=None, archive_dir=None):
+    def failing_finn(
+        domain, conn, project_dir, fetch=None, archive_dir=None,
+        page_delay=None, fetch_delay=None,
+    ):
         order.append("ingest_finn(FAIL)")
         raise RuntimeError("network exploded")
 
@@ -303,7 +315,10 @@ def test_ingest_zero_url_crawl_recorded_as_failure_not_exception(conn, domain, g
     order = []
     _install_happy_fakes(monkeypatch, order)
 
-    def zero_url_finn(domain, conn, project_dir, fetch=None, archive_dir=None):
+    def zero_url_finn(
+        domain, conn, project_dir, fetch=None, archive_dir=None,
+        page_delay=None, fetch_delay=None,
+    ):
         order.append("ingest_finn")
         return {"crawled": 0, "parsed": 0, "failed": 0, "upserted": 0, "deactivated": 0}
 
@@ -743,3 +758,49 @@ def test_cli_sheets_exits_nonzero_on_publish_failure(tmp_path, monkeypatch):
     result = CliRunner().invoke(app, ["run", "sheets", "--db", str(db)])
     assert result.exit_code == 1, result.output
     assert "failed_tab" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Polite-access wiring: browser UA + jittered pacing threaded into the FINN
+# crawl/refresh (see skannonser/http.py, config [crawl]).
+# ---------------------------------------------------------------------------
+
+
+def test_run_nightly_paces_and_uses_browser_fetch(conn, domain, gateway, monkeypatch):
+    from skannonser.http import browser_get
+
+    order = []
+    _install_happy_fakes(monkeypatch, order)
+
+    captured = {}
+
+    def recording_finn(
+        domain, conn, project_dir, fetch=None, archive_dir=None,
+        page_delay=None, fetch_delay=None,
+    ):
+        captured["finn_fetch"] = fetch
+        captured["page_delay"] = page_delay
+        captured["fetch_delay"] = fetch_delay
+        return dict(_INGEST_OK)
+
+    def recording_refresh(
+        conn, domain, project_dir, mode, fetch=None,
+        fetch_delay=None, listing_delay=None,
+    ):
+        captured["refresh_fetch"] = fetch
+        captured["listing_delay"] = listing_delay
+        return dict(_REFRESH_OK)
+
+    monkeypatch.setattr(nightly_module, "run_finn_ingest", recording_finn)
+    monkeypatch.setattr(nightly_module, "refresh_listings", recording_refresh)
+
+    run_nightly(conn, domain, gateway, "K", RecordingClient())
+
+    # Default fetch on the scraping paths is the browser-UA getter, not the
+    # bare python-requests default.
+    assert captured["finn_fetch"] is browser_get
+    assert captured["refresh_fetch"] is browser_get
+    # Pacing callables are wired from domain.crawl (non-None, callable).
+    assert callable(captured["page_delay"])
+    assert callable(captured["fetch_delay"])
+    assert callable(captured["listing_delay"])

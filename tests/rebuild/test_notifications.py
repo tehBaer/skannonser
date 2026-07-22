@@ -487,3 +487,67 @@ def test_no_api_usage_rows_written(conn):
     daily_summary(conn, send=_fake_send([]), today="2026-07-10")
     row = conn.execute("SELECT COUNT(*) AS c FROM api_usage").fetchone()
     assert row["c"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Sold-price progress line in the daily digest
+# ---------------------------------------------------------------------------
+
+
+def _seed_aged_sold(conn, finnkode, days_ago, priced=None):
+    conn.execute(
+        "INSERT INTO eiendom (finnkode, tilgjengelighet, updated_at) "
+        "VALUES (?, 'Solgt', datetime('now', ?))",
+        (finnkode, f"-{days_ago} days"),
+    )
+    conn.execute(
+        "INSERT INTO eiendom_processed (finnkode, lat, lng) VALUES (?, 59.8, 10.26)",
+        (finnkode,),
+    )
+    if priced is not None:
+        conn.execute(
+            "INSERT INTO sold_prices (finnkode, sold_price, updated_at) "
+            "VALUES (?, ?, datetime('now'))",
+            (finnkode, priced),
+        )
+    conn.commit()
+
+
+def test_format_sold_progress_is_empty_when_nothing_to_report():
+    from skannonser.notifications import format_sold_progress
+
+    p = {"new_priced": 0, "suspended": False, "coverage": {"priced": 0, "total": 0, "fraction": 0.0}}
+    assert format_sold_progress(p) == ""
+
+
+def test_format_sold_progress_shows_new_and_coverage():
+    from skannonser.notifications import format_sold_progress
+
+    p = {"new_priced": 3, "suspended": False,
+         "coverage": {"priced": 11, "total": 1078, "fraction": 11 / 1078}}
+    line = format_sold_progress(p)
+    assert "+3" in line
+    assert "11/1078" in line
+
+
+def test_format_sold_progress_flags_suspension():
+    from skannonser.notifications import format_sold_progress
+
+    p = {"new_priced": 0, "suspended": True,
+         "coverage": {"priced": 8, "total": 1078, "fraction": 8 / 1078}}
+    assert "SUSPENDED" in format_sold_progress(p)
+
+
+def test_daily_summary_appends_sold_line_when_active(conn, repo):
+    repo.replace_active_snapshot({"1"})
+    _insert(conn, "1")                              # keeps it non-baseline
+    _seed_aged_sold(conn, "900", 200, priced=5_000_000)   # aged, priced today
+    _seed_aged_sold(conn, "901", 200, priced=None)        # aged, unpriced
+    sent: list = []
+
+    daily_summary(conn, send=_fake_send(sent), today="2026-07-11")
+
+    msg = sent[0][1]
+    assert "Today:" in msg                          # normal daily line still there
+    assert "Sold prices:" in msg                    # sold line appended
+    assert "+1 today" in msg and "1/2" in msg

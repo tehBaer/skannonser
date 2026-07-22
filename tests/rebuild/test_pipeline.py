@@ -583,3 +583,31 @@ def test_cli_ingest_uses_rebuild_archive_dir_by_default(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert captured["archive_dir"] == Path("data/eiendom") / "html_crawled_rebuild"
+
+
+# ---------------------------------------------------------------------------
+# Polite-access: FINN entry points default to a browser User-Agent, so no
+# caller (nightly, CLI `run ingest`/`run refresh`, ad-hoc) can fall back to
+# the self-identifying python-requests default.
+# ---------------------------------------------------------------------------
+
+
+def test_run_finn_ingest_defaults_to_browser_user_agent():
+    import inspect
+
+    from skannonser.http import browser_get
+
+    assert (
+        inspect.signature(run_finn_ingest).parameters["fetch"].default is browser_get
+    )
+
+
+def test_refresh_listings_defaults_to_browser_user_agent():
+    import inspect
+
+    from skannonser.http import browser_get
+    from skannonser.ingest.finn.refresh import refresh_listings
+
+    assert (
+        inspect.signature(refresh_listings).parameters["fetch"].default is browser_get
+    )

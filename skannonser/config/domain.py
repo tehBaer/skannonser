@@ -47,6 +47,38 @@ class Dnb(BaseModel):
     max_pages: int
 
 
+class Crawl(BaseModel):
+    """Inter-request pacing for the FINN crawl/refresh, in seconds.
+
+    Each pair is a (min, max) range a uniform jittered delay is drawn from
+    (see `skannonser.http.jittered_delay`). Defaults are deliberately slow --
+    the scanner fetches only tens of pages/ads per run, so generous, human-
+    shaped gaps cost little wall-clock while keeping the footprint gentle.
+
+    - `page_delay_*`  : between FINN result-page fetches during the crawl.
+    - `fetch_delay_*` : before each ad-page network fetch (cache misses only).
+    - `listing_delay_*`: between listings in the stale-open status refresh.
+    """
+
+    page_delay_min_s: float = 2.0
+    page_delay_max_s: float = 8.0
+    fetch_delay_min_s: float = 1.0
+    fetch_delay_max_s: float = 5.0
+    listing_delay_min_s: float = 1.0
+    listing_delay_max_s: float = 5.0
+
+    @model_validator(mode="after")
+    def _ranges_ordered(self) -> "Crawl":
+        for lo, hi, name in (
+            (self.page_delay_min_s, self.page_delay_max_s, "page_delay"),
+            (self.fetch_delay_min_s, self.fetch_delay_max_s, "fetch_delay"),
+            (self.listing_delay_min_s, self.listing_delay_max_s, "listing_delay"),
+        ):
+            if lo < 0 or hi < lo:
+                raise ValueError(f"invalid {name} range: min={lo}, max={hi}")
+        return self
+
+
 class DomainConfig(BaseModel):
     filters: Filters
     coords: CoordBounds
@@ -55,6 +87,7 @@ class DomainConfig(BaseModel):
     polygon_points: list[tuple[float, float]]  # (lng, lat), legacy order
     budget: Budget
     dnb: Dnb
+    crawl: Crawl = Crawl()
 
     @field_validator("polygon_points")
     @classmethod

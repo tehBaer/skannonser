@@ -66,6 +66,7 @@ from skannonser.enrich.geocode import run_geocode
 from skannonser.enrich.thumbs import cache_thumbnails
 from skannonser.enrich.travel import run_enrich
 from skannonser.gateway import BudgetExceeded, Gateway
+from skannonser.http import browser_get, jittered_delay
 from skannonser.ingest.finn.refresh import refresh_listings
 from skannonser.pipeline import FAILURE_RATE_THRESHOLD, run_dnb_ingest, run_finn_ingest
 from skannonser.publish.export import dnb_rows, eie_rows, sold_rows, stations_rows
@@ -224,7 +225,7 @@ def run_nightly(
     gateway: Gateway,
     api_key: str,
     client,
-    fetch=requests.get,
+    fetch=browser_get,
     post=requests.post,
     sheets_writer=None,
     thumbs_dir: Path = Path("data/thumbs/"),
@@ -252,12 +253,26 @@ def run_nightly(
     failed: list = []
     budget_exhausted: list = []
 
+    # Polite-access pacing (config [crawl], skannonser.http.jittered_delay):
+    # wide, randomized gaps between FINN result-page fetches, ad-page fetches,
+    # and stale-open refresh listings.
+    cr = domain.crawl
+    page_delay = jittered_delay(cr.page_delay_min_s, cr.page_delay_max_s)
+    fetch_delay = jittered_delay(cr.fetch_delay_min_s, cr.fetch_delay_max_s)
+    listing_delay = jittered_delay(cr.listing_delay_min_s, cr.listing_delay_max_s)
+
     _run_ingest_step(
         steps,
         failed,
         "ingest_finn",
         lambda: run_finn_ingest(
-            domain, conn, _FINN_PROJECT_DIR, fetch=fetch, archive_dir=_FINN_ARCHIVE_DIR
+            domain,
+            conn,
+            _FINN_PROJECT_DIR,
+            fetch=fetch,
+            archive_dir=_FINN_ARCHIVE_DIR,
+            page_delay=page_delay,
+            fetch_delay=fetch_delay,
         ),
     )
     _run_ingest_step(
@@ -300,7 +315,13 @@ def run_nightly(
         budget_exhausted,
         "refresh",
         lambda: refresh_listings(
-            conn, domain, _FINN_PROJECT_DIR, mode="stale-open", fetch=fetch
+            conn,
+            domain,
+            _FINN_PROJECT_DIR,
+            mode="stale-open",
+            fetch=fetch,
+            fetch_delay=fetch_delay,
+            listing_delay=listing_delay,
         ),
     )
     _run_step(
