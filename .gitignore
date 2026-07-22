@@ -5,13 +5,8 @@
 credentials.json
 token.json
 drive_token.json
-main/config/thumbnail-service-key.json
-main/config/service_account.json
-main/config/*service*-key*.json
-main/config/config.py
 .venv
 .idea
-main/temp/
 artifacts/
 
 # SQLite temporary files

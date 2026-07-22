@@ -10,12 +10,25 @@ def test_oslo_center_inside_polygon_north_sea_outside():
 
 
 def test_normalizers_match_legacy():
-    import sys
-    sys.path.insert(0, ".")
-    from main.extractors.filter_and_load_dnbeiendom_no_buffer import (
-        normalize_addr as legacy_addr, normalize_pc as legacy_pc)
-    samples = ["  Storgata 1 B, 0155 OSLO ", "Ullevålsveien 3", "", "Bjørnsons gate 2A"]
-    for s in samples:
-        assert normalize_addr(s) == legacy_addr(s)
-    for pc in ["0155", 155, "0155.0", None, ""]:
-        assert normalize_pc(pc) == legacy_pc(pc)
+    # Frozen input->output pairs harvested from the legacy normalizers
+    # (main.extractors.filter_and_load_dnbeiendom_no_buffer.normalize_addr /
+    # normalize_pc) at deletion, 2026-07-22. Legacy is gone; these literals are
+    # the golden contract the ported normalizers must keep matching.
+    addr_pairs = [
+        ("  Storgata 1 B, 0155 OSLO ", "storgata 1 b 0155 oslo"),
+        ("Ullevålsveien 3", "ullevålsveien 3"),
+        ("", ""),
+        ("Bjørnsons gate 2A", "bjørnsons gate 2a"),
+    ]
+    for raw, expected in addr_pairs:
+        assert normalize_addr(raw) == expected
+
+    pc_pairs = [
+        ("0155", "0155"),
+        (155, "155"),
+        ("0155.0", "0155"),
+        (None, ""),
+        ("", ""),
+    ]
+    for raw, expected in pc_pairs:
+        assert normalize_pc(raw) == expected

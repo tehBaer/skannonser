@@ -2,12 +2,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-import main.location_features as legacy_location_features
-from main.location_features import PublicTransitCommuteTime
-
 from skannonser.config.domain import Budget
 from skannonser.enrich.sentinels import TRAVEL_API_ERROR, TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC
-from skannonser.enrich.travel_api import TransitCommute
+from skannonser.enrich.travel_api import TransitCommute, next_monday_iso
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.store import connection, migrations
 
@@ -63,33 +60,26 @@ def _seed_ok_row(conn, api, month=CURRENT_UTC_MONTH):
 # --- Step 1: pin test — request construction equals legacy -----------------
 
 
-def test_build_request_matches_legacy_byte_for_byte(monkeypatch):
-    """Capture the real requests.post call made by the legacy
-    PublicTransitCommuteTime.calculate() and assert our ported build_request()
-    produces the identical url/headers/body, with no network involved on
-    either side."""
-    captured = {}
+def test_build_request_matches_legacy_byte_for_byte():
+    """The ported build_request must reproduce the exact url/headers/body the
+    legacy PublicTransitCommuteTime.calculate() sent to requests.post. These
+    literals were captured from that legacy call at deletion, 2026-07-22.
 
-    def fake_post(url, json=None, headers=None, timeout=None):
-        captured["url"] = url
-        captured["headers"] = headers
-        captured["json"] = json
-        return FakeResponse(200, {"routes": []})
-
-    monkeypatch.setattr(legacy_location_features.requests, "post", fake_post)
-
-    legacy = PublicTransitCommuteTime(WORK_ADDRESS, config={"api_key": "K"})
-    legacy.calculate("Storgata 1", "0155")
-
-    assert captured, "legacy .calculate() never called requests.post"
-
+    departureTime is the one dynamic field (legacy and the port both compute
+    next Monday 08:00 UTC at call time), so it is pinned against the port's own
+    next_monday_iso(8) rather than a frozen timestamp."""
     ported = TransitCommute(WORK_ADDRESS, gateway=None, api_key="K")
     url, headers, body = ported.build_request("Storgata 1", "0155")
 
-    assert url == captured["url"]
-    assert headers["X-Goog-Api-Key"] == captured["headers"]["X-Goog-Api-Key"]
-    assert headers["X-Goog-FieldMask"] == captured["headers"]["X-Goog-FieldMask"]
-    assert body == captured["json"]
+    assert url == "https://routes.googleapis.com/directions/v2:computeRoutes"
+    assert headers["X-Goog-Api-Key"] == "K"
+    assert headers["X-Goog-FieldMask"] == "routes.duration,routes.distanceMeters"
+    assert body == {
+        "origin": {"address": "Storgata 1, 0155, Norway"},
+        "destination": {"address": "Rådmann Halmrasts Vei 5, Norway"},
+        "travelMode": "TRANSIT",
+        "departureTime": next_monday_iso(8),
+    }
 
 
 def test_build_request_omits_postnummer_when_absent():

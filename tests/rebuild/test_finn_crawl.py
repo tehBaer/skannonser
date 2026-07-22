@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 from skannonser.config.domain import load_domain
@@ -27,22 +26,27 @@ def test_finnkode_robust_to_trailing_params():
         "https://www.finn.no/realestate/homes/ad.html?finnkode=123456789&utm_source=x")]
 
 
+# The exact Finn search URL the legacy get_finn_scrape_config() produced,
+# frozen from legacy at deletion, 2026-07-22. Legacy read no env vars for this
+# path (hardcoded constants only), so this string is a stable golden the ported
+# build_search_url must keep reproducing byte-for-byte.
+LEGACY_FINN_SEARCH_URL = (
+    "https://www.finn.no/realestate/homes/search.html?filters=&property_type=4"
+    "&property_type=1&property_type=2&property_type=11&lifecycle=1"
+    "&is_new_property=false&property_type=3&price_to=7500000&area_from=70"
+    "&polylocation=10.65673828125+59.884802942124%2C10.536789920973+59.797487966246"
+    "%2C10.545723856072+59.709734171804%2C10.332641601563+59.700380312509"
+    "%2C9.971542814941+59.874465805403%2C11.260986328125+60.44096253531"
+    "%2C11.585234663086+60.136034630691%2C10.947750935529+59.714239974969"
+    "%2C10.721282958984+59.712097173323%2C10.715468622953+59.849132221282"
+    "%2C10.65673828125+59.884802942124"
+)
+
+
 def test_search_url_matches_legacy():
-    """The new build_search_url must produce a byte-for-byte identical URL
-    to the legacy get_finn_scrape_config's url_base. Legacy reads no env
-    vars for this path (verified: main/config/filters.py and the relevant
-    slice of main/runners/run_eiendom_db.py use hardcoded constants, not
-    os.getenv, for the URL-building logic), so no env pinning is needed for
-    both sides to agree.
-    """
-    sys.path.insert(0, ".")
-    from main.runners.run_eiendom_db import get_finn_scrape_config
-
-    _project_name, legacy_url_base, _regex = get_finn_scrape_config()
-
-    new_url = build_search_url(load_domain())
-
-    assert new_url == legacy_url_base
+    """The new build_search_url must produce the byte-for-byte URL the legacy
+    get_finn_scrape_config() emitted (frozen literal above)."""
+    assert build_search_url(load_domain()) == LEGACY_FINN_SEARCH_URL
 
 
 def test_extract_ad_urls_superset_of_legacy_on_real_page():
