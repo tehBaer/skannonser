@@ -1,0 +1,174 @@
+# skannonser
+
+A personal real-estate scanner for the Oslo area. It crawls [Finn.no](https://www.finn.no)
+and DNB Eiendom every night, stores everything in a local SQLite database, enriches
+active listings with geocoding and public-transit commute times to three fixed
+destinations (via Google's Geocoding and Routes APIs, behind a monthly budget), and
+publishes the result two ways: a read-only Google Sheet and a tailnet-only web app
+(a MapLibre map + sortable table + free-text annotations). A daily/weekly digest goes
+out via Pushover (through the `notify` CLI).
+
+This is a from-scratch rebuild of an earlier ad-hoc script collection (`main/`, now
+deleted). The rebuild is complete and running in production. See
+[History](#history) below for how it got here.
+
+## Architecture
+
+Everything lives under `skannonser/`, laid out by pipeline stage:
+
+- **`config/`** — `domain.toml` loader (`domain.py`, filters/budget/destinations/polygon/
+  DNB region GUIDs — the tuning surface) and `settings.py` (env/`.env`-backed secrets:
+  API keys, spreadsheet id, DB path).
+- **`store/`** — the SQLite layer: `connection.py` (WAL-safe connect helper),
+  `migrations.py` (numbered, versioned SQL migrations applied explicitly, never on
+  connect), and `repositories/` (`listings.py` for `eiendom`/FINN, `dnb.py` for
+  `dnbeiendom`, `processed.py` for `eiendom_processed` travel/address data) — batched
+  upsert + inactive-lifecycle logic per source.
+- **`ingest/`** — crawling and parsing. `finn/` (`crawl.py` result-page crawler,
+  `parse.py` ad-HTML parser, `refresh.py` status re-checks, `html_cache.py` the on-disk
+  ad-HTML cache) and `dnb/` (`crawl.py`, `parse.py` JSON-LD parser, `load.py` polygon
+  filter + FINN address matching). `base.py` holds the shared normalized-listing model.
+- **`enrich/`** — post-ingest enrichment, all API calls routed through `gateway.py`
+  (see below). `geocode.py` (Google Geocoding, 3-pass Norway strategy), `travel.py`
+  (the orchestrator for BRJ/MVV/MVV-UNI commute times via `travel_api.py`, Google
+  Routes), `donor.py` (nearby-listing travel-time reuse to cut API spend), `dnb_travel.py`
+  (BRJ/MVV backfill for DNB-only rows), `thumbs.py` (nightly local thumbnail cache),
+  `validate.py` (read-only outlier scoring for stored travel values), `sentinels.py`
+  (negative-int failure codes stored in place of a real value).
+- **`gateway.py`** — the single choke point for paid Google APIs: per-minute rate
+  limiting, monthly budget enforcement (with warn-threshold Pushover pings), and a
+  call ledger in the `api_usage` table. Nothing calls Geocoding/Routes directly.
+- **`pipeline.py`** — the FINN/DNB ingest orchestration (crawl → fetch/parse → upsert
+  → mark-inactive) with guards against wiping the active set on a failed/empty crawl.
+- **`nightly.py`** — the full nightly run: ingest(finn) → ingest(dnb) → geocode →
+  enrich(all) → enrich(mvv_uni) → enrich-dnb → refresh(stale-open) → thumbs → sheets,
+  each step isolated so one failure doesn't skip the rest.
+- **`publish/`** — `rows.py`/`export.py` build the Eie/Sold/DNB/Stations sheet payloads
+  (and back the web API's listing query), `sheets_client.py` wraps the Google Sheets
+  service-account client (tab read/clear/rewrite), `annotations.py` does the one-time
+  rescue of hand-typed Kommentar/Tag sheet columns into the `annotations` table.
+- **`notifications.py`** — daily/weekly added/removed summaries, sent through the
+  `notify` CLI (Pushover).
+- **`web/`** — `app.py` (FastAPI app: `/healthz`, `/thumbs/{id}.jpg`, `/table`, static
+  file serving), `api.py` (`/api/listings`, `/api/listings/{finnkode}`, `/api/meta`,
+  `/api/missing-coords`, `/api/annotations/{finnkode}` GET/PUT), `static/` (MapLibre
+  map, table view, filters, popups — plain JS, no build step).
+- **`ids.py`** — shared path-safe identifier helpers (DNB synthetic ids, thumbnail
+  filenames) used by both `web/api.py` and `enrich/thumbs.py` so they can't drift.
+- **`geo.py`** — polygon point-in-region test used by the DNB filter.
+- **`textnorm.py`** — address/postcode string normalization shared by ingest and match
+  logic.
+- **`commands/`** — the Typer CLI wiring, one module per subcommand group
+  (`run_cmd.py`, `db_cmd.py`, `config_cmd.py`, `notify_cmd.py`, `estimate_cmd.py`,
+  `tools_cmd.py`, `web_cmd.py`); `cli.py` assembles them into the `skannonser` entry
+  point.
+
+## Ops runbook
+
+**Server:** `mbp2016@100.77.139.22` (tailnet), repo at `~/kode/skannonser`. No Docker
+for the CLI itself in dev, but the deployed services run in Docker (`docker-compose.yml`):
+
+- **`scheduler`** — builds from `docker/Dockerfile`, runs `supercronic` on
+  `docker/crontab` (currently just the nightly DB backup, `skannonser db backup --keep 30`
+  at 03:00 UTC, keeping the newest 30). Mounts `main/database` (the live DB),
+  `data/`, `config/`, `backups/`.
+  Actual pipeline runs (ingest/enrich/sheets) are NOT run from this container's
+  crontab — they're driven by the server's own crontab calling a wrapper script
+  (`~/run_skannonser_daily.sh`) at 01:00, which invokes `skannonser run nightly`;
+  `skannonser notify daily`/`weekly` run off separate 07:00 / Sunday-08:00 cron
+  entries.
+- **`web`** — same image, runs `skannonser web --host 0.0.0.0 --port 8000`, published
+  as `100.77.139.22:8377:8000` (tailnet-only — not bound to `0.0.0.0` on the host, so
+  it's unreachable from the LAN). Healthcheck hits `GET /healthz` every 60s.
+
+**`.env` (gitignored, 0600) keys** — see `.env.example`:
+
+- `GOOGLE_MAPS_API_KEY` — Geocoding + Routes.
+- `SPREADSHEET_ID` — the target Google Sheet.
+- `GOOGLE_SERVICE_ACCOUNT_FILE` — path to the service-account JSON (default
+  `main/config/thumbnail-service-key.json`).
+- `NOTIFY_BIN` — the `notify` CLI binary name/path used for Pushover sends (default
+  `notify`).
+- `SKANNONSER_DB_PATH` (optional override; commented out in `.env.example`) — defaults
+  to `main/database/properties.db`.
+
+**Logs:** cron/wrapper output on the server lands under `~/skannonser-logs/`; container
+logs via `docker compose logs scheduler` / `docker compose logs web`.
+
+**Common commands** (`skannonser --help` for the full tree):
+
+```
+skannonser config show                          # effective config, secrets masked
+skannonser db stats                              # row counts per table (quick health check)
+skannonser db backup [--keep N]                  # online SQLite backup
+skannonser db migrate                            # apply pending numbered migrations
+skannonser run ingest                            # crawl+parse+upsert FINN/DNB
+skannonser run refresh                           # re-check status of existing listings
+skannonser run geocode                           # fill missing lat/lng (Geocoding API)
+skannonser run enrich [--targets all|brj|mvv|mvv_uni]  # fill missing commute times
+skannonser run enrich-dnb                        # BRJ/MVV commute times for DNB-only rows
+skannonser run validate-travel                   # read-only outlier scan, no API calls
+skannonser run sheets                            # rewrite Eie/Sold/DNB/Stations tabs
+skannonser run nightly                           # the full nightly sequence, in order
+skannonser estimate [--targets ...]               # predict enrich API-call volume, no calls
+skannonser notify daily | weekly                 # Pushover summary via NOTIFY_BIN
+skannonser web [--host --port --db]               # serve the FastAPI app (default :8377)
+skannonser tools import-sheet-annotations         # one-time Kommentar/Tag → annotations rescue
+```
+
+**Backup/restore:** `skannonser db backup --keep N` copies the live DB via SQLite's
+online backup API (safe under WAL) into `backups/`; the `scheduler` container runs
+this nightly at 03:00 UTC keeping 30. To restore, stop anything writing to the DB and
+copy a `backups/properties-*.db` file over the live path (`main/database/properties.db`
+by default).
+
+**Budget policy:** `config/domain.toml`'s `[budget]` section caps Geocoding and Routes
+calls per month (`geocode_monthly_cap`, `routes_monthly_cap`, default 9000 each) with
+warn thresholds (`warn_pcts`, default `[50, 80]`) that trigger a Pushover notification
+via the gateway. Both APIs are also per-minute rate-limited (`*_rpm`). Every call goes
+through `gateway.py`'s ledger (`api_usage` table); exceeding the cap raises
+`BudgetExceeded`, which `run enrich`/`run enrich-dnb`/`run geocode`/`run nightly` treat
+as a clean stop (exit 3 for the direct commands; `run nightly` records it as
+`budget_exhausted`, not a step failure, and still exits 0 if nothing else broke).
+Donor/reuse logic (`enrich/donor.py`) cuts real spend further by reusing a nearby
+listing's already-fetched travel time within `reuse_within_meters` (default 300m).
+
+## Development
+
+```
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev]'
+pytest tests/rebuild -q      # 499 tests, zero warnings
+```
+
+The standing correctness checks (now that the legacy `main/`-comparison verify
+harnesses are gone) are:
+
+- **The full pytest suite** (`tests/rebuild/`, 499 tests).
+- **The fixture corpora** (`tests/rebuild/fixtures/`) — real, previously-legacy-verified
+  FINN/DNB HTML pinned as golden input/output, so parsing behavior stays correct
+  without needing the old `main.*` code at test time.
+- **The packaging structural test** (`tests/rebuild/test_packaging.py`) — proves the
+  built wheel is complete (migrations etc. actually ship).
+- **`GET /healthz`** on the deployed web app — live liveness/readiness check.
+
+**Migrations:** numbered SQL files under `skannonser/store/migrations/` (currently
+`001`–`005`), applied explicitly and atomically (one transaction per file, with
+rollback) by `skannonser db migrate` — never implicitly on connect. To add one, drop
+in the next-numbered `.sql` file and run `skannonser db migrate`.
+
+**Domain configuration:** `config/domain.toml` holds the tunable knobs — price/size
+filters, the FINN search polygon, DNB region GUIDs, budget caps, and the three travel
+destinations (BRJ, MVV, MVV-UNI) with their addresses and DB/sheet column names. This
+is the file to edit for anything domain-specific; no code change needed.
+
+## History
+
+This codebase is the result of a ground-up rebuild (2026-07-20 → 2026-07-22) of an
+earlier script collection. For the full story — design decisions, phase-by-phase
+progress, sanctioned behavior changes vs. the legacy system, and the final production
+cutover — see:
+
+- `docs/rebuild/STATUS.md` — the single pick-up point / end-state record.
+- `docs/superpowers/specs/` — the design specs (rebuild + earlier features).
+- `docs/superpowers/plans/` — the phase-by-phase implementation plans.

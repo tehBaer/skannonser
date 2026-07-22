@@ -1,71 +1,68 @@
 # Rebuild status & carried obligations
 
-**Last updated: 2026-07-20 (end of Phase 3).** This is the single pick-up point for continuing
-the rebuild in a fresh session. Read this, the spec, and the current phase plan — everything
-else is history.
+**REBUILD COMPLETE (2026-07-22).** The from-scratch rebuild (`skannonser/`) fully
+replaces the legacy script collection (`main/`, deleted in Phase 6): nightly ingest
+(FINN + DNB) → geocode/enrich (budget-gated Google Geocoding + Routes, donor-reuse
+cost control) → publish (a Google Sheet read-only view + a tailnet-only FastAPI/
+MapLibre web app) → Pushover notifications, all driven by the `skannonser` CLI.
+Migrations 001-005 are applied everywhere (laptop + server); the server's crons run
+the new CLI exclusively (`run nightly` at 01:00, `notify daily`/`weekly` at 07:00/Sun
+08:00); the web app is live and user-accepted at `http://100.77.139.22:8377`
+(tailnet-only); the Sheet continues exporting nightly as the read-only view. 499
+tests pass, zero warnings. This file is now primarily a historical record plus the
+"Follow-ups"/"Standing checks" pick-up point — see `README.md` at the repo root for
+how the system works day to day.
 
 - Spec: `docs/superpowers/specs/2026-07-20-skannonser-rebuild-design.md`
 - Feature inventory: `docs/rebuild/2026-07-20-feature-inventory.md`
-- Phase plans: `docs/superpowers/plans/2026-07-20-rebuild-phase-1-skeleton.md`, `…-phase-2-ingest.md`
+- Phase plans: `docs/superpowers/plans/` — `2026-07-20-rebuild-phase-1-skeleton.md`
+  through `2026-07-22-rebuild-phase-6-teardown.md` (six phases, all complete)
 - Session ledger (gitignored, laptop only, may be stale): `.superpowers/sdd/progress.md`
 
 ## Where we are
 
-- **WEB APP LIVE (trial) 2026-07-22** at `http://100.77.139.22:8377` — tailnet-only (Phase 5
-  Task 9): the `web` service (docker-compose, same image as `scheduler`, `user: "1000:1000"`,
-  `restart: unless-stopped`) is up and healthy; `/healthz` → `{"status":"ok","db":true}` over the
-  tailnet; confirmed refused on the server's LAN interface (192.168.1.x) — port is bound to
-  `100.77.139.22:8377` only, not `0.0.0.0`. Thumbnail catch-up run supervised against the live DB
-  (read-only DB access, writes only to `data/thumbs/`): 964/964 candidates cached, 0 failures.
-  `/` serves the map HTML, `/api/listings` returns 787 listings, thumb spot-check → 200.
-  **PHASE 6 GATE PROVEN EARLY 2026-07-22:** supervised nightly on current master exited nightly=0 (all steps green), and first-appearance activation was proven end-to-end with a real finn.no crawl against a DB copy — a removed listing (Inges gate 6A, 470374293) was re-discovered as a genuine first insert, came out active=1 immediately, and appeared in the Eie sheet payload. Same-day visibility CONFIRMED; backlog item 1 fully closed. **USER ACCEPTED the web app 2026-07-22** (map walkthrough passed; 07:00 daily notification delivery also confirmed on the phone). Trial running. **Apps Script map RETIRED 2026-07-22** (Phase 6 Task 4) — see "Map consumer" below.
-- **CUTOVER LIVE 2026-07-21** (Phase 4 Task 10): the server's nightly + notify crons now run the
-  rebuilt CLI. `~/run_skannonser_daily.sh` was rewritten to call `skannonser run nightly` (one
-  section replacing the legacy `make full`/`refresh-stale-open`/`sold-sync` trio); the 07:00/Sun-08:00
-  notify crons now call `skannonser notify daily`/`weekly`. **Legacy is preserved as an unscheduled
-  fallback** at `~/run_skannonser_daily.legacy.sh` (+ original crontab at `~/crontab.precutover.bak`,
-  pre-cutover DB at `~/skannonser-precutover-20260721-141109.db`). Live DB migrated 004+005 (the one
-  sanctioned live-DB write; backed up first). Server suite: **419 passed**.
-  - **Supervised side-by-side (clean):** triggered a fresh legacy run (`full=0`), copied+migrated the
-    live DB, ran the rebuilt nightly against the copy with `--dry-run-sheets`.
-    **DIFF A (DB effects): zero unexplained** — active set identical (976); the only diffs were
-    sanctioned classes (nightly mvv_uni step 258; 6 geocode lat/lng; 37 donor links; 4 brj/mvv enrich;
-    +5 DNB crawl) plus 70 `tilgjengelighet` 'Inaktiv'→None on active listings, proven to be
-    HTML-cache-freshness drift (both parsers return identical output on identical HTML; the side-by-side
-    run's empty cache fetched fresher finn pages). **DIFF B (payloads vs real sheet): zero unexplained**
-    — the zero-network golden master `verify sheets` over the identical copy.db is **Eie 0 / Sold 0 /
-    Stations 0**, proving export fidelity; the real-sheet delta was entirely crawl-freshness drift +
-    sanctioned mvv_uni/postnummer classes; Stations matched exactly (0 diffs).
-  - **First rebuilt production publish verified:** `skannonser run sheets` against the live DB →
-    Eie 793 / Sold 3395 / DNB 3 / Stations 213 rows (exit 0); Eie read-back sane (real addresses,
-    prices, travel, GOOGLE_MAPS_URL). **DNB tab first real content** (3 rows = active DNB-unique;
-    legacy's DNB sync was unreachable dead code / a stale 3-row tab).
-  - **Annotations rescue: 0** on both laptop and the live server DB — the Eie tab has no Kommentar/Tag
-    columns, so there is nothing to preserve across the new clear-and-rewrite (anticipated outcome).
-  - **Map consumer:** Apps Script map RETIRED 2026-07-22; the web app (tailnet :8377) is the only
-    map. Sheet remains as the read-only spreadsheet view (nightly export continues). All 20
-    web-app deployments on the Apps Script project were `clasp undeploy`'d (Phase 6 Task 4); the
-    user's live `/exec` URL now 404s. Only the `@HEAD` (read-only, unpublished) entry remains.
-- **Phase 1 (skeleton) and Phase 2 (ingest port) are merged to master and deployed on the server**
-  (`mbp2016@100.77.139.22`, repo `~/kode/skannonser`, tailnet). **Phase 3 (enrichment port +
-  Google API gateway) is complete on branch `rebuild-phase-3`; merge to master is still pending.**
-  293 rebuild tests green (laptop; server-side count is post-merge).
-- **Legacy (`main/`, Makefile, cron wrapper) is still the production path.** Nothing cuts over
-  until Phase 4. Legacy is frozen except for the sanctioned ops patch listed below.
-- Proven equivalence: `skannonser verify parse` ran the full 7 731-ad HTML cache with **zero
-  unexplained diffs** (harness diff-detection proven by negative control); a supervised
-  parallel run on the server (real finn.no crawl vs legacy's own run) classified all 1 361
-  diffs with **zero unexplained**. `skannonser verify enrich` (estimate/donor-prepass/sheet-value
-  golden master) reports **zero diffs** against the live DB.
-- The new CLI (both machines): `skannonser config show | db backup/migrate/stats |
-  run ingest/refresh/geocode/enrich/validate-travel | estimate | verify parse/enrich`.
-- Migrations: 001 (adopt live schema), 002 (notify tables), 003 (api_usage). 001-002 applied
-  everywhere; **003 applied on the laptop only — SERVER APPLY is a named post-merge step**, same
-  pattern as Phase 2's merge-then-migrate. Migration runner is atomic (per-file transaction +
-  rollback). Nightly Docker backup on the server keeps 30.
-- **Golden-master caveat:** enrich parity is proven for a common (finnkode-ordered) iteration
-  order; donor pre-pass outcomes are order-dependent, so this is parity-for-a-fixed-order, not
-  order-insensitive equivalence.
+*(Collapsed to the end-state on 2026-07-22, Phase 6 Task 7. The phase-by-phase
+narrative this section used to carry — Phase 1/2 merge, Phase 3 pending-merge,
+Phase 4 cutover side-by-side diffs, Phase 5 web-app trial — is preserved in the
+per-phase commit history, `.superpowers/sdd/task-*-report*.md`, and the findings
+log below; nothing there was deleted, it's just no longer the "current" state.)*
+
+- **Legacy is gone.** `main/` (scripts, Makefile, cron wrapper) was deleted in
+  Phase 6 Task 5; `skannonser/` is the only codebase. The old legacy-comparison
+  `skannonser verify parse/enrich/sheets/metrics` harnesses are also deleted (their
+  job — proving the port byte-for-byte against `main.*` — is complete); see
+  "Standing checks" below for what replaces them.
+- **CLI** (`skannonser --help`, both machines): `config show` · `db backup/migrate/
+  stats` · `run ingest/refresh/geocode/enrich/enrich-dnb/validate-travel/sheets/
+  nightly` · `estimate` · `notify daily/weekly` · `web` · `tools
+  import-sheet-annotations`.
+- **Migrations 001-005 applied everywhere** (laptop + server): 001 (adopt live
+  schema), 002 (notify tables), 003 (api_usage), 004 (dnb_travel), 005
+  (annotations). Migration runner is atomic (per-file transaction + rollback).
+- **Web app LIVE and USER-ACCEPTED** at `http://100.77.139.22:8377` — tailnet-only
+  (the `web` docker-compose service; port bound to `100.77.139.22:8377`, confirmed
+  refused on the server's LAN interface). `/healthz` → `{"status":"ok","db":true}`;
+  `/` serves the MapLibre map, `/table` a sortable table, `/api/listings` the
+  merged Eie/Sold/DNB feed; thumbnails serve from a local disk cache. It is the
+  sole map consumer now — the Apps Script map was retired 2026-07-22 (all 20
+  deployments `clasp undeploy`'d; the old `/exec` URL 404s).
+- **Sheet still exports nightly** (`run sheets`, the last nightly step) as the
+  read-only spreadsheet view — Eie/Sold/DNB/Stations tabs, full clear-and-rewrite.
+- **Cutover is live**: the server's crontab runs the new CLI exclusively —
+  `~/run_skannonser_daily.sh` calls `skannonser run nightly` at 01:00; separate
+  07:00/Sun-08:00 crons call `skannonser notify daily`/`weekly`. No legacy fallback
+  remains (legacy artifacts removed in Phase 6 Task 6).
+- **Same-day listing activation** (former backlog item 1) is landed and proven in
+  production end-to-end: a newly discovered listing is `active=1` from its first
+  crawl, visible in the sheet/web app/notification the same day — no more
+  one-cycle delay.
+- **Test suite: 499 passed, zero warnings** (`pytest tests/rebuild -q`).
+- **Golden-master caveat (retained for context):** the Phase 3/4 parity proofs
+  covered a common (finnkode-ordered) iteration order; donor pre-pass outcomes
+  are order-dependent, so equivalence was parity-for-a-fixed-order, not
+  order-insensitive equivalence. This no longer matters operationally (there is
+  nothing left to compare against), but it's worth knowing if the donor cache is
+  ever revisited.
 
 ## Standing checks (2026-07-22, Phase 6 Task 2)
 
@@ -79,21 +76,23 @@ are:
   legacy-parser expected output, a real DNB listing page, a real FINN result page) — these pin
   parsing/extraction behavior against real, previously-legacy-verified HTML without needing
   `main.*` at test time.
-- **The full pytest suite** (`.venv/bin/python -m pytest tests/rebuild -q`) — 496 tests, zero
-  warnings (down from 516; the 20 removed were the four deleted `test_verify_*.py` files: 1 in
-  `test_verify_parse.py`, 4 in `test_verify_enrich.py`, 9 in `test_verify_sheets.py`, 6 in
-  `test_verify_metrics.py` — all exclusively testing the now-deleted harness modules themselves,
-  not product behavior).
+- **The full pytest suite** (`.venv/bin/python -m pytest tests/rebuild -q`) — **499 tests, zero
+  warnings** (as of Phase 6 Task 6/7, post-teardown; was 496 right after Task 2 deleted the four
+  `test_verify_*.py` files — 20 tests exclusively testing the now-gone harness modules themselves,
+  not product behavior — then 499 once Phase 6 Task 5 added `test_no_legacy.py`'s three structural
+  proofs).
 - **The packaging structural test** (`tests/rebuild/test_packaging.py`) — proves the wheel builds
   with static completeness (migrations etc. included).
+- **The no-legacy structural proofs** (`tests/rebuild/test_no_legacy.py`, added Phase 6 Task 5) —
+  lock in that `main/`/`scripts/`/`apps_script/`/`Makefile`/`requirements.txt` stay untracked by
+  git, that no `.py` file under `skannonser/` or `tests/rebuild/` imports the legacy `main`
+  package, and that `pyproject.toml` carries no legacy references — the legacy system cannot
+  silently creep back.
 - **`/healthz`** — the live liveness/readiness check for the deployed web app.
 
-A handful of `tests/rebuild/*.py` files still import `main.*` directly for inline pin/comparison
-purposes unrelated to the deleted verify/ harness (`test_finn_crawl.py`, `test_geo.py`,
-`test_travel_api.py`, `test_dnb.py`, plus the standalone fixture-regeneration script
-`tests/rebuild/fixtures/finn/generate_expected.py`) — these are explicitly Phase 6 Task 5's
-responsibility (its structural proof requires zero `import main`/`from main` under `skannonser/`
-or `tests/rebuild/` once `main/` itself is deleted); Task 2 leaves them untouched by design.
+(The Phase 6 Task 2-era caveat about a handful of test files still importing `main.*` for inline
+pin/comparison purposes no longer applies — `main/` is deleted and `test_no_legacy.py` proves
+zero such imports remain.)
 
 ## Sanctioned behavior changes vs legacy (the complete list — nothing else may diverge)
 
@@ -153,38 +152,48 @@ these obligations discovered in Phase 2 — **forgetting any of these silently f
   it. The targeted re-request tool (`rerequest_suspicious_travel.py`) likewise stays
   legacy-manual until Phase 4.
 
-## Backlog: approved fixes for after cutover
+## Follow-ups
+
+*(Formerly "Backlog: approved fixes for after cutover" — renamed 2026-07-22, Phase 6
+Task 7, since cutover is done. Item 1 is closed/landed history, kept for the record;
+the rest are the open/deferred items still worth knowing about.)*
 
 **1. KILL the activate-on-second-appearance quirk — USER DECISION 2026-07-20 (re-confirmed 2026-07-21): fix it.**
-**— LANDED (2026-07-21, pending first-nightly observation).**
+**— LANDED (2026-07-21) and CONFIRMED IN PRODUCTION (2026-07-22, Phase 6 gate).**
 `ListingsRepo.upsert`'s INSERT now writes `active=1` (Task 11): a newly discovered listing is
-active — and therefore visible to sheet export and the daily "added" notification — from the
-FIRST crawl that sees it, no more one-day delay. Pinning tests updated (`test_insert_active_on_
-first_appearance` in `test_listings_repo.py`, plus the `test_pipeline.py` e2e and every other
-seeding site across `tests/rebuild` that relied on the old two-upsert-to-activate behavior — see
-the Task 11 commit/report for the full list, including the handful of tests whose POINT was an
-inactive row and now force it via a direct SQL `UPDATE eiendom SET active = 0` after upsert). The
-daily/weekly notify "added" count will shift by design (no longer undercounts same-day new
-listings by one cycle) — **watch the first post-Task-11 nightly** to confirm a genuinely new
-listing appears in the sheet + notification the same day it's first crawled, and record the
-observation here once seen.
+active — and therefore visible to sheet export, the web app, and the daily "added" notification —
+from the FIRST crawl that sees it, no more one-day delay. Pinning tests updated (`test_insert_
+active_on_first_appearance` in `test_listings_repo.py`, plus the `test_pipeline.py` e2e and every
+other seeding site across `tests/rebuild` that relied on the old two-upsert-to-activate behavior —
+see the Task 11 commit/report for the full list, including the handful of tests whose POINT was an
+inactive row and now force it via a direct SQL `UPDATE eiendom SET active = 0` after upsert).
+Confirmed end-to-end: a real finn.no crawl re-discovered a previously-removed listing (Inges gate
+6A, 470374293) as a genuine first insert; it came out `active=1` immediately and appeared in the
+Eie sheet payload the same day. Closed — nothing further to watch here.
 
-Other decided-later items (surface each for a go/no-go when its phase arrives):
-- Sheet Postnummer display: legacy (and phase-4 bug-compatible export) lets USER_ENTERED coerce "0581"→581 in the sheet (verified live 2026-07-21). One-line fix (apostrophe-prefix at row construction) once the Apps Script map is retired or verified tolerant — or moot at Phase 5 (web UI reads the DB's correct values).
+Other decided-later items:
+- **Sheet Postnummer display — RESOLVED-BY-WEB-APP.** Legacy (and the phase-4 bug-compatible
+  export) let Sheets' USER_ENTERED input coerce `"0581"` → `581` in the Sheet (verified live
+  2026-07-21). The web app reads the DB's correct, zero-padded values directly (`skannonser/web/
+  api.py`), so this no longer blocks anything — it was only ever a Sheet/Apps-Script-map display
+  quirk, and the Apps Script map is retired. The Sheet stays bug-compatible by design (matches its
+  historical display; nothing consumes it that cares). A one-line fix remains available in
+  `skannonser/publish/export.py`'s `norm_postnummer` (apostrophe-prefix the value at row
+  construction) if the Sheet's own postnummer display is ever needed to match the DB.
 - **Targeted travel-value re-request tool** (a separate legacy script from
   `main/tools/validate_travel_values.py`, whose scoring core Task 10 ported to
-  `skannonser/enrich/validate.py`) stays legacy-manual until Phase 4 — port scoped to the
-  read-only validator only; the tool that re-requests flagged rows' travel times was
-  intentionally left out of Task 10's scope.
-- Deferred minors: `deactivate_missing` empty-list guard in repos; AliasChoices for
-  `SKANNONSER_DB_PATH`; anchor `DEFAULT_DOMAIN_PATH`; `require_db()` helper on a 4th db command;
-  supercronic checksum in Dockerfile; backup `PRAGMA journal_mode=DELETE`; USER/HEALTHCHECK in
-  Docker (with Phase 5 web service); crawl archives `response.text` vs legacy's `content`
-  round-trip; progress logging in long crawls.
+  `skannonser/enrich/validate.py`) was never ported — `skannonser run validate-travel` is
+  read-only (flags suspicious rows; doesn't re-request them). Still open if that workflow is
+  ever needed again; low priority (manual travel-time cleanup is rare).
+- Deferred minors (carried verbatim, still open, none blocking): `deactivate_missing` empty-list
+  guard in repos; AliasChoices for `SKANNONSER_DB_PATH`; anchor `DEFAULT_DOMAIN_PATH`;
+  `require_db()` helper on a 4th db command; supercronic checksum in Dockerfile; backup `PRAGMA
+  journal_mode=DELETE`; USER/HEALTHCHECK in Docker (with Phase 5 web service); crawl archives
+  `response.text` vs legacy's `content` round-trip; progress logging in long crawls.
 
-**Standing rule: any NEW issue found in later phases that can't be fixed immediately gets added
-to this backlog section in the same commit that discovers it — never only in chat or the
-gitignored ledger.**
+**Standing rule: any NEW issue found that can't be fixed immediately gets added to this
+Follow-ups section in the same commit that discovers it — never only in chat or the gitignored
+ledger.**
 
 ## Operational state (server)
 
@@ -278,7 +287,9 @@ prompt EOF — remedied 2026-07-20, see Operational state).
 
 ## Next step
 
-Write the Phase 3 plan (enrichment + gateway) per spec §5.4/§5.5, folding in the five Phase 3
-deliverables above. Process: superpowers brainstorming→writing-plans→subagent-driven execution
-with per-task spec+quality reviews and a final whole-branch review — the loop caught eight real
-defects across Phases 1-2; keep it.
+None — the rebuild is complete (all six phases landed; see the header at the top of this
+file). There is no standing "next phase." Future work starts from `README.md` and the
+"Follow-ups" section above; if a new multi-task effort is ever needed, the process that
+worked well across all six phases (superpowers brainstorming→writing-plans→subagent-driven
+execution with per-task spec+quality reviews and a final whole-branch review — it caught
+24 real defects, see the findings log above) is worth repeating.
