@@ -94,10 +94,15 @@ function typeKey(type) {
     String(type || "").toLowerCase().replace(/[^a-z0-9]/gi, "") || UNKNOWN_TYPE_KEY
   );
 }
-function groupId(type, sold) {
-  return TYPE_GROUP_PREFIX + typeKey(type) + (sold ? "-sold" : "-active");
+// variant: "active" | "sold" | "both"
+function groupId(type, variant) {
+  return TYPE_GROUP_PREFIX + typeKey(type) + "-" + variant;
 }
 
+// Three source variants per boligtype so a toggle can switch between clustering
+// active/sold SEPARATELY (active + sold variants) and TOGETHER (both variant),
+// without adding/removing sources at runtime -- the unused variant just stays
+// empty. hasActive/hasSold say which listings a variant renders.
 export function buildGroups(boligtyper, colorByType) {
   const groups = [];
   const seen = new Set();
@@ -106,19 +111,21 @@ export function buildGroups(boligtyper, colorByType) {
     if (seen.has(k)) return;
     seen.add(k);
     const color = (colorByType && colorByType[t]) || DEFAULT_UNKNOWN_TYPE_COLOR;
-    // active then sold for this type
-    groups.push({ id: groupId(t, false), isSold: false, type: t, color });
-    groups.push({ id: groupId(t, true), isSold: true, type: t, color });
+    groups.push({ id: groupId(t, "active"), type: t, color, hasActive: true, hasSold: false });
+    groups.push({ id: groupId(t, "sold"), type: t, color, hasActive: false, hasSold: true });
+    groups.push({ id: groupId(t, "both"), type: t, color, hasActive: true, hasSold: true });
   });
   return groups;
 }
 
-// Which group a listing belongs to: by boligtype AND active/sold. `validIds`
-// (optional) folds an unrecognised type into the unknown bucket, keeping the
-// active/sold split.
-export function groupIdForItem(item, validIds) {
-  const id = groupId(item.boligtype || "", !!item.sold);
-  if (validIds && !validIds.has(id)) return groupId("", !!item.sold);
+// Which source a listing belongs to: by boligtype, and by the current
+// clustering mode. `combineSold` -> the "both" variant (active+sold together);
+// otherwise the "active"/"sold" split. `validIds` folds an unrecognised type
+// into the unknown bucket, preserving the variant.
+export function groupIdForItem(item, validIds, combineSold) {
+  const variant = combineSold ? "both" : item.sold ? "sold" : "active";
+  const id = groupId(item.boligtype || "", variant);
+  if (validIds && !validIds.has(id)) return groupId("", variant);
   return id;
 }
 
@@ -155,10 +162,13 @@ function ensureSquareIcon(map, color, strokeColor) {
 const ACTIVE_BORDER = "#111111";
 const SOLD_BORDER = "#ffffff";
 
+const IS_SOLD = ["==", ["get", "sold"], true];
+const NOT_SOLD = ["==", ["get", "sold"], false];
+
 // Adds one clustered source per group, with unclustered GL layers. Both active
 // and sold are coloured by their boligtype (g.color); active gets a dark border,
-// sold a white border. A cluster only merges same-boligtype, same-status
-// listings.
+// sold a white border. Layers are gated by g.hasActive/g.hasSold so a "both"
+// source renders active AND sold, while active/sold variants render just one.
 export function addListingGroups(map, groups, onListingClick) {
   const clickLayers = [];
   groups.forEach((g) => {
@@ -175,12 +185,41 @@ export function addListingGroups(map, groups, onListingClick) {
       },
     });
 
-    if (g.isSold) {
+    if (g.hasActive) {
       map.addLayer({
-        id: g.id + "-pt",
+        id: g.id + "-eie",
         type: "circle",
         source: g.id,
-        filter: NOT_CLUSTER,
+        filter: ["all", NOT_CLUSTER, NOT_SOLD, ["==", ["get", "source"], "eie"]],
+        paint: {
+          "circle-color": g.color,
+          "circle-radius": 7,
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": ACTIVE_BORDER, // active = dark border
+          "circle-opacity": OP,
+          "circle-stroke-opacity": OP,
+        },
+      });
+      map.addLayer({
+        id: g.id + "-dnb",
+        type: "symbol",
+        source: g.id,
+        filter: ["all", NOT_CLUSTER, NOT_SOLD, ["==", ["get", "source"], "dnb"]],
+        layout: {
+          "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
+          "icon-size": 1,
+          "icon-allow-overlap": true,
+        },
+        paint: { "icon-opacity": OP },
+      });
+      clickLayers.push(g.id + "-eie", g.id + "-dnb");
+    }
+    if (g.hasSold) {
+      map.addLayer({
+        id: g.id + "-sold",
+        type: "circle",
+        source: g.id,
+        filter: ["all", NOT_CLUSTER, IS_SOLD],
         paint: {
           "circle-color": g.color, // sold coloured by boligtype
           "circle-radius": 6,
@@ -190,35 +229,7 @@ export function addListingGroups(map, groups, onListingClick) {
           "circle-stroke-opacity": OP,
         },
       });
-      clickLayers.push(g.id + "-pt");
-    } else {
-      map.addLayer({
-        id: g.id + "-eie",
-        type: "circle",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, ["==", ["get", "source"], "eie"]],
-        paint: {
-          "circle-color": g.color,
-          "circle-radius": 7,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": ACTIVE_BORDER, // active = black border
-          "circle-opacity": OP,
-          "circle-stroke-opacity": OP,
-        },
-      });
-      map.addLayer({
-        id: g.id + "-dnb",
-        type: "symbol",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, ["==", ["get", "source"], "dnb"]],
-        layout: {
-          "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
-          "icon-size": 1,
-          "icon-allow-overlap": true,
-        },
-        paint: { "icon-opacity": OP },
-      });
-      clickLayers.push(g.id + "-eie", g.id + "-dnb");
+      clickLayers.push(g.id + "-sold");
     }
   });
 
@@ -321,8 +332,8 @@ export function syncClusterMarkers(map, groups, cache) {
       div.style.width = size + "px";
       div.style.height = size + "px";
       div.style.background = g.color;
-      // Active bubbles get a dark border, sold a white one (matches the points).
-      div.style.borderColor = g.isSold ? SOLD_BORDER : ACTIVE_BORDER;
+      // Sold-only bubbles get a white border, active (and mixed "both") dark.
+      div.style.borderColor = g.hasSold && !g.hasActive ? SOLD_BORDER : ACTIVE_BORDER;
       div.textContent = f.properties.point_count_abbreviated;
       wrap.appendChild(div);
       const clusterId = f.properties.cluster_id;

@@ -52,6 +52,7 @@ function defaultUi(meta) {
     filters: defaultFilterState(meta),
     dimIntensity: 75, // % dimming for non-matching listings
     soldDim: 0, // % extra dimming applied to sold listings only (independent slider)
+    combineSold: false, // cluster sold + active together (vs separately)
     boligtypeHidden: {},
     stations: {
       show: false,
@@ -183,7 +184,7 @@ function featureCollectionsByGroup() {
     if (item.lat == null || item.lng == null) return;
     if (!state.ui[bucketOf(item)]) return; // layer toggle (eie/dnb/sold)
     if (boligtypeHidden(item, state.ui)) return; // per-type visibility (hidden)
-    const gid = groupIdForItem(item, state.validGroupIds);
+    const gid = groupIdForItem(item, state.validGroupIds, state.ui.combineSold);
     if (!byGroup[gid]) return; // safety: no source for this group
     const op = item.sold ? soldOpacity : isDimmed(item, ctx) ? residual : 1;
     byGroup[gid].push(itemToFeature(item, op));
@@ -282,6 +283,20 @@ function wireLayerToggles() {
       applyAll();
     });
   });
+
+  const combine = document.getElementById("toggle-combine-sold");
+  if (combine) {
+    combine.checked = !!state.ui.combineSold;
+    combine.addEventListener("change", async () => {
+      state.ui.combineSold = combine.checked;
+      saveUi();
+      // Combining needs the sold set loaded to be meaningful.
+      if (combine.checked && state.ui.sold && !state.soldLoaded) {
+        await ensureSoldLoaded();
+      }
+      applyAll();
+    });
+  }
 }
 
 function wireStationControls() {
