@@ -185,6 +185,34 @@ export function addListingGroups(map, groups, onListingClick) {
       },
     });
 
+    // GL cluster bubble: colour + border + OPACITY driven by the aggregated
+    // op_sum (avg member opacity). GL paint expressions read clusterProperties
+    // reliably and GL opacity actually renders -- unlike DOM-marker opacity,
+    // which MapLibre overwrites. The DOM marker on top carries only the count.
+    const clusterBorder = g.hasSold && !g.hasActive ? SOLD_BORDER : ACTIVE_BORDER;
+    const clusterOpacity = [
+      "max",
+      0.15, // floor so a fully-dimmed cluster stays faintly visible
+      ["/", ["coalesce", ["get", "op_sum"], ["get", "point_count"]], ["get", "point_count"]],
+    ];
+    map.addLayer({
+      id: g.id + "-cluster",
+      type: "circle",
+      source: g.id,
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": g.color,
+        "circle-radius": [
+          "interpolate", ["linear"], ["get", "point_count"],
+          2, 14, 25, 19, 100, 25, 500, 30,
+        ],
+        "circle-stroke-width": 2,
+        "circle-stroke-color": clusterBorder,
+        "circle-opacity": clusterOpacity,
+        "circle-stroke-opacity": clusterOpacity,
+      },
+    });
+
     if (g.hasActive) {
       map.addLayer({
         id: g.id + "-eie",
@@ -253,43 +281,6 @@ export function clusterSize(count) {
   return Math.max(26, Math.min(60, Math.round(20 + 5.5 * Math.sqrt(count))));
 }
 
-export function clampOpacity(v) {
-  return String(Math.max(0.15, Math.min(1, v)));
-}
-
-// Read a feature's `op` (per-feature opacity), defaulting to 1. Must treat 0 as
-// a real value (a fully toned-down listing), so no truthiness shortcuts.
-export function opOf(feature) {
-  const raw = feature && feature.properties ? feature.properties.op : undefined;
-  const n = typeof raw === "number" ? raw : Number(raw);
-  return Number.isFinite(n) ? n : 1;
-}
-
-// Fade a cluster bubble by the average opacity of its members, so dimming
-// (nedtoning) carries through to clusters and not just individual points.
-//
-// Fast path: the `op_sum` clusterProperty. Fallback: average the actual cluster
-// leaves -- aggregated cluster properties are not reliably surfaced through
-// `querySourceFeatures`, so we never depend on them alone.
-function applyClusterOpacity(div, src, clusterId, count, opSum) {
-  if (typeof opSum === "number" && count > 0) {
-    div.style.opacity = clampOpacity(opSum / count);
-    return;
-  }
-  div.style.opacity = "1";
-  if (!src || typeof src.getClusterLeaves !== "function" || !count) return;
-  try {
-    const p = src.getClusterLeaves(clusterId, Math.min(count, 200), 0);
-    if (!p || typeof p.then !== "function") return;
-    p.then((leaves) => {
-      if (!leaves || !leaves.length) return;
-      const sum = leaves.reduce((acc, lf) => acc + opOf(lf), 0);
-      div.style.opacity = clampOpacity(sum / leaves.length);
-    }).catch(() => {});
-  } catch (_) {
-    /* leaves unavailable -> leave the bubble solid */
-  }
-}
 
 // Removes and forgets every cached cluster DOM marker. MUST be called before
 // any setData() that can change a clustered feature set (filter toggles,
@@ -323,29 +314,22 @@ export function syncClusterMarkers(map, groups, cache) {
       if (cache[key]) return;
       const count = f.properties.point_count;
       const size = clusterSize(count);
-      // Wrapper is the maplibregl.Marker element -- MapLibre manages ITS opacity
-      // per render frame (v4 behaviour), so the visible bubble is an INNER div
-      // whose opacity/style we own and MapLibre never touches.
-      const wrap = document.createElement("div");
+      // The visible bubble is the GL "-cluster" circle layer (colour + opacity).
+      // This DOM marker carries ONLY the count text (transparent background), so
+      // it needs no opacity handling -- the GL circle beneath it does the fading.
       const div = document.createElement("div");
-      div.className = "cluster-marker";
+      div.className = "cluster-marker cluster-count";
       div.style.width = size + "px";
       div.style.height = size + "px";
-      div.style.background = g.color;
-      // Sold-only bubbles get a white border, active (and mixed "both") dark.
-      div.style.borderColor = g.hasSold && !g.hasActive ? SOLD_BORDER : ACTIVE_BORDER;
       div.textContent = f.properties.point_count_abbreviated;
-      wrap.appendChild(div);
       const clusterId = f.properties.cluster_id;
       const coords = f.geometry.coordinates;
-      // An all-dimmed cluster reads as toned-down, a fully-matching one solid.
-      applyClusterOpacity(div, src, clusterId, count, f.properties.op_sum);
-      wrap.addEventListener("click", () => {
+      div.addEventListener("click", () => {
         src.getClusterExpansionZoom(clusterId).then((zoom) => {
           map.easeTo({ center: coords, zoom });
         });
       });
-      cache[key] = new maplibregl.Marker({ element: wrap })
+      cache[key] = new maplibregl.Marker({ element: div })
         .setLngLat(coords)
         .addTo(map);
     });
