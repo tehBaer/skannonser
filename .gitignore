@@ -17,6 +17,11 @@ artifacts/
 # SQLite temporary files
 *.db-shm
 *.db-wal
+
+# Live DB (Phase 6 Task 3): server is sole writer, backups via scheduler
+main/database/properties.db
+main/database/*.db-wal
+main/database/*.db-shm
 .env
 backups/
 *.egg-info/
