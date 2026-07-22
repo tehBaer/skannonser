@@ -164,6 +164,11 @@ export function addListingGroups(map, groups, onListingClick) {
       cluster: true,
       clusterRadius: CLUSTER_RADIUS,
       clusterMaxZoom: CLUSTER_MAX_ZOOM,
+      // Aggregate each member's per-feature opacity so a cluster bubble can be
+      // faded in proportion to how many of its listings are dimmed (nedtoning).
+      clusterProperties: {
+        op_sum: ["+", ["coalesce", ["get", "op"], 1]],
+      },
     });
 
     if (g.isSold) {
@@ -263,12 +268,18 @@ export function syncClusterMarkers(map, groups, cache) {
       const key = g.id + ":" + f.properties.cluster_id;
       seen[key] = true;
       if (cache[key]) return;
-      const size = clusterSize(f.properties.point_count);
+      const count = f.properties.point_count;
+      const size = clusterSize(count);
       const div = document.createElement("div");
       div.className = "cluster-marker";
       div.style.width = size + "px";
       div.style.height = size + "px";
       div.style.background = g.color;
+      // Fade the bubble by the average opacity of its members: an all-dimmed
+      // cluster reads as toned-down, a fully-matching one is solid.
+      const opSum = f.properties.op_sum;
+      const avgOp = (typeof opSum === "number" ? opSum : count) / count;
+      div.style.opacity = String(Math.max(0.15, Math.min(1, avgOp)));
       div.textContent = f.properties.point_count_abbreviated;
       const clusterId = f.properties.cluster_id;
       const coords = f.geometry.coordinates;
