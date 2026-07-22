@@ -231,15 +231,20 @@ function renderSourceLegend() {
   const node = document.getElementById("source-legend");
   if (!node) return;
   node.innerHTML = "";
+  // Colour = boligtype (see BOLIGTYPE above). Here we key the SHAPE (DNB square)
+  // and the BORDER (active = dark, sold = white). Swatches use a neutral fill so
+  // the border reads.
   [
-    ["DNB (kvadrat)", DEFAULT_UNKNOWN_TYPE_COLOR, true],
-    ["Solgt", "#9aa5a0", false],
-  ].forEach(([label, color, square]) => {
+    { label: "Aktiv (mørk kant)", border: "#111111", square: false },
+    { label: "Solgt (hvit kant)", border: "#ffffff", square: false },
+    { label: "DNB (kvadrat)", border: "#111111", square: true },
+  ].forEach(({ label, border, square }) => {
     const row = document.createElement("div");
     row.className = "legend-row";
     const sw = document.createElement("span");
     sw.className = "legend-swatch" + (square ? " square" : "");
-    sw.style.background = color;
+    sw.style.background = DEFAULT_UNKNOWN_TYPE_COLOR;
+    sw.style.border = "2px solid " + border;
     row.appendChild(sw);
     row.appendChild(document.createTextNode(label));
     node.appendChild(row);
@@ -410,9 +415,8 @@ async function init() {
   state.ui._allLines = distinctLines(meta.stations || []);
   ingestItems(listings.listings || []);
 
-  const { colorByType, expression } = boligtypePalette(meta.boligtyper || []);
+  const { colorByType } = boligtypePalette(meta.boligtyper || []);
   state.colorByType = colorByType;
-  state.soldColorExpr = expression; // sold circles coloured by boligtype
   state.groups = buildGroups(meta.boligtyper || [], colorByType);
   state.validGroupIds = new Set(state.groups.map((g) => g.id));
 
@@ -421,7 +425,7 @@ async function init() {
 
   map.on("load", () => {
     map.resize();
-    addListingGroups(map, state.groups, state.soldColorExpr, openPopup);
+    addListingGroups(map, state.groups, openPopup);
     addStationLayers(map);
     wireStationNamePopup(map);
     addBoundary(map, meta.polygon || []);

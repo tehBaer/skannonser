@@ -81,11 +81,12 @@ export function createMap(container) {
 }
 
 // --- group model ------------------------------------------------------------
-// One clustered source per group: a single "sold" group (all sold together,
-// grey) + one per boligtype (coloured) + an unknown/"" bucket.
+// One clustered source per (boligtype, active|sold) pair -- so a cluster only
+// merges same-boligtype listings AND active never merges with sold, while both
+// active and sold clusters are still coloured by their boligtype. Active vs sold
+// is distinguished by BORDER colour (active dark, sold white).
 
-export const SOLD_GROUP_ID = "listings-sold";
-const TYPE_GROUP_PREFIX = "listings-type-";
+const TYPE_GROUP_PREFIX = "listings-";
 const UNKNOWN_TYPE_KEY = "__unknown__";
 
 function typeKey(type) {
@@ -93,35 +94,31 @@ function typeKey(type) {
     String(type || "").toLowerCase().replace(/[^a-z0-9]/gi, "") || UNKNOWN_TYPE_KEY
   );
 }
-function typeGroupId(type) {
-  return TYPE_GROUP_PREFIX + typeKey(type);
+function groupId(type, sold) {
+  return TYPE_GROUP_PREFIX + typeKey(type) + (sold ? "-sold" : "-active");
 }
 
 export function buildGroups(boligtyper, colorByType) {
-  const groups = [
-    { id: SOLD_GROUP_ID, isSold: true, type: null, color: SOLD_COLOR },
-  ];
+  const groups = [];
   const seen = new Set();
   (boligtyper || []).concat([""]).forEach((t) => {
-    const id = typeGroupId(t);
-    if (seen.has(id)) return;
-    seen.add(id);
-    groups.push({
-      id,
-      isSold: false,
-      type: t,
-      color: (colorByType && colorByType[t]) || DEFAULT_UNKNOWN_TYPE_COLOR,
-    });
+    const k = typeKey(t);
+    if (seen.has(k)) return;
+    seen.add(k);
+    const color = (colorByType && colorByType[t]) || DEFAULT_UNKNOWN_TYPE_COLOR;
+    // active then sold for this type
+    groups.push({ id: groupId(t, false), isSold: false, type: t, color });
+    groups.push({ id: groupId(t, true), isSold: true, type: t, color });
   });
   return groups;
 }
 
-// Which group a listing belongs to. Sold always -> the sold group; otherwise by
-// boligtype. `validIds` (optional) folds an unrecognised type into unknown.
+// Which group a listing belongs to: by boligtype AND active/sold. `validIds`
+// (optional) folds an unrecognised type into the unknown bucket, keeping the
+// active/sold split.
 export function groupIdForItem(item, validIds) {
-  if (item.sold) return SOLD_GROUP_ID;
-  const id = typeGroupId(item.boligtype || "");
-  if (validIds && !validIds.has(id)) return typeGroupId("");
+  const id = groupId(item.boligtype || "", !!item.sold);
+  if (validIds && !validIds.has(id)) return groupId("", !!item.sold);
   return id;
 }
 
@@ -158,11 +155,11 @@ function ensureSquareIcon(map, color, strokeColor) {
 const ACTIVE_BORDER = "#111111";
 const SOLD_BORDER = "#ffffff";
 
-// Adds one clustered source per group, with unclustered GL layers:
-//  * sold group -> circle coloured by boligtype (soldColorExpr), white border
-//  * type group -> Eie circle + DNB square in the type's colour, black border
-// So a cluster only merges same-boligtype listings; sold stays its own group.
-export function addListingGroups(map, groups, soldColorExpr, onListingClick) {
+// Adds one clustered source per group, with unclustered GL layers. Both active
+// and sold are coloured by their boligtype (g.color); active gets a dark border,
+// sold a white border. A cluster only merges same-boligtype, same-status
+// listings.
+export function addListingGroups(map, groups, onListingClick) {
   const clickLayers = [];
   groups.forEach((g) => {
     map.addSource(g.id, {
@@ -173,9 +170,6 @@ export function addListingGroups(map, groups, soldColorExpr, onListingClick) {
       clusterMaxZoom: CLUSTER_MAX_ZOOM,
       // Aggregate each member's per-feature opacity so a cluster bubble can be
       // faded in proportion to how many of its listings are dimmed (nedtoning).
-      // `op` is always set on every feature (app.js itemToFeature), so the
-      // plain documented [operator, ['get', prop]] form is used -- richer
-      // expressions (coalesce) in this reduce context are unreliable.
       clusterProperties: {
         op_sum: ["+", ["get", "op"]],
       },
@@ -188,7 +182,7 @@ export function addListingGroups(map, groups, soldColorExpr, onListingClick) {
         source: g.id,
         filter: NOT_CLUSTER,
         paint: {
-          "circle-color": soldColorExpr, // sold coloured by boligtype
+          "circle-color": g.color, // sold coloured by boligtype
           "circle-radius": 6,
           "circle-stroke-width": 1.5,
           "circle-stroke-color": SOLD_BORDER, // sold = white border
@@ -318,22 +312,29 @@ export function syncClusterMarkers(map, groups, cache) {
       if (cache[key]) return;
       const count = f.properties.point_count;
       const size = clusterSize(count);
+      // Wrapper is the maplibregl.Marker element -- MapLibre manages ITS opacity
+      // per render frame (v4 behaviour), so the visible bubble is an INNER div
+      // whose opacity/style we own and MapLibre never touches.
+      const wrap = document.createElement("div");
       const div = document.createElement("div");
       div.className = "cluster-marker";
       div.style.width = size + "px";
       div.style.height = size + "px";
       div.style.background = g.color;
+      // Active bubbles get a dark border, sold a white one (matches the points).
+      div.style.borderColor = g.isSold ? SOLD_BORDER : ACTIVE_BORDER;
       div.textContent = f.properties.point_count_abbreviated;
+      wrap.appendChild(div);
       const clusterId = f.properties.cluster_id;
       const coords = f.geometry.coordinates;
       // An all-dimmed cluster reads as toned-down, a fully-matching one solid.
       applyClusterOpacity(div, src, clusterId, count, f.properties.op_sum);
-      div.addEventListener("click", () => {
+      wrap.addEventListener("click", () => {
         src.getClusterExpansionZoom(clusterId).then((zoom) => {
           map.easeTo({ center: coords, zoom });
         });
       });
-      cache[key] = new maplibregl.Marker({ element: div })
+      cache[key] = new maplibregl.Marker({ element: wrap })
         .setLngLat(coords)
         .addTo(map);
     });
