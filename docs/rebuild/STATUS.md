@@ -18,7 +18,7 @@ else is history.
   `100.77.139.22:8377` only, not `0.0.0.0`. Thumbnail catch-up run supervised against the live DB
   (read-only DB access, writes only to `data/thumbs/`): 964/964 candidates cached, 0 failures.
   `/` serves the map HTML, `/api/listings` returns 787 listings, thumb spot-check → 200.
-  **USER ACCEPTED the web app 2026-07-22** (map walkthrough passed; 07:00 daily notification delivery also confirmed on the phone). Trial running; **Apps Script map retirement decision comes after the trial.**
+  **PHASE 6 GATE PROVEN EARLY 2026-07-22:** supervised nightly on current master exited nightly=0 (all steps green), and first-appearance activation was proven end-to-end with a real finn.no crawl against a DB copy — a removed listing (Inges gate 6A, 470374293) was re-discovered as a genuine first insert, came out active=1 immediately, and appeared in the Eie sheet payload. Same-day visibility CONFIRMED; backlog item 1 fully closed. **USER ACCEPTED the web app 2026-07-22** (map walkthrough passed; 07:00 daily notification delivery also confirmed on the phone). Trial running; **Apps Script map retirement decision comes after the trial.**
 - **CUTOVER LIVE 2026-07-21** (Phase 4 Task 10): the server's nightly + notify crons now run the
   rebuilt CLI. `~/run_skannonser_daily.sh` was rewritten to call `skannonser run nightly` (one
   section replacing the legacy `make full`/`refresh-stale-open`/`sold-sync` trio); the 07:00/Sun-08:00
