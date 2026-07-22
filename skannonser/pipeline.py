@@ -51,6 +51,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import requests
 
 from skannonser.config.domain import DomainConfig
+from skannonser.http import browser_get
 from skannonser.ingest.dnb import crawl as dnb_crawl
 from skannonser.ingest.dnb import load as dnb_load
 from skannonser.ingest.dnb import parse as dnb_parse
@@ -73,7 +74,7 @@ def run_finn_ingest(
     domain: DomainConfig,
     conn: sqlite3.Connection,
     project_dir: Path,
-    fetch=requests.get,
+    fetch=browser_get,
     archive_dir: Path | None = None,
     max_pages: int = 50,
     page_delay: Callable[[], None] | None = None,

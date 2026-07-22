@@ -17,7 +17,7 @@ deleted). The rebuild is complete and running in production. See
 Everything lives under `skannonser/`, laid out by pipeline stage:
 
 - **`config/`** — `domain.toml` loader (`domain.py`, filters/budget/destinations/polygon/
-  DNB region GUIDs — the tuning surface) and `settings.py` (env/`.env`-backed secrets:
+  DNB region GUIDs/crawl-pacing — the tuning surface) and `settings.py` (env/`.env`-backed secrets:
   API keys, spreadsheet id, DB path).
 - **`store/`** — the SQLite layer: `connection.py` (WAL-safe connect helper),
   `migrations.py` (numbered, versioned SQL migrations applied explicitly, never on
@@ -74,9 +74,35 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   `data/`, `config/`, `backups/`.
   Actual pipeline runs (ingest/enrich/sheets) are NOT run from this container's
   crontab — they're driven by the server's own crontab calling a wrapper script
-  (`~/run_skannonser_daily.sh`) at 01:00, which invokes `skannonser run nightly`;
+  (`~/run_skannonser_daily.sh`, deployable copy at `ops/run_skannonser_daily.sh`)
+  fired at a fixed early time, which sleeps a random start-jitter
+  (`SKANNONSER_START_JITTER_S`, default 6h) before invoking `skannonser run nightly`
+  so runs don't hit FINN at the same wall-clock minute daily;
   `skannonser notify daily`/`weekly` run off separate 07:00 / Sunday-08:00 cron
   entries.
+
+  **Polite-access crawling:** FINN/DNB fetches send a browser `User-Agent`
+  (`skannonser/http.py`, not the default `python-requests/…`) and pace themselves
+  with wide jittered delays between result pages, ad fetches, and refresh listings.
+  The delay ranges are the `[crawl]` section of `config/domain.toml`
+  (`page_delay_*`/`fetch_delay_*`/`listing_delay_*`, seconds); slow by design (a run
+  fetches only tens of pages/ads, so a paced run still finishes well under an hour).
+
+  **Sold-price enrichment (separate, throttle-guarded):** `skannonser/enrich/sold.py`
+  + `store/repositories/sold.py` + migrations `006_sold_prices.sql`/`007_sold_sweep_state.sql`
+  fetch tinglyst sold prices from FINN's sold map into `sold_prices`, keyed by
+  finnkode. `skannonser run enrich-sold` runs one budgeted **backlog** pass:
+  suspend-aware, coverage-aware (targets listings sold >100 days ago, stops at
+  80% coverage), densest-clusters-first, hard-capped at `--requests` (default 4),
+  querying a tight ~120 m box centered on each target listing (with one adaptive
+  shrink if the target is crowded out of the 15-card cap). On throttle
+  (429/403/503 or a block page) it **suspends itself, persists that, and pings
+  Pushover** — every later run is then a no-op until `--resume`. `--status`
+  reports coverage without any request; `--bbox` probes a single tile.
+  Run it a few times a day, spaced out, via `ops/run_sold_backlog.sh` and its
+  cron snippet — deliberately **separate from and not part of** `nightly.py`
+  (a test enforces the latter). It targets a `robots.txt`-disallowed FINN path
+  (`/map/`); keep the cadence low and let it stop itself if FINN pushes back.
 - **`web`** — same image, runs `skannonser web --host 0.0.0.0 --port 8000`, published
   as `100.77.139.22:8377:8000` (tailnet-only — not bound to `0.0.0.0` on the host, so
   it's unreachable from the LAN). Healthcheck hits `GET /healthz` every 60s.

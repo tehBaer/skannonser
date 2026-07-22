@@ -36,6 +36,7 @@ from typing import Callable
 
 from skannonser.config.domain import load_domain
 from skannonser.config.settings import get_secrets
+from skannonser.enrich.sold import sold_progress
 from skannonser.store.repositories.listings import ListingsRepo
 
 Send = Callable[[str, str, int], bool]
@@ -83,6 +84,26 @@ def format_weekly_message(added: int, sold: int) -> str:
     """Port of ``main/notify/weekly_summary.py:format_weekly_message``,
     byte-identical output."""
     return f"\U0001F4C5 This week: +{added} added, {sold} sold."
+
+
+def format_sold_progress(p: dict) -> str:
+    """One-line sold-price backlog progress for the daily digest, or ``""``
+    when there's nothing to report yet (no aged targets, nothing priced, not
+    suspended) so the digest is unchanged until the feature is in use.
+
+    ``p`` is a :func:`skannonser.enrich.sold.sold_progress` dict."""
+    cov = p["coverage"]
+    if not p["suspended"] and p["new_priced"] == 0 and cov["total"] == 0:
+        return ""
+    lead = (
+        "SUSPENDED (throttled) — "
+        if p["suspended"]
+        else f"+{p['new_priced']} today, "
+    )
+    return (
+        f"\U0001F4B0 Sold prices: {lead}"
+        f"{cov['priced']}/{cov['total']} ({cov['fraction']:.0%}) covered."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +206,11 @@ def daily_summary(conn, send: Send = default_send, today: str | None = None) -> 
     removed = previous - current
     sold = _finnkodes_with_status(conn, removed, "Solgt")
     metrics = compute_daily_metrics(previous, current, sold)
-    ok = send("Daily listings", format_daily_message(metrics), 0)
+    message = format_daily_message(metrics)
+    sold_line = format_sold_progress(sold_progress(conn))
+    if sold_line:
+        message = f"{message}\n{sold_line}"
+    ok = send("Daily listings", message, 0)
     repo.record_daily_metrics(
         today,
         metrics["added"],

@@ -7,7 +7,16 @@ from skannonser.config.domain import load_domain
 from skannonser.config.settings import get_secrets
 from skannonser.enrich.dnb_travel import run_dnb_travel
 from skannonser.enrich.geocode import run_geocode
+from skannonser.enrich.sold import (
+    is_suspended,
+    resume,
+    run_sold_backlog,
+    run_sold_enrich,
+    sold_coverage,
+)
 from skannonser.enrich.travel import VALID_TARGETS, run_enrich
+from skannonser.http import jittered_delay
+from skannonser.notifications import default_send
 from skannonser.enrich.validate import validate_travel
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.ingest.finn.refresh import MODES as REFRESH_MODES
@@ -254,6 +263,92 @@ def enrich(
         raise typer.Exit(code=3)
 
     typer.echo(f"enrich: {stats}")
+
+
+@app.command(name="enrich-sold")
+def enrich_sold(
+    requests_budget: int = typer.Option(
+        4, "--requests", help="Backlog mode: max FINN requests this run (hard cap)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Backlog mode: sweep even if the coverage target is reached"
+    ),
+    resume_flag: bool = typer.Option(
+        False, "--resume", help="Clear a throttle-suspension and re-enable sweeps"
+    ),
+    status: bool = typer.Option(
+        False, "--status", help="Print coverage + suspend state, make no requests"
+    ),
+    bbox: str | None = typer.Option(
+        None, "--bbox", help="Probe ONE tile: 'minLon,minLat,maxLon,maxLat' (dev use)"
+    ),
+    db: Path | None = typer.Option(
+        None, "--db", help="Override the DB path for this run"
+    ),
+    all_cards: bool = typer.Option(
+        False, "--all", help="Single-tile mode: store every card, not just listings we track"
+    ),
+) -> None:
+    """Fetch tinglyst sold prices from FINN's sold map.
+
+    Default: one careful budgeted BACKLOG pass -- suspend-aware, coverage-aware,
+    densest-cells-first, hard-capped at --requests. On throttle (429/403/503 or
+    a block page) it suspends itself and pings Pushover; clear that with
+    --resume. --status reports coverage without fetching. --bbox probes a
+    single tile (dev).
+
+    This targets a robots.txt-disallowed FINN path; it is deliberately NOT part
+    of `run nightly` -- schedule it separately, spaced out, and if FINN throttles,
+    it stops on its own until you --resume.
+    """
+    parts = None
+    if bbox is not None:
+        try:
+            parts = [float(x) for x in bbox.split(",")]
+            if len(parts) != 4:
+                raise ValueError
+        except ValueError:
+            typer.echo(
+                "Error: --bbox must be 'minLon,minLat,maxLon,maxLat' (4 numbers)",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+
+    conn = connection.connect(db_path)
+    if not _require_no_pending_migrations(conn):
+        raise typer.Exit(code=1)
+
+    if resume_flag:
+        resume(conn)
+        typer.echo("enrich-sold: resumed (suspension cleared)")
+        return
+
+    if status:
+        cov = sold_coverage(conn)
+        typer.echo(
+            f"enrich-sold status: suspended={is_suspended(conn)} "
+            f"coverage={cov['priced']}/{cov['total']} ({cov['fraction']:.0%})"
+        )
+        return
+
+    if parts is not None:
+        stats = run_sold_enrich(conn, [tuple(parts)], restrict=not all_cards)
+    else:
+        cr = load_domain().crawl
+        delay = jittered_delay(cr.fetch_delay_min_s, cr.fetch_delay_max_s)
+        stats = run_sold_backlog(
+            conn,
+            notify=lambda msg: default_send("skannonser sold", msg, priority=1),
+            max_requests=requests_budget,
+            force=force,
+            delay=delay,
+        )
+    typer.echo(f"enrich-sold: {stats}")
 
 
 @app.command(name="enrich-dnb")

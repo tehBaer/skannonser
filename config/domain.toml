@@ -17,6 +17,18 @@ lng_max = 32.0
 reuse_within_meters = 300
 max_travel_minutes = 360
 
+[crawl]
+# Polite-access pacing for the FINN crawl/refresh (seconds). Each pair is a
+# (min, max) range a uniform jittered delay is drawn from. Deliberately slow:
+# a run fetches only tens of pages/ads, so wide human-shaped gaps cost little
+# wall-clock (whole run stays well under an hour) while keeping load gentle.
+page_delay_min_s = 2.0
+page_delay_max_s = 8.0
+fetch_delay_min_s = 1.0
+fetch_delay_max_s = 5.0
+listing_delay_min_s = 1.0
+listing_delay_max_s = 5.0
+
 [budget]
 routes_monthly_cap = 9000
 geocode_monthly_cap = 9000
