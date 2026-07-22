@@ -33,8 +33,8 @@ const SOLD_COLOR = "#9aa5a0";
 
 // Clustering knobs. Lower clusterMaxZoom => clusters break into individual
 // points sooner as you zoom in; smaller clusterRadius => fewer points merge.
-const CLUSTER_RADIUS = 28;
-const CLUSTER_MAX_ZOOM = 12;
+const CLUSTER_RADIUS = 22;
+const CLUSTER_MAX_ZOOM = 10;
 
 const OSM_STYLE = {
   version: 8,
