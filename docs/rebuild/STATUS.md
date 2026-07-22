@@ -65,6 +65,34 @@ else is history.
   order; donor pre-pass outcomes are order-dependent, so this is parity-for-a-fixed-order, not
   order-insensitive equivalence.
 
+## Standing checks (2026-07-22, Phase 6 Task 2)
+
+The legacy-comparison verify harnesses (`skannonser verify parse/enrich/sheets/metrics`,
+`skannonser/verify/*.py`, `config/verify-allowlist.toml`) are deleted — their job (proving the
+port byte-for-byte against `main.*`) is complete, and they cannot survive Phase 6 Task 5's
+deletion of `main/` anyway. Going forward, the standing checks proving the system stays correct
+are:
+
+- **The fixture corpora** (`tests/rebuild/fixtures/` — 12 sampled real FINN ads with frozen
+  legacy-parser expected output, a real DNB listing page, a real FINN result page) — these pin
+  parsing/extraction behavior against real, previously-legacy-verified HTML without needing
+  `main.*` at test time.
+- **The full pytest suite** (`.venv/bin/python -m pytest tests/rebuild -q`) — 496 tests, zero
+  warnings (down from 516; the 20 removed were the four deleted `test_verify_*.py` files: 1 in
+  `test_verify_parse.py`, 4 in `test_verify_enrich.py`, 9 in `test_verify_sheets.py`, 6 in
+  `test_verify_metrics.py` — all exclusively testing the now-deleted harness modules themselves,
+  not product behavior).
+- **The packaging structural test** (`tests/rebuild/test_packaging.py`) — proves the wheel builds
+  with static completeness (migrations etc. included).
+- **`/healthz`** — the live liveness/readiness check for the deployed web app.
+
+A handful of `tests/rebuild/*.py` files still import `main.*` directly for inline pin/comparison
+purposes unrelated to the deleted verify/ harness (`test_finn_crawl.py`, `test_geo.py`,
+`test_travel_api.py`, `test_dnb.py`, plus the standalone fixture-regeneration script
+`tests/rebuild/fixtures/finn/generate_expected.py`) — these are explicitly Phase 6 Task 5's
+responsibility (its structural proof requires zero `import main`/`from main` under `skannonser/`
+or `tests/rebuild/` once `main/` itself is deleted); Task 2 leaves them untouched by design.
+
 ## Sanctioned behavior changes vs legacy (the complete list — nothing else may diverge)
 
 1. Finnkode parsed via `urllib.parse` (legacy: `split('finnkode=')[1]`).
