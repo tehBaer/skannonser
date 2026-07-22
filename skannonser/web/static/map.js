@@ -248,6 +248,44 @@ export function clusterSize(count) {
   return Math.max(26, Math.min(60, Math.round(20 + 5.5 * Math.sqrt(count))));
 }
 
+export function clampOpacity(v) {
+  return String(Math.max(0.15, Math.min(1, v)));
+}
+
+// Read a feature's `op` (per-feature opacity), defaulting to 1. Must treat 0 as
+// a real value (a fully toned-down listing), so no truthiness shortcuts.
+export function opOf(feature) {
+  const raw = feature && feature.properties ? feature.properties.op : undefined;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) ? n : 1;
+}
+
+// Fade a cluster bubble by the average opacity of its members, so dimming
+// (nedtoning) carries through to clusters and not just individual points.
+//
+// Fast path: the `op_sum` clusterProperty. Fallback: average the actual cluster
+// leaves -- aggregated cluster properties are not reliably surfaced through
+// `querySourceFeatures`, so we never depend on them alone.
+function applyClusterOpacity(div, src, clusterId, count, opSum) {
+  if (typeof opSum === "number" && count > 0) {
+    div.style.opacity = clampOpacity(opSum / count);
+    return;
+  }
+  div.style.opacity = "1";
+  if (!src || typeof src.getClusterLeaves !== "function" || !count) return;
+  try {
+    const p = src.getClusterLeaves(clusterId, Math.min(count, 200), 0);
+    if (!p || typeof p.then !== "function") return;
+    p.then((leaves) => {
+      if (!leaves || !leaves.length) return;
+      const sum = leaves.reduce((acc, lf) => acc + opOf(lf), 0);
+      div.style.opacity = clampOpacity(sum / leaves.length);
+    }).catch(() => {});
+  } catch (_) {
+    /* leaves unavailable -> leave the bubble solid */
+  }
+}
+
 // Removes and forgets every cached cluster DOM marker. MUST be called before
 // any setData() that can change a clustered feature set (filter toggles,
 // sold-visibility, boligtype visibility, ...). WHY: supercluster reuses
@@ -285,14 +323,11 @@ export function syncClusterMarkers(map, groups, cache) {
       div.style.width = size + "px";
       div.style.height = size + "px";
       div.style.background = g.color;
-      // Fade the bubble by the average opacity of its members: an all-dimmed
-      // cluster reads as toned-down, a fully-matching one is solid.
-      const opSum = f.properties.op_sum;
-      const avgOp = (typeof opSum === "number" ? opSum : count) / count;
-      div.style.opacity = String(Math.max(0.15, Math.min(1, avgOp)));
       div.textContent = f.properties.point_count_abbreviated;
       const clusterId = f.properties.cluster_id;
       const coords = f.geometry.coordinates;
+      // An all-dimmed cluster reads as toned-down, a fully-matching one solid.
+      applyClusterOpacity(div, src, clusterId, count, f.properties.op_sum);
       div.addEventListener("click", () => {
         src.getClusterExpansionZoom(clusterId).then((zoom) => {
           map.easeTo({ center: coords, zoom });
