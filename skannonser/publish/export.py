@@ -9,8 +9,7 @@ connection and return ``(header, rows)`` payloads that Task 9's ``run_sheets``
 writes through ``SheetsClient.rewrite_tab`` (``valueInputOption="USER_ENTERED"``).
 
 FIDELITY TO LEGACY (the whole game -- the Apps Script map is an UNCHANGED
-consumer, and Task 4's ``verify sheets`` enforces cell-by-cell zero-diff parity
-on Eie/Sold/Stations):
+consumer, and zero-diff parity on Eie/Sold/Stations was enforced by the now-retired verify-sheets golden master during the rebuild; the fixture suite is the standing check):
 
 * **Header + column order** for Eie/Sold reproduce
   ``db.py:get_eiendom_for_sheets`` (788-880) / ``get_stale_eiendom_for_sheets``

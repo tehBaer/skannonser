@@ -32,7 +32,7 @@ Ported from ``main/database/db.py``:
     when a listing's ``travel_copy_from_finnkode`` points at a donor row --
     the donor's value wins when the link is set AND the donor's value is
     non-null, otherwise the listing's own value is used. Single hop only
-    (no chained donors). This is what ``verify enrich`` compares.
+    (no chained donors). This is what the (now-retired) verify-enrich golden master compared during the rebuild.
 
 No pandas -- pure ``sqlite3`` + dicts, matching ``ListingsRepo``/``DnbRepo``.
 """

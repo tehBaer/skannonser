@@ -1,5 +1,5 @@
 """Byte-identical port check for the FINN ad parser against a legacy-frozen
-fixture corpus (12 cached ads; see fixtures/finn/generate_expected.py)."""
+fixture corpus (12 cached ads; see fixtures/finn/README.md)."""
 import json
 from pathlib import Path
 

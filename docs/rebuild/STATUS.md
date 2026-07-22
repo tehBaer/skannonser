@@ -159,7 +159,7 @@ Task 7, since cutover is done. Item 1 is closed/landed history, kept for the rec
 the rest are the open/deferred items still worth knowing about.)*
 
 **1. KILL the activate-on-second-appearance quirk — USER DECISION 2026-07-20 (re-confirmed 2026-07-21): fix it.**
-**— LANDED (2026-07-21) and CONFIRMED IN PRODUCTION (2026-07-22, Phase 6 gate).**
+**— LANDED (2026-07-21) and CONFIRMED (forced first-insert proof on a DB copy + live nightly running the activation code).**
 `ListingsRepo.upsert`'s INSERT now writes `active=1` (Task 11): a newly discovered listing is
 active — and therefore visible to sheet export, the web app, and the daily "added" notification —
 from the FIRST crawl that sees it, no more one-day delay. Pinning tests updated (`test_insert_
