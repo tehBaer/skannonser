@@ -63,7 +63,8 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
   popups + a "budpremie" colour mode for sold dots, polygon-fit start view.
   Listing details (soverom/eieform/fasiliteter/energimerke/totalpris/felleskost)
   ride along in `/api/listings` and `/api/meta`, with derived totalpris-per-kvm
-  and månedskost (totalpris/kvm + felleskost) computed client-side; filter panel
+  and månedskost (felleskost + kommunale avg/12) computed in the API at query
+  time (never stored); filter panel
   adds soverom/totalpris/felleskost/eieform/energimerke/fasiliteter controls plus
   an "inkluder ukjent" toggle (null values pass filters by default instead of
   being excluded), and the table gains Totalpris/Total-per-kvm/Felleskost/
