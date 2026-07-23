@@ -106,6 +106,8 @@ function loadUi(meta) {
           ...base.filters,
           ...(stored.filters || {}),
           travelMax: { ...base.filters.travelMax, ...((stored.filters || {}).travelMax || {}) },
+          energiHidden: { ...((stored.filters || {}).energiHidden || {}) },
+          facilitiesRequired: { ...((stored.filters || {}).facilitiesRequired || {}) },
         },
         boligtypeHidden: { ...(stored.boligtypeHidden || {}) },
         tagHidden: { ...(stored.tagHidden || {}) },
