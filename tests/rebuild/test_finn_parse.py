@@ -8,7 +8,10 @@ import pytest
 from skannonser.ingest.finn.parse import parse_ad
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finn"
-CASES = sorted(FIXTURES.glob("*.expected.json"))
+CASES = sorted(
+    p for p in FIXTURES.glob("*.expected.json")
+    if not p.name.endswith(".details.expected.json")
+)
 
 
 @pytest.mark.parametrize("expected_path", CASES, ids=lambda p: p.stem.split(".")[0])
