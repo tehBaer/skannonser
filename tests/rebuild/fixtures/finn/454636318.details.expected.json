@@ -1,0 +1,31 @@
+{
+ "finnkode": "454636318",
+ "bedrooms": 2,
+ "rooms": 3,
+ "floor": 1,
+ "eieform": "Andel",
+ "nabolag": "Bislett",
+ "totalpris": 6559730,
+ "omkostninger": 11308,
+ "fellesgjeld": 98422,
+ "felleskost_mnd": 5895,
+ "fellesformue": 6528,
+ "formuesverdi": 1727266,
+ "kommunale_avg_aar": null,
+ "energimerke": "G",
+ "energifarge": "Rød",
+ "kommunenr": "301",
+ "gardsnr": "217",
+ "bruksnr": "128",
+ "seksjonsnr": null,
+ "borettslag_navn": "Falbesgate 9 borettslaget",
+ "borettslag_orgnr": "995488086",
+ "borettslag_andelsnr": "2",
+ "facilities": [
+  "Barnevennlig",
+  "Moderne",
+  "Sentralt",
+  "Offentlig vann/kloakk",
+  "Bredbåndstilknytning"
+ ]
+}

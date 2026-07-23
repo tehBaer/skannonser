@@ -1,0 +1,32 @@
+{
+ "finnkode": "462194375",
+ "bedrooms": 2,
+ "rooms": 3,
+ "floor": 4,
+ "eieform": "Andel",
+ "nabolag": null,
+ "totalpris": 7160525,
+ "omkostninger": 170525,
+ "fellesgjeld": null,
+ "felleskost_mnd": 4554,
+ "fellesformue": null,
+ "formuesverdi": 1741693,
+ "kommunale_avg_aar": null,
+ "energimerke": "G",
+ "energifarge": "Rød",
+ "kommunenr": "301",
+ "gardsnr": "227",
+ "bruksnr": "248",
+ "seksjonsnr": null,
+ "borettslag_navn": "Københavngata 3 Borettslag",
+ "borettslag_orgnr": "834306492",
+ "borettslag_andelsnr": "21",
+ "facilities": [
+  "Barnevennlig",
+  "Rolig",
+  "Moderne",
+  "Sentralt",
+  "Offentlig vann/kloakk",
+  "Vaktmester-/vektertjeneste"
+ ]
+}

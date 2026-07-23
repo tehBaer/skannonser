@@ -1,0 +1,33 @@
+{
+ "finnkode": "457144114",
+ "bedrooms": 3,
+ "rooms": null,
+ "floor": 2,
+ "eieform": "Selveier",
+ "nabolag": "Ski",
+ "totalpris": 7150700,
+ "omkostninger": 175700,
+ "fellesgjeld": null,
+ "felleskost_mnd": null,
+ "fellesformue": null,
+ "formuesverdi": 1930070,
+ "kommunale_avg_aar": null,
+ "energimerke": "D",
+ "energifarge": "Gul",
+ "kommunenr": "3207",
+ "gardsnr": "136",
+ "bruksnr": "201",
+ "seksjonsnr": null,
+ "borettslag_navn": null,
+ "borettslag_orgnr": null,
+ "borettslag_andelsnr": null,
+ "facilities": [
+  "Barnevennlig",
+  "Balkong/Terrasse",
+  "Garasje/P-plass",
+  "Parkett",
+  "Peis/Ildsted",
+  "Sentralt",
+  "Rolig"
+ ]
+}

@@ -190,3 +190,28 @@ def test_cadastre_container_div_not_misparsed():
     d = parse_details(html, "123")
     assert d.kommunenr == "3301"
     assert d.gardsnr is None
+
+
+# Golden corpus tests: pin behavior against 12 real FINN ad fixtures.
+from pathlib import Path
+
+import pytest
+
+FIXTURES = Path(__file__).parent / "fixtures" / "finn"
+DETAIL_CASES = sorted(FIXTURES.glob("*.details.expected.json"))
+
+
+def test_golden_corpus_exists():
+    # 12 ad fixtures ship with the repo; each must have a pinned details file.
+    assert len(DETAIL_CASES) == 12
+
+
+@pytest.mark.parametrize(
+    "expected_path", DETAIL_CASES, ids=lambda p: p.stem.split(".")[0]
+)
+def test_parse_details_matches_fixture(expected_path):
+    finnkode = expected_path.stem.split(".")[0]
+    html = (FIXTURES / f"{finnkode}.html").read_text(encoding="utf-8", errors="replace")
+    expected = json.loads(expected_path.read_text())
+    got = parse_details(html, finnkode).model_dump()
+    assert got == expected

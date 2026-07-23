@@ -1,0 +1,32 @@
+{
+ "finnkode": "452941559",
+ "bedrooms": 2,
+ "rooms": 3,
+ "floor": 2,
+ "eieform": "Andel",
+ "nabolag": "Sentralt på Lambertseter",
+ "totalpris": 5000805,
+ "omkostninger": 9496,
+ "fellesgjeld": 101309,
+ "felleskost_mnd": 5938,
+ "fellesformue": 32508,
+ "formuesverdi": 1261464,
+ "kommunale_avg_aar": null,
+ "energimerke": "D",
+ "energifarge": "Lysegrønn",
+ "kommunenr": "301",
+ "gardsnr": "159",
+ "bruksnr": "139",
+ "seksjonsnr": null,
+ "borettslag_navn": "Gamlehagen",
+ "borettslag_orgnr": "948 976 331",
+ "borettslag_andelsnr": "119",
+ "facilities": [
+  "Balkong/Terrasse",
+  "Barnevennlig",
+  "Bredbåndstilknytning",
+  "Kjæledyr tillatt",
+  "Offentlig vann/kloakk",
+  "Sentralt"
+ ]
+}
