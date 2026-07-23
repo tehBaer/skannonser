@@ -70,6 +70,50 @@ def _first_int(targeting: dict, key: str) -> int | None:
         return None
 
 
+# dt label -> ListingDetails field, exactly as they appear in the
+# pricing-details <dl> (verified against the 12 golden fixtures).
+_PRICING_LABELS = {
+    "Totalpris": "totalpris",
+    "Omkostninger": "omkostninger",
+    "Fellesgjeld": "fellesgjeld",
+    "Felleskost/mnd.": "felleskost_mnd",
+    "Fellesformue": "fellesformue",
+    "Formuesverdi": "formuesverdi",
+    "Kommunale avg.": "kommunale_avg_aar",
+}
+
+
+def _parse_kr(text: str | None) -> int | None:
+    """'1\xa0945\xa0000 kr' -> 1945000. Tolerates a trailing 'per år'
+    (kommunale avg.). None when no kr-amount is found."""
+    match = re.search(r"([\d\xa0\s]+)\s*kr", text or "")
+    if not match:
+        return None
+    digits = match.group(1).replace("\xa0", "").replace(" ", "")
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _pricing_details(soup) -> dict:
+    out: dict = {}
+    section = soup.find(attrs={"data-testid": "pricing-details"})
+    if section is None:
+        return out
+    for dt in section.find_all("dt"):
+        field = _PRICING_LABELS.get(dt.get_text(strip=True))
+        if field is None:
+            continue
+        dd = dt.find_next_sibling("dd")
+        if dd is None:
+            continue
+        value = _parse_kr(dd.get_text())
+        if value is not None:
+            out[field] = value
+    return out
+
+
 def parse_details(html: str, finnkode: str) -> ListingDetails:
     soup = BeautifulSoup(html, "html.parser")
     targeting = _gam_targeting(soup)
@@ -78,4 +122,5 @@ def parse_details(html: str, finnkode: str) -> ListingDetails:
         bedrooms=_first_int(targeting, "bedrooms"),
         rooms=_first_int(targeting, "rooms"),
         floor=_first_int(targeting, "floor"),
+        **_pricing_details(soup),
     )
