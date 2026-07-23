@@ -5,7 +5,8 @@ source image but no cached thumbnail yet, so the web app
 (``skannonser/web/app.py``'s ``GET /thumbs/{identifier}.jpg``) can serve
 images from local disk instead of hot-linking (or, legacy's approach,
 pre-uploading to Google Drive -- ``main/tools/predownload_thumbnails_to_drive.py``,
-now legacy-only, see ``docs/rebuild/STATUS.md``).
+now legacy-only; see the rebuild record in git history -- docs/rebuild/STATUS.md,
+retired 2026-07-23).
 
 CANDIDATE SET: every ACTIVE ``eiendom`` row with a non-empty ``image_url``
 (identifier: its raw ``finnkode``), plus every ACTIVE ``dnbeiendom`` row with

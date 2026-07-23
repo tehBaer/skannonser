@@ -50,9 +50,14 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
 - **`notifications.py`** — daily/weekly added/removed summaries, sent through the
   `notify` CLI (Pushover).
 - **`web/`** — `app.py` (FastAPI app: `/healthz`, `/thumbs/{id}.jpg`, `/table`, static
-  file serving), `api.py` (`/api/listings`, `/api/listings/{finnkode}`, `/api/meta`,
-  `/api/missing-coords`, `/api/annotations/{finnkode}` GET/PUT), `static/` (MapLibre
-  map, table view, filters, popups — plain JS, no build step).
+  file serving, gzip), `api.py` (`/api/listings` [`?bucket=sold` for the sold-only
+  payload], `/api/listings/{finnkode}`, `/api/meta`, `/api/missing-coords`,
+  `/api/annotations/{finnkode}` GET/PUT; sold items carry the tinglyst
+  `sold_price`/`sold_date`/`price_suggestion`, every item carries `scraped_at`),
+  `static/` (MapLibre map, table view, filters, popups — plain JS, no build step).
+  Map niceties: mobile drawer layout, collapsible sidebar panels, per-tag
+  visibility + tag rings, "Ny"/"nye siden sist" freshness, sold-price rows in
+  popups + a "budpremie" colour mode for sold dots, polygon-fit start view.
 - **`ids.py`** — shared path-safe identifier helpers (DNB synthetic ids, thumbnail
   filenames) used by both `web/api.py` and `enrich/thumbs.py` so they can't drift.
 - **`geo.py`** — polygon point-in-region test used by the DNB filter.
@@ -164,13 +169,13 @@ listing's already-fetched travel time within `reuse_within_meters` (default 300m
 ```
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-pytest tests/rebuild -q      # 499 tests, zero warnings
+pytest tests/rebuild -q      # 557 tests, zero warnings
 ```
 
 The standing correctness checks (now that the legacy `main/`-comparison verify
 harnesses are gone) are:
 
-- **The full pytest suite** (`tests/rebuild/`, 499 tests).
+- **The full pytest suite** (`tests/rebuild/`, 557 tests).
 - **The fixture corpora** (`tests/rebuild/fixtures/`) — real, previously-legacy-verified
   FINN/DNB HTML pinned as golden input/output, so parsing behavior stays correct
   without needing the old `main.*` code at test time.
@@ -188,13 +193,41 @@ filters, the FINN search polygon, DNB region GUIDs, budget caps, and the three t
 destinations (BRJ, MVV, MVV-UNI) with their addresses and DB/sheet column names. This
 is the file to edit for anything domain-specific; no code change needed.
 
+## Follow-ups & standing notes
+
+*(Carried over from the retired `docs/rebuild/STATUS.md`, 2026-07-23. Standing
+rule kept from there: any new issue that can't be fixed immediately gets added
+HERE in the same commit that discovers it — never only in chat.)*
+
+- **`eiendom.updated_at` is NOT "last seen"** — upserts only bump it when a
+  column actually changes. Use `scraped_at` (first seen) or `active` instead.
+- **DNB activate-on-2nd-appearance quirk still exists** (`dnbeiendom`'s missing
+  `active` default; the eiendom-side quirk was killed 2026-07-21). Deliberate,
+  unported.
+- **Targeted travel re-request tool never ported** — `run validate-travel` only
+  flags suspicious rows; re-requesting them is manual. Low priority.
+- **Deferred minors** (none blocking): `deactivate_missing` empty-list guard;
+  AliasChoices for `SKANNONSER_DB_PATH`; anchor `DEFAULT_DOMAIN_PATH`;
+  `require_db()` on a 4th db command; supercronic checksum in Dockerfile;
+  backup `PRAGMA journal_mode=DELETE`; crawl archive `response.text` vs
+  legacy `content`; progress logging in long crawls.
+- **Server DB safety copies** live at `~/skannonser-pre*.db` on mbp2016 (eight
+  snapshots, 2026-07-20 → 07-22) — cheap insurance, delete manually someday.
+- **Sheet postnummer stays bug-compatible** (Sheets coerces `"0581"` → `581` on
+  its own); the DB/web values are zero-padded (migration 008 backfilled the
+  legacy-stripped rows). A `norm_postnummer` apostrophe-prefix fix exists in
+  `skannonser/publish/export.py` if the Sheet display ever needs to match.
+
 ## History
 
 This codebase is the result of a ground-up rebuild (2026-07-20 → 2026-07-22) of an
-earlier script collection. For the full story — design decisions, phase-by-phase
-progress, sanctioned behavior changes vs. the legacy system, and the final production
-cutover — see:
+earlier script collection, followed by a web-app UX/feature pass (2026-07-23:
+sold prices in the UI, freshness, tags, mobile layout, plus the fixes listed in
+that day's commits). For the full rebuild story — design decisions,
+phase-by-phase progress, sanctioned behavior changes vs. the legacy system, and
+the production cutover — see:
 
-- `docs/rebuild/STATUS.md` — the single pick-up point / end-state record.
 - `docs/superpowers/specs/` — the design specs (rebuild + earlier features).
 - `docs/superpowers/plans/` — the phase-by-phase implementation plans.
+- Git history — `docs/rebuild/STATUS.md` (the rebuild's running end-state
+  record, retired 2026-07-23) is fully preserved there.
