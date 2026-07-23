@@ -111,9 +111,24 @@ export function buildPopupContent(item, destinations) {
       addRow(dl, shortDest(d.key), mins + " min");
     }
   });
+
+  // Listing-details enrichment: the true cost picture + key filters.
+  addRow(dl, "Totalpris", fmtPris(item.totalpris));
+  addRow(dl, "Felleskost", fmtPris(item.felleskost_mnd) && fmtPris(item.felleskost_mnd) + "/mnd");
+  addRow(dl, "Mnd-kost", fmtPris(item.maanedskost) && fmtPris(item.maanedskost) + "/mnd");
+
   addRow(dl, "BRA-i", item.bra_i);
   addRow(dl, "Byggeår", item.byggeaar);
   addRow(dl, "Boligtype", item.boligtype);
+  addRow(dl, "Eieform", item.eieform);
+  addRow(dl, "Soverom", item.soverom);
+  if (item.energimerke) {
+    addRow(
+      dl,
+      "Energi",
+      item.energimerke + (item.energifarge ? " (" + item.energifarge + ")" : "")
+    );
+  }
   if (dl.childNodes.length) body.appendChild(dl);
 
   const links = el("div", "links");
