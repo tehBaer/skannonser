@@ -158,6 +158,19 @@ def _ins_station(conn, name, lat, lng, lines_travel):
     conn.commit()
 
 
+def _seed_details(conn, finnkode, **cols):
+    """Insert a ``listing_details`` row (migration 010) with ``finnkode`` plus
+    whatever columns the caller supplies. The ``eiendom`` row for ``finnkode``
+    must already exist (FK, ``PRAGMA foreign_keys=ON``)."""
+    columns = ["finnkode", *cols.keys()]
+    placeholders = ", ".join("?" for _ in columns)
+    conn.execute(
+        f"INSERT INTO listing_details ({', '.join(columns)}) VALUES ({placeholders})",
+        [finnkode, *cols.values()],
+    )
+    conn.commit()
+
+
 def _cell(header, rows, finnkode_or_pred, column):
     """Return the `column` cell of the row whose Finnkode matches."""
     fk_idx = header.index("Finnkode")
@@ -251,6 +264,29 @@ def test_eie_header_pinned():
 def test_eie_header_returned_matches_constant(conn):
     header, _ = eie_rows(conn)
     assert header == EIE_HEADER
+
+
+def test_eie_sheet_payload_unchanged_by_details(conn):
+    """listing_details enrichment (migration 010; Task 9) adds extra keys to
+    the row dicts ``rows.listing_rows`` returns, but ``eie_rows`` only ever
+    iterates ``EIE_HEADER`` names over those dicts -- extra keys must be
+    invisible to it. The sheet header/payload contract is frozen."""
+    _ins_eiendom(conn, "1", bra_i=100)
+    _ins_processed(conn, "1")
+    before = eie_rows(conn)
+
+    _seed_details(
+        conn, "1",
+        bedrooms=2, rooms=3, floor=2, eieform="Andel", nabolag="Sentrum",
+        totalpris=5_000_000, omkostninger=1000, fellesgjeld=2000,
+        felleskost_mnd=4000, fellesformue=3000, formuesverdi=4000,
+        kommunale_avg_aar=12000, energimerke="C", energifarge="green",
+        kommunenr="3301", gardsnr="1", bruksnr="2", seksjonsnr="3",
+        borettslag_navn="X", borettslag_orgnr="Y", borettslag_andelsnr="Z",
+    )
+    after = eie_rows(conn)
+
+    assert before == after
 
 
 # ---------------------------------------------------------------------------

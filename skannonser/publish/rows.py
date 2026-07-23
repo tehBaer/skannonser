@@ -16,6 +16,11 @@ before the split (just relocated).
 See ``export.py``'s module docstring ("FIDELITY TO LEGACY") for the full
 citation trail (db.py line numbers etc.) backing every column/filter below --
 none of that changed, only *where* the code lives.
+
+``_EIE_SELECT_TAIL``/``_EIE_JOINS`` additionally LEFT JOIN ``listing_details``
+(migration 010, aliased ``ld``) to carry its columns (SOVEROM/ROM/ETASJE/
+EIEFORM/... through BORETTSLAG_ANDELSNR) onto every eie-shaped query built
+from these fragments, ``NULL`` when a listing has no details row yet.
 """
 
 from __future__ import annotations
@@ -86,13 +91,35 @@ _EIE_SELECT_HEAD = """
 _EIE_SELECT_TAIL = """
     ep.travel_copy_from_finnkode AS "TRAVEL_COPY_FROM_FINNKODE",
     ep.google_maps_url AS "GOOGLE_MAPS_URL",
-    e.scraped_at AS "SCRAPED_AT"
+    e.scraped_at AS "SCRAPED_AT",
+    ld.bedrooms AS "SOVEROM",
+    ld.rooms AS "ROM",
+    ld.floor AS "ETASJE",
+    ld.eieform AS "EIEFORM",
+    ld.nabolag AS "NABOLAG",
+    ld.totalpris AS "TOTALPRIS",
+    ld.omkostninger AS "OMKOSTNINGER",
+    ld.fellesgjeld AS "FELLESGJELD",
+    ld.felleskost_mnd AS "FELLESKOST_MND",
+    ld.fellesformue AS "FELLESFORMUE",
+    ld.formuesverdi AS "FORMUESVERDI",
+    ld.kommunale_avg_aar AS "KOMMUNALE_AVG_AAR",
+    ld.energimerke AS "ENERGIMERKE",
+    ld.energifarge AS "ENERGIFARGE",
+    ld.kommunenr AS "KOMMUNENR",
+    ld.gardsnr AS "GARDSNR",
+    ld.bruksnr AS "BRUKSNR",
+    ld.seksjonsnr AS "SEKSJONSNR",
+    ld.borettslag_navn AS "BORETTSLAG_NAVN",
+    ld.borettslag_orgnr AS "BORETTSLAG_ORGNR",
+    ld.borettslag_andelsnr AS "BORETTSLAG_ANDELSNR"
 """
 
 _EIE_JOINS = """
     FROM eiendom e
     LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
     LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
+    LEFT JOIN listing_details ld ON ld.finnkode = e.finnkode
 """
 
 
@@ -171,6 +198,11 @@ def listing_rows(
     conn: sqlite3.Connection, *, include_hidden_fields: bool = False
 ) -> list[dict]:
     """Eie visibility-filtered, donor-resolved row dicts.
+
+    Also LEFT-joined against ``listing_details`` (migration 010, alias
+    ``ld``) via ``_EIE_JOINS``, so each dict additionally carries the
+    listing-details columns (``SOVEROM``/``EIEFORM``/... -- see
+    ``_EIE_SELECT_TAIL``), ``None`` when that listing has no details row.
 
     Identical SQL/filters/ordering to the query formerly inlined in
     ``export.eie_rows`` (see ``_EIE_SQL`` above). Each dict's keys are the

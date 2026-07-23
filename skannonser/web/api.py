@@ -189,6 +189,49 @@ def _sold_records(conn: sqlite3.Connection) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Listing-details enrichment (migration 010; Task 9)
+# ---------------------------------------------------------------------------
+
+def _facilities_by_finnkode(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """Every listing's facility strings in one query, alphabetical -- grouped
+    in Python rather than GROUP_CONCAT to avoid delimiter games."""
+    out: dict[str, list[str]] = {}
+    for row in conn.execute(
+        "SELECT finnkode, facility FROM listing_facilities ORDER BY finnkode, facility"
+    ):
+        out.setdefault(str(row["finnkode"]), []).append(row["facility"])
+    return out
+
+
+def _pris_kvm_totalpris(rec: dict) -> int | None:
+    """totalpris / BRA-i, rounded. Derived at query time, never stored
+    (design spec: stored copies go stale silently). None unless both inputs
+    are present and positive."""
+    try:
+        totalpris = float(rec.get("TOTALPRIS"))
+        bra_i = float(rec.get("Internt bruksareal (BRA-i)"))
+    except (TypeError, ValueError):
+        return None
+    if totalpris <= 0 or bra_i <= 0:
+        return None
+    return round(totalpris / bra_i)
+
+
+def _maanedskost(rec: dict) -> int | None:
+    """felleskost/mnd + kommunale avg/12. None when felleskost is unknown;
+    a missing kommunale-avg term contributes 0 (spec's NULL rule)."""
+    try:
+        felleskost = int(rec.get("FELLESKOST_MND"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        kommunale_mnd = round(int(rec.get("KOMMUNALE_AVG_AAR")) / 12)
+    except (TypeError, ValueError):
+        kommunale_mnd = 0
+    return felleskost + kommunale_mnd
+
+
+# ---------------------------------------------------------------------------
 # DNB-unique query
 # ---------------------------------------------------------------------------
 
@@ -247,7 +290,12 @@ def _dnb_records_all(conn: sqlite3.Connection) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _eie_item(
-    rec: dict, domain: DomainConfig, *, sold: bool, thumbs_dir: Path | None = None
+    rec: dict,
+    domain: DomainConfig,
+    *,
+    sold: bool,
+    thumbs_dir: Path | None = None,
+    facilities: list[str] | None = None,
 ) -> dict:
     finnkode = rec.get("_finnkode")
     item = {
@@ -270,6 +318,24 @@ def _eie_item(
         "scraped_at": rec.get("SCRAPED_AT"),
         "source": "eie",
         "sold": sold,
+        # Listing-details enrichment (migration 010; None/[] when unparsed).
+        "soverom": rec.get("SOVEROM"),
+        "rom": rec.get("ROM"),
+        "etasje": rec.get("ETASJE"),
+        "eieform": rec.get("EIEFORM"),
+        "nabolag": rec.get("NABOLAG"),
+        "energimerke": rec.get("ENERGIMERKE"),
+        "energifarge": rec.get("ENERGIFARGE"),
+        "totalpris": rec.get("TOTALPRIS"),
+        "omkostninger": rec.get("OMKOSTNINGER"),
+        "fellesgjeld": rec.get("FELLESGJELD"),
+        "felleskost_mnd": rec.get("FELLESKOST_MND"),
+        "fellesformue": rec.get("FELLESFORMUE"),
+        "formuesverdi": rec.get("FORMUESVERDI"),
+        "kommunale_avg_aar": rec.get("KOMMUNALE_AVG_AAR"),
+        "facilities": facilities or [],
+        "pris_kvm_totalpris": _pris_kvm_totalpris(rec),
+        "maanedskost": _maanedskost(rec),
     }
     if sold:
         # Only sold items carry the tinglyst outcome (see _SOLD_PRICE_COLS);
@@ -363,6 +429,7 @@ def get_listings(
 ) -> dict:
     domain = _domain(request)
     thumbs_dir = _thumbs_dir(request)
+    facs = _facilities_by_finnkode(conn)
 
     # `bucket=sold` returns ONLY the sold rows -- the map/table load actives
     # up front and lazily fetch sold on first toggle, so re-shipping the
@@ -373,13 +440,19 @@ def get_listings(
             raise HTTPException(status_code=400, detail=f"unknown bucket: {bucket!r}")
         return {
             "listings": [
-                _eie_item(rec, domain, sold=True, thumbs_dir=thumbs_dir)
+                _eie_item(
+                    rec, domain, sold=True, thumbs_dir=thumbs_dir,
+                    facilities=facs.get(rec.get("_finnkode")),
+                )
                 for rec in _sold_records(conn)
             ]
         }
 
     items = [
-        _eie_item(rec, domain, sold=False, thumbs_dir=thumbs_dir)
+        _eie_item(
+            rec, domain, sold=False, thumbs_dir=thumbs_dir,
+            facilities=facs.get(rec.get("_finnkode")),
+        )
         for rec in listing_rows(conn, include_hidden_fields=True)
     ]
     dnb_annotations = _dnb_annotations(conn)
@@ -394,7 +467,10 @@ def get_listings(
     ]
     if sold:
         items += [
-            _eie_item(rec, domain, sold=True, thumbs_dir=thumbs_dir)
+            _eie_item(
+                rec, domain, sold=True, thumbs_dir=thumbs_dir,
+                facilities=facs.get(rec.get("_finnkode")),
+            )
             for rec in _sold_records(conn)
         ]
     return {"listings": items}
@@ -443,7 +519,14 @@ def get_listing_detail(
 
     rec = _eie_full_row(conn, finnkode)
     if rec is not None:
-        item = _eie_item(rec, domain, sold=_sold_from_hidden(rec), thumbs_dir=thumbs_dir)
+        fac_rows = conn.execute(
+            "SELECT facility FROM listing_facilities WHERE finnkode = ? ORDER BY facility",
+            (finnkode,),
+        ).fetchall()
+        item = _eie_item(
+            rec, domain, sold=_sold_from_hidden(rec), thumbs_dir=thumbs_dir,
+            facilities=[r["facility"] for r in fac_rows],
+        )
         raw = {k: v for k, v in rec.items() if not k.startswith("_")}
         return {**raw, **item}
 
@@ -483,6 +566,27 @@ def get_meta(request: Request, conn: sqlite3.Connection = Depends(ro_conn)) -> d
         "boligtyper": boligtyper,
         "destinations": [{"key": d.key, "label": d.label} for d in domain.destinations],
         "stations": _stations_meta(conn),
+        "facilities": [
+            {"name": row["facility"], "count": row["n"]}
+            for row in conn.execute(
+                "SELECT facility, COUNT(*) AS n FROM listing_facilities "
+                "GROUP BY facility ORDER BY n DESC, facility"
+            )
+        ],
+        "energimerker": [
+            row["energimerke"]
+            for row in conn.execute(
+                "SELECT DISTINCT energimerke FROM listing_details "
+                "WHERE energimerke IS NOT NULL ORDER BY energimerke"
+            )
+        ],
+        "eieformer": [
+            row["eieform"]
+            for row in conn.execute(
+                "SELECT DISTINCT eieform FROM listing_details "
+                "WHERE eieform IS NOT NULL ORDER BY eieform"
+            )
+        ],
     }
 
 

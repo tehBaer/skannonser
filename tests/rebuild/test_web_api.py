@@ -187,6 +187,29 @@ def _by_finnkode(listings, finnkode):
     raise AssertionError(f"listing {finnkode!r} not found in {listings!r}")
 
 
+def _seed_details(conn_or_path, finnkode, **cols):
+    """Insert a ``listing_details`` row (migration 010) with ``finnkode`` plus
+    whatever columns the caller supplies -- unspecified columns stay NULL.
+    NOTE: the ``eiendom`` row for ``finnkode`` must already exist (FK,
+    ``PRAGMA foreign_keys=ON`` -- see ``connection.connect``)."""
+    conn = conn_or_path
+    columns = ["finnkode", *cols.keys()]
+    placeholders = ", ".join("?" for _ in columns)
+    conn.execute(
+        f"INSERT INTO listing_details ({', '.join(columns)}) VALUES ({placeholders})",
+        [finnkode, *cols.values()],
+    )
+    conn.commit()
+
+
+def _ins_facility(conn, finnkode, facility):
+    conn.execute(
+        "INSERT INTO listing_facilities (finnkode, facility) VALUES (?, ?)",
+        (finnkode, facility),
+    )
+    conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # /api/listings -- Eie shape + donor travel + annotations
 # ---------------------------------------------------------------------------
@@ -210,6 +233,11 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
         "finnkode", "adresse", "postnummer", "pris", "pris_kvm", "boligtype",
         "tilgjengelighet", "lat", "lng", "travel", "bra_i", "byggeaar", "url",
         "image", "kommentar", "tag", "scraped_at", "source", "sold",
+        # Listing-details enrichment (migration 010; Task 9).
+        "soverom", "rom", "etasje", "eieform", "nabolag", "energimerke",
+        "energifarge", "totalpris", "omkostninger", "fellesgjeld",
+        "felleskost_mnd", "fellesformue", "formuesverdi", "kommunale_avg_aar",
+        "facilities", "pris_kvm_totalpris", "maanedskost",
     }
     assert item["finnkode"] == "A"
     assert item["adresse"] == "Gata 1"
@@ -556,6 +584,103 @@ def test_meta_stations_carry_lines_travel_radius(db_path, client):
     # L1 gives Sandvika=0, L2 gives Sandvika=2 -> station-level min is 0.
     assert st["travel"]["Sandvika"] == 0
     assert st["travel"]["Sandvika Transfer"] == 5
+
+
+def test_meta_vocabularies(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "m1")
+    _ins_processed(conn, "m1")
+    _seed_details(conn, "m1", energimerke="C", eieform="Andel")
+    _ins_facility(conn, "m1", "Heis")
+
+    _ins_eiendom(conn, "m2")
+    _ins_processed(conn, "m2")
+    _seed_details(conn, "m2", energimerke="A")
+    _ins_facility(conn, "m2", "Heis")
+    _ins_facility(conn, "m2", "Peis/Ildsted")
+    conn.close()
+
+    meta = client.get("/api/meta").json()
+    assert meta["facilities"][0] == {"name": "Heis", "count": 2}
+    assert meta["energimerker"] == ["A", "C"]
+    assert meta["eieformer"] == ["Andel"]
+
+
+# ---------------------------------------------------------------------------
+# /api/listings + /api/listings/{finnkode} -- listing_details/facilities
+# enrichment (migration 010; Task 9)
+# ---------------------------------------------------------------------------
+
+def test_listings_carry_details_fields(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "1", bra_i=100)
+    _ins_processed(conn, "1")
+    _seed_details(
+        conn, "1",
+        totalpris=5_000_000, felleskost_mnd=4000, kommunale_avg_aar=12000,
+        bedrooms=2, eieform="Andel", energimerke="C",
+    )
+    _ins_facility(conn, "1", "Heis")
+    _ins_facility(conn, "1", "Garasje/P-plass")
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "1")
+    assert item["soverom"] == 2
+    assert item["eieform"] == "Andel"
+    assert item["energimerke"] == "C"
+    assert item["totalpris"] == 5_000_000
+    assert item["felleskost_mnd"] == 4000
+    assert item["facilities"] == ["Garasje/P-plass", "Heis"]
+    assert item["pris_kvm_totalpris"] == 50_000  # 5_000_000 / 100
+    assert item["maanedskost"] == 5000  # 4000 + 12000/12
+
+
+def test_details_absent_rows_get_nulls_and_empty_facilities(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "2")
+    _ins_processed(conn, "2")
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "2")
+    assert item["totalpris"] is None
+    assert item["facilities"] == []
+    assert item["pris_kvm_totalpris"] is None
+    assert item["maanedskost"] is None
+
+
+def test_maanedskost_null_kommunale_avg_contributes_zero(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "3")
+    _ins_processed(conn, "3")
+    _seed_details(conn, "3", felleskost_mnd=4000)
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "3")
+    assert item["maanedskost"] == 4000
+
+
+def test_sold_bucket_carries_details(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "sold-details", tilgjengelighet="Solgt", active=0)
+    _ins_processed(conn, "sold-details")
+    _seed_details(conn, "sold-details", totalpris=6_000_000)
+    conn.close()
+
+    listings = client.get("/api/listings", params={"bucket": "sold"}).json()["listings"]
+    item = _by_finnkode(listings, "sold-details")
+    assert item["totalpris"] == 6_000_000
+
+
+def test_detail_endpoint_exposes_matrikkel(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "111")
+    _ins_processed(conn, "111")
+    _seed_details(conn, "111", kommunenr="3301", borettslag_navn="X")
+    conn.close()
+
+    data = client.get("/api/listings/111").json()
+    assert data["KOMMUNENR"] == "3301"
+    assert data["BORETTSLAG_NAVN"] == "X"
 
 
 # ---------------------------------------------------------------------------
