@@ -111,12 +111,21 @@ def test_eieform_from_dom_dd():
 
 def test_eieform_fallback_maps_gam_enum():
     html = _gam_html([{"key": "ownership_type", "value": ["FREEHOLD"]}])
-    assert parse_details(html, "123").eieform == "Eier (selveier)"
+    assert parse_details(html, "123").eieform == "Selveier"
 
 
 def test_eieform_fallback_unknown_enum_kept_raw():
     html = _gam_html([{"key": "ownership_type", "value": ["MYSTERY"]}])
     assert parse_details(html, "123").eieform == "MYSTERY"
+
+
+def test_eieform_selveier_variants_canonicalized():
+    for raw in ("Selveier", "Eier (Selveier)", "Eier (selveier)"):
+        html = (
+            '<html><body><div data-testid="info-ownership-type">'
+            f"<dt>Eieform</dt><dd>{raw}</dd></div></body></html>"
+        )
+        assert parse_details(html, "123").eieform == "Selveier", raw
 
 
 def test_nabolag():
@@ -139,6 +148,17 @@ def test_energy_bare_heading_is_none():
     html = '<html><body><div data-testid="energy-label">Energimerking</div></body></html>'
     d = parse_details(html, "123")
     assert d.energimerke is None and d.energifarge is None
+
+
+def test_energy_colour_only_yields_none_letter():
+    html = (
+        '<html><body><div data-testid="energy-label">'
+        '<dt>Energimerking</dt><dd><span data-testid="energy-label-info"> - Oransje</span></dd>'
+        "</div></body></html>"
+    )
+    d = parse_details(html, "123")
+    assert d.energimerke is None
+    assert d.energifarge == "Oransje"
 
 
 def test_facilities_list():

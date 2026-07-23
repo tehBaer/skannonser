@@ -65,7 +65,7 @@ def _gam_targeting(soup) -> dict[str, list]:
 # GAM ownership_type enum -> Norwegian display value, used only when the
 # key-info <dd> is absent. An unknown enum is stored raw rather than lost.
 _OWNERSHIP_ENUM = {
-    "FREEHOLD": "Eier (selveier)",
+    "FREEHOLD": "Selveier",
     "PART_OWNERSHIP": "Andel",
     "STOCK": "Aksje",
 }
@@ -79,6 +79,16 @@ def _first_int(targeting: dict, key: str) -> int | None:
         return None
 
 
+def _canonicalize_eieform(text: str) -> str:
+    """Real ads spell freehold three ways -- 'Selveier', 'Eier (Selveier)',
+    and our own GAM-enum fallback 'Eier (selveier)' -- all mean the same
+    thing and are canonicalized to 'Selveier'. Everything else ('Andel',
+    'Aksje', ...) passes through unchanged."""
+    if text.casefold() in ("eier (selveier)", "selveier"):
+        return "Selveier"
+    return text
+
+
 def _eieform(soup, targeting: dict) -> str | None:
     element = soup.find(attrs={"data-testid": "info-ownership-type"})
     if element is not None:
@@ -86,7 +96,7 @@ def _eieform(soup, targeting: dict) -> str | None:
         if dd is not None:
             text = dd.get_text(strip=True)
             if text:
-                return text
+                return _canonicalize_eieform(text)
     values = targeting.get("ownership_type") or []
     if values:
         raw = str(values[0])
@@ -103,7 +113,9 @@ def _nabolag(soup) -> str | None:
 
 def _energy(soup) -> tuple[str | None, str | None]:
     """'Energimerking A - Mørkegrønn' -> ('A', 'Mørkegrønn'). A bare
-    'Energimerking' heading (grade missing on the ad) -> (None, None)."""
+    'Energimerking' heading (grade missing on the ad) -> (None, None).
+    Some ads carry a colour with no letter -- 'Energimerking - Oransje'
+    (leading dash after stripping the prefix) -> (None, 'Oransje')."""
     element = soup.find(attrs={"data-testid": "energy-label"})
     if element is None:
         return None, None
@@ -111,6 +123,9 @@ def _energy(soup) -> tuple[str | None, str | None]:
     text = re.sub(r"^Energimerking\s*", "", text).strip()
     if not text:
         return None, None
+    if text.startswith("-"):
+        colour = text.lstrip("-").strip()
+        return None, colour or None
     if " - " in text:
         letter, colour = text.split(" - ", 1)
         return letter.strip() or None, colour.strip() or None
