@@ -13,7 +13,7 @@ EXPECTED_TABLES = {
 ALL_MIGRATIONS = [
     "001_adopt_live_schema", "002_notify_tables", "003_api_usage",
     "004_dnb_travel", "005_annotations", "006_sold_prices",
-    "007_sold_sweep_state",
+    "007_sold_sweep_state", "008_postnummer_pad",
 ]
 
 
@@ -139,6 +139,43 @@ def test_migration_005_creates_annotations_table(tmp_path):
     assert cols == {"finnkode", "kommentar", "tag", "imported_at", "updated_at"}
     pk_cols = [r["name"] for r in conn.execute("PRAGMA table_info(annotations)") if r["pk"]]
     assert pk_cols == ["finnkode"]
+
+
+def test_migration_008_pads_legacy_stripped_postnummer(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    migrations.migrate(conn)
+    # Simulate a pre-008 database: un-record 008, then seed rows in the mixed
+    # legacy/new forms the backfill must (and must not) touch.
+    conn.execute("DELETE FROM schema_migrations WHERE id = '008_postnummer_pad'")
+    conn.executemany(
+        "INSERT INTO eiendom (finnkode, postnummer) VALUES (?, ?)",
+        [
+            ("legacy-3", "581"),      # stripped -> pad
+            ("legacy-2", "57"),       # stripped -> pad
+            ("modern", "0581"),       # already 4-digit -> untouched
+            ("weird", "N/A"),         # non-numeric -> untouched
+            ("empty", ""),            # blank -> untouched
+            ("nullpc", None),         # NULL -> untouched
+        ],
+    )
+    conn.execute(
+        "INSERT INTO dnbeiendom (url, postnummer, active) VALUES (?, ?, 1)",
+        ("https://dnb/legacy", "172"),
+    )
+    conn.commit()
+
+    assert migrations.migrate(conn) == ["008_postnummer_pad"]
+
+    got = {
+        r["finnkode"]: r["postnummer"]
+        for r in conn.execute("SELECT finnkode, postnummer FROM eiendom")
+    }
+    assert got == {
+        "legacy-3": "0581", "legacy-2": "0057", "modern": "0581",
+        "weird": "N/A", "empty": "", "nullpc": None,
+    }
+    dnb_pc = conn.execute("SELECT postnummer FROM dnbeiendom").fetchone()["postnummer"]
+    assert dnb_pc == "0172"
 
 
 def test_statements_keeps_trigger_block_intact():

@@ -25,10 +25,16 @@ def test_normalizers_match_legacy():
 
     pc_pairs = [
         ("0155", "0155"),
-        (155, "155"),
+        # SANCTIONED DIVERGENCE (2026-07-23): legacy returned "155" here, so a
+        # legacy-stripped eiendom postnummer could never match a zero-padded
+        # DNB one. normalize_pc now pads short numeric codes to 4 digits
+        # (mirrors migration 008's stored-value backfill).
+        (155, "0155"),
+        ("581", "0581"),
         ("0155.0", "0155"),
         (None, ""),
         ("", ""),
+        ("N/A", "N/A"),
     ]
     for raw, expected in pc_pairs:
         assert normalize_pc(raw) == expected
