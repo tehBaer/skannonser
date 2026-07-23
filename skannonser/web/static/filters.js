@@ -64,6 +64,13 @@ function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+// Like num(), but null/undefined/"" stay null instead of coercing to 0 --
+// the details filters must distinguish "unknown" from an actual zero.
+function numOrNull(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
 // matchesMetricFilters (map.html 3813-3843), inverted: returns TRUE when the
 // listing should be DIMMED (fails at least one active metric filter).
@@ -106,7 +113,7 @@ export function metricDimmed(item, ui, meta) {
 
   // Min soverom.
   if (f.soveromMin > 0) {
-    const soverom = num(item.soverom);
+    const soverom = numOrNull(item.soverom);
     if (soverom == null) {
       if (unknownDims) return true;
     } else if (soverom < f.soveromMin) {
@@ -116,7 +123,7 @@ export function metricDimmed(item, ui, meta) {
 
   // Max totalpris.
   if (f.totalprisMax < TOTALPRIS_MAX) {
-    const totalpris = num(item.totalpris);
+    const totalpris = numOrNull(item.totalpris);
     if (totalpris == null) {
       if (unknownDims) return true;
     } else if (totalpris > f.totalprisMax) {
@@ -126,7 +133,7 @@ export function metricDimmed(item, ui, meta) {
 
   // Max felleskost/mnd.
   if (f.felleskostMax < FELLESKOST_MAX) {
-    const felleskost = num(item.felleskost_mnd);
+    const felleskost = numOrNull(item.felleskost_mnd);
     if (felleskost == null) {
       if (unknownDims) return true;
     } else if (felleskost > f.felleskostMax) {
