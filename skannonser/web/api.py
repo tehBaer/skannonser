@@ -19,6 +19,13 @@ Three listing "buckets" are merged into ``/api/listings``:
   should withhold them if a sold listing happens to carry one) and the same
   hidden-field enrichment as ``listing_rows`` (via ``rows._add_hidden_fields``,
   extracted for exactly this reuse). ``source: "eie"``, ``sold: true``.
+  Sold items additionally carry the tinglyst outcome (``sold_price``/
+  ``sold_date``/``price_suggestion``, LEFT-joined off ``sold_prices``) --
+  null when the sold-price backlog hasn't covered that finnkode yet.
+  ``?bucket=sold`` returns ONLY this bucket (no re-shipped actives; the lazy
+  sold toggle in the map/table uses it). Every item also carries
+  ``scraped_at`` (first-seen; ``eiendom.updated_at`` is NOT last-seen, see
+  README).
 * **DNB-unique** -- a fresh query against ``dnbeiendom`` mirroring
   ``export.dnb_rows``'s selection/filters (active, price-capped,
   ``duplicate_of_finnkode`` excluded -- see that function's docstring for the
@@ -144,6 +151,14 @@ def _has_thumb(thumbs_dir: Path | None, identifier: str, image_url_present: bool
 # export.sold_rows which is sheet-shaped)
 # ---------------------------------------------------------------------------
 
+# Tinglyst sold-price columns (migration 006) joined onto sold rows so the web
+# UI can show the actual sale outcome next to the last-seen asking price.
+_SOLD_PRICE_COLS = (
+    ', sp.sold_price AS "SOLD_PRICE", sp.sold_date AS "SOLD_DATE"'
+    ', sp.price_suggestion AS "PRICE_SUGGESTION"'
+)
+_SOLD_PRICE_JOIN = " LEFT JOIN sold_prices sp ON sp.finnkode = e.finnkode"
+
 _SOLD_API_SQL = (
     "SELECT "
     + _EIE_SELECT_HEAD
@@ -151,8 +166,10 @@ _SOLD_API_SQL = (
     + ", "
     + _EIE_SELECT_TAIL
     + ', a.kommentar AS "Kommentar", a.tag AS "Tag"'
+    + _SOLD_PRICE_COLS
     + _EIE_JOINS
     + " LEFT JOIN annotations a ON a.finnkode = e.finnkode"
+    + _SOLD_PRICE_JOIN
     + " WHERE e.active = 0"
     + " AND LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) IN ('solgt', 'inaktiv')"
     + " AND COALESCE(e.pris, 0) <= ?"
@@ -186,7 +203,8 @@ _DNB_API_SQL = (
     '    d.lat AS "LAT",'
     '    d.lng AS "LNG",'
     '    d.pendl_rush_brj AS "PENDL RUSH BRJ",'
-    '    d.pendl_rush_mvv AS "PENDL RUSH MVV"'
+    '    d.pendl_rush_mvv AS "PENDL RUSH MVV",'
+    '    d.scraped_at AS "SCRAPED_AT"'
     + " FROM dnbeiendom d"
     + " WHERE d.active = 1 AND COALESCE(d.pris, 0) <= ?"
     + " AND (d.duplicate_of_finnkode IS NULL OR TRIM(d.duplicate_of_finnkode) = '')"
@@ -217,7 +235,8 @@ def _dnb_records_all(conn: sqlite3.Connection) -> list[dict]:
         '    d.lat AS "LAT",'
         '    d.lng AS "LNG",'
         '    d.pendl_rush_brj AS "PENDL RUSH BRJ",'
-        '    d.pendl_rush_mvv AS "PENDL RUSH MVV"'
+        '    d.pendl_rush_mvv AS "PENDL RUSH MVV",'
+        '    d.scraped_at AS "SCRAPED_AT"'
         + " FROM dnbeiendom d"
     )
     return _rows_from_cursor(conn.execute(sql))
@@ -231,7 +250,7 @@ def _eie_item(
     rec: dict, domain: DomainConfig, *, sold: bool, thumbs_dir: Path | None = None
 ) -> dict:
     finnkode = rec.get("_finnkode")
-    return {
+    item = {
         "finnkode": finnkode,
         "adresse": rec.get("ADRESSE"),
         "postnummer": rec.get("Postnummer"),
@@ -248,9 +267,17 @@ def _eie_item(
         "image": _has_thumb(thumbs_dir, finnkode, bool(rec.get("_image_url"))),
         "kommentar": rec.get("Kommentar"),
         "tag": rec.get("Tag"),
+        "scraped_at": rec.get("SCRAPED_AT"),
         "source": "eie",
         "sold": sold,
     }
+    if sold:
+        # Only sold items carry the tinglyst outcome (see _SOLD_PRICE_COLS);
+        # actives omit the keys entirely rather than shipping always-null noise.
+        item["sold_price"] = rec.get("SOLD_PRICE")
+        item["sold_date"] = rec.get("SOLD_DATE")
+        item["price_suggestion"] = rec.get("PRICE_SUGGESTION")
+    return item
 
 
 def _dnb_item(
@@ -291,6 +318,7 @@ def _dnb_item(
         "image": _has_thumb(thumbs_dir, identifier, False),
         "kommentar": kommentar,
         "tag": tag,
+        "scraped_at": rec.get("SCRAPED_AT"),
         "source": "dnb",
         "sold": False,
     }
@@ -330,10 +358,26 @@ def _sold_from_hidden(rec: dict) -> bool:
 def get_listings(
     request: Request,
     sold: int = 0,
+    bucket: str | None = None,
     conn: sqlite3.Connection = Depends(ro_conn),
 ) -> dict:
     domain = _domain(request)
     thumbs_dir = _thumbs_dir(request)
+
+    # `bucket=sold` returns ONLY the sold rows -- the map/table load actives
+    # up front and lazily fetch sold on first toggle, so re-shipping the
+    # actives they already hold (the `sold=1` merged shape) is pure waste.
+    # `sold=1` keeps its original merged behavior for compatibility.
+    if bucket is not None:
+        if bucket != "sold":
+            raise HTTPException(status_code=400, detail=f"unknown bucket: {bucket!r}")
+        return {
+            "listings": [
+                _eie_item(rec, domain, sold=True, thumbs_dir=thumbs_dir)
+                for rec in _sold_records(conn)
+            ]
+        }
+
     items = [
         _eie_item(rec, domain, sold=False, thumbs_dir=thumbs_dir)
         for rec in listing_rows(conn, include_hidden_fields=True)
@@ -366,8 +410,10 @@ def _eie_full_row(conn: sqlite3.Connection, finnkode: str) -> dict | None:
         + ", "
         + _EIE_SELECT_TAIL
         + ', a.kommentar AS "Kommentar", a.tag AS "Tag"'
+        + _SOLD_PRICE_COLS
         + _EIE_JOINS
         + " LEFT JOIN annotations a ON a.finnkode = e.finnkode"
+        + _SOLD_PRICE_JOIN
         + " WHERE e.finnkode = ?"
     )
     records = _rows_from_cursor(conn.execute(sql, (finnkode,)))

@@ -3,7 +3,7 @@ Phase 5 Task 4: annotations CRUD).
 
 Seeds tmp DBs via raw SQL (same helpers/conventions as test_export.py -- full
 control over every column, no reliance on ListingsRepo's activation timing).
-Note (per docs/rebuild/STATUS.md): first-appearance activation is now LIVE
+Note (per the rebuild record, git history): first-appearance activation is LIVE
 (a single upsert is `active=1`), but since these tests write `eiendom` rows
 directly with an explicit `active=` column, that pipeline-level change has no
 bearing here -- every row's visibility is exactly what its `active`/
@@ -209,7 +209,7 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
     assert set(item.keys()) == {
         "finnkode", "adresse", "postnummer", "pris", "pris_kvm", "boligtype",
         "tilgjengelighet", "lat", "lng", "travel", "bra_i", "byggeaar", "url",
-        "image", "kommentar", "tag", "source", "sold",
+        "image", "kommentar", "tag", "scraped_at", "source", "sold",
     }
     assert item["finnkode"] == "A"
     assert item["adresse"] == "Gata 1"
@@ -296,6 +296,114 @@ def test_sold_excluded_by_default_included_with_param(db_path, client):
     assert sold_item["source"] == "eie"
     visible_item = _by_finnkode(listings, "visible")
     assert visible_item["sold"] is False
+
+
+def test_bucket_sold_returns_only_sold(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "visible")
+    _ins_processed(conn, "visible")
+    _ins_eiendom(conn, "sold-one", tilgjengelighet="Solgt", active=0)
+    _ins_processed(conn, "sold-one")
+    _ins_dnb(conn, "https://dnb/x")
+    conn.close()
+
+    resp = client.get("/api/listings", params={"bucket": "sold"})
+    listings = resp.json()["listings"]
+    assert {i["finnkode"] for i in listings} == {"sold-one"}
+    assert all(i["sold"] is True for i in listings)
+
+
+def test_bucket_unknown_400(client):
+    resp = client.get("/api/listings", params={"bucket": "nope"})
+    assert resp.status_code == 400
+
+
+def _ins_sold_price(
+    conn,
+    finnkode,
+    *,
+    sold_price=6_150_000,
+    sold_date="2026-05-12",
+    price_suggestion=5_750_000,
+):
+    conn.execute(
+        "INSERT INTO sold_prices (finnkode, sold_price, sold_date, price_suggestion) "
+        "VALUES (?, ?, ?, ?)",
+        (finnkode, sold_price, sold_date, price_suggestion),
+    )
+    conn.commit()
+
+
+def test_sold_item_carries_sold_price_fields(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "sold-priced", tilgjengelighet="Solgt", active=0)
+    _ins_processed(conn, "sold-priced")
+    _ins_sold_price(conn, "sold-priced")
+    _ins_eiendom(conn, "sold-unpriced", tilgjengelighet="Solgt", active=0)
+    _ins_processed(conn, "sold-unpriced")
+    conn.close()
+
+    listings = client.get("/api/listings", params={"bucket": "sold"}).json()["listings"]
+    priced = _by_finnkode(listings, "sold-priced")
+    assert priced["sold_price"] == 6_150_000
+    assert priced["sold_date"] == "2026-05-12"
+    assert priced["price_suggestion"] == 5_750_000
+    unpriced = _by_finnkode(listings, "sold-unpriced")
+    assert unpriced["sold_price"] is None
+    assert unpriced["sold_date"] is None
+    assert unpriced["price_suggestion"] is None
+
+
+def test_active_item_has_no_sold_price_keys(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "active-one")
+    _ins_processed(conn, "active-one")
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "active-one")
+    assert "sold_price" not in item
+
+
+def test_scraped_at_exposed_on_all_buckets(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "active-one", scraped_at="2026-07-01T01:02:03")
+    _ins_processed(conn, "active-one")
+    _ins_eiendom(
+        conn, "sold-one", tilgjengelighet="Solgt", active=0,
+        scraped_at="2026-06-01T01:02:03",
+    )
+    _ins_processed(conn, "sold-one")
+    _ins_dnb(conn, "https://dnb/x", scraped_at="2026-07-02T03:04:05")
+    conn.close()
+
+    listings = client.get("/api/listings", params={"sold": 1}).json()["listings"]
+    assert _by_finnkode(listings, "active-one")["scraped_at"] == "2026-07-01T01:02:03"
+    assert _by_finnkode(listings, "sold-one")["scraped_at"] == "2026-06-01T01:02:03"
+    dnb = [i for i in listings if i["source"] == "dnb"]
+    assert dnb and dnb[0]["scraped_at"] == "2026-07-02T03:04:05"
+
+
+def test_listing_detail_sold_carries_sold_price_fields(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "sold-priced", tilgjengelighet="Solgt", active=0)
+    _ins_processed(conn, "sold-priced")
+    _ins_sold_price(conn, "sold-priced", sold_price=7_000_000)
+    conn.close()
+
+    detail = client.get("/api/listings/sold-priced").json()
+    assert detail["sold"] is True
+    assert detail["sold_price"] == 7_000_000
+
+
+def test_responses_are_gzipped_when_accepted(db_path, client):
+    conn = _conn(db_path)
+    for i in range(30):  # enough rows to clear the gzip minimum-size threshold
+        _ins_eiendom(conn, f"g{i}")
+        _ins_processed(conn, f"g{i}")
+    conn.close()
+
+    resp = client.get("/api/listings", headers={"Accept-Encoding": "gzip"})
+    assert resp.headers.get("content-encoding") == "gzip"
 
 
 # ---------------------------------------------------------------------------

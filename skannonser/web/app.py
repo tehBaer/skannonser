@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Iterator
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -134,6 +135,9 @@ def create_app(
     thumbs_dir: Path | None = Path("data/thumbs"),
 ) -> FastAPI:
     app = FastAPI(title="skannonser")
+    # The listings payload is large, repetitive JSON (~1.7 MB with sold rows);
+    # gzip cuts it roughly 8x over the tailnet. Small responses skip it.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.state.db_path = db_path
     app.state.domain = domain
     app.state.thumbs_dir = thumbs_dir
