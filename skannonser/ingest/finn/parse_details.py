@@ -62,12 +62,59 @@ def _gam_targeting(soup) -> dict[str, list]:
         return {}
 
 
+# GAM ownership_type enum -> Norwegian display value, used only when the
+# key-info <dd> is absent. An unknown enum is stored raw rather than lost.
+_OWNERSHIP_ENUM = {
+    "FREEHOLD": "Eier (selveier)",
+    "PART_OWNERSHIP": "Andel",
+    "STOCK": "Aksje",
+}
+
+
 def _first_int(targeting: dict, key: str) -> int | None:
     values = targeting.get(key) or []
     try:
         return int(str(values[0]))
     except (IndexError, ValueError, TypeError):
         return None
+
+
+def _eieform(soup, targeting: dict) -> str | None:
+    element = soup.find(attrs={"data-testid": "info-ownership-type"})
+    if element is not None:
+        dd = element.find("dd")
+        if dd is not None:
+            text = dd.get_text(strip=True)
+            if text:
+                return text
+    values = targeting.get("ownership_type") or []
+    if values:
+        raw = str(values[0])
+        return _OWNERSHIP_ENUM.get(raw, raw)
+    return None
+
+
+def _nabolag(soup) -> str | None:
+    element = soup.find(attrs={"data-testid": "local-area-name"})
+    if element is None:
+        return None
+    return element.get_text(strip=True) or None
+
+
+def _energy(soup) -> tuple[str | None, str | None]:
+    """'Energimerking A - Mørkegrønn' -> ('A', 'Mørkegrønn'). A bare
+    'Energimerking' heading (grade missing on the ad) -> (None, None)."""
+    element = soup.find(attrs={"data-testid": "energy-label"})
+    if element is None:
+        return None, None
+    text = element.get_text(" ", strip=True)
+    text = re.sub(r"^Energimerking\s*", "", text).strip()
+    if not text:
+        return None, None
+    if " - " in text:
+        letter, colour = text.split(" - ", 1)
+        return letter.strip() or None, colour.strip() or None
+    return text, None
 
 
 # dt label -> ListingDetails field, exactly as they appear in the
@@ -117,10 +164,15 @@ def _pricing_details(soup) -> dict:
 def parse_details(html: str, finnkode: str) -> ListingDetails:
     soup = BeautifulSoup(html, "html.parser")
     targeting = _gam_targeting(soup)
+    energimerke, energifarge = _energy(soup)
     return ListingDetails(
         finnkode=finnkode,
         bedrooms=_first_int(targeting, "bedrooms"),
         rooms=_first_int(targeting, "rooms"),
         floor=_first_int(targeting, "floor"),
+        eieform=_eieform(soup, targeting),
+        nabolag=_nabolag(soup),
+        energimerke=energimerke,
+        energifarge=energifarge,
         **_pricing_details(soup),
     )

@@ -99,3 +99,43 @@ def test_unknown_dt_label_ignored():
 def test_missing_pricing_section_all_money_none():
     d = parse_details("<html><body></body></html>", "123")
     assert d.totalpris is None and d.felleskost_mnd is None
+
+
+def test_eieform_from_dom_dd():
+    html = (
+        '<html><body><div data-testid="info-ownership-type">'
+        "<dt>Eieform</dt><dd>Andel</dd></div></body></html>"
+    )
+    assert parse_details(html, "123").eieform == "Andel"
+
+
+def test_eieform_fallback_maps_gam_enum():
+    html = _gam_html([{"key": "ownership_type", "value": ["FREEHOLD"]}])
+    assert parse_details(html, "123").eieform == "Eier (selveier)"
+
+
+def test_eieform_fallback_unknown_enum_kept_raw():
+    html = _gam_html([{"key": "ownership_type", "value": ["MYSTERY"]}])
+    assert parse_details(html, "123").eieform == "MYSTERY"
+
+
+def test_nabolag():
+    html = '<html><body><span data-testid="local-area-name">Bragernes sentrum</span></body></html>'
+    assert parse_details(html, "123").nabolag == "Bragernes sentrum"
+
+
+def test_energy_splits_letter_and_colour():
+    html = (
+        '<html><body><div data-testid="energy-label">'
+        "Energimerking A - Mørkegrønn</div></body></html>"
+    )
+    d = parse_details(html, "123")
+    assert d.energimerke == "A"
+    assert d.energifarge == "Mørkegrønn"
+
+
+def test_energy_bare_heading_is_none():
+    # A real fixture case: the section exists but carries no grade.
+    html = '<html><body><div data-testid="energy-label">Energimerking</div></body></html>'
+    d = parse_details(html, "123")
+    assert d.energimerke is None and d.energifarge is None
