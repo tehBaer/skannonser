@@ -9,30 +9,38 @@
 </head>
 <body>
   <div id="app">
+    <button id="sidebar-toggle" aria-label="Meny" aria-expanded="false">☰</button>
     <aside id="sidebar">
       <h1 class="brand">skannonser</h1>
 
-      <section class="panel">
-        <h2>Lag</h2>
+      <details class="panel" id="lag-panel" open>
+        <summary><h2>Lag</h2></summary>
         <label class="toggle"><input type="checkbox" id="toggle-eie" checked> Eie</label>
         <label class="toggle"><input type="checkbox" id="toggle-dnb" checked> DNB</label>
         <label class="toggle"><input type="checkbox" id="toggle-sold"> Solgt</label>
         <label class="toggle"><input type="checkbox" id="toggle-combine-sold"> Klyng solgte + aktive sammen</label>
-      </section>
+        <label class="toggle"><input type="checkbox" id="toggle-sold-premium"> Farg solgte etter budpremie</label>
+        <div id="premium-legend" class="legend" hidden></div>
+      </details>
 
-      <section class="panel" id="boligtype-filter-panel">
-        <h2>Boligtype</h2>
+      <details class="panel" id="boligtype-filter-panel" open>
+        <summary><h2>Boligtype</h2></summary>
         <div id="boligtype-filter" class="legend muted">Laster …</div>
         <div id="source-legend" class="legend legend-keys"></div>
-      </section>
+      </details>
 
-      <section class="panel" id="filter-panel">
-        <h2>Filtre</h2>
+      <details class="panel" id="tag-panel" open>
+        <summary><h2>Tags</h2></summary>
+        <div id="tag-filter" class="legend muted">Laster …</div>
+      </details>
+
+      <details class="panel" id="filter-panel" open>
+        <summary><h2>Filtre</h2></summary>
         <div id="metric-filters" class="muted">Laster …</div>
-      </section>
+      </details>
 
-      <section class="panel" id="stations-panel">
-        <h2>Stasjoner</h2>
+      <details class="panel" id="stations-panel" open>
+        <summary><h2>Stasjoner</h2></summary>
         <label class="toggle"><input type="checkbox" id="toggle-stations"> Vis stasjoner og radius</label>
         <label class="toggle"><input type="checkbox" id="toggle-hide-outside"> Ton ned utenfor radius</label>
         <div class="filter-row">
@@ -45,20 +53,21 @@
         <label class="toggle"><input type="checkbox" id="toggle-transfer"> Inkluder bytte (via Oslo S)</label>
         <h3 class="subhead">Linjer</h3>
         <div id="line-toggles" class="legend muted">Laster …</div>
-      </section>
+      </details>
 
-      <section class="panel" id="missing-coords-panel">
-        <h2>Uten koordinater</h2>
+      <details class="panel" id="missing-coords-panel" open>
+        <summary><h2>Uten koordinater</h2></summary>
         <div id="missing-coords" class="muted">Laster …</div>
-      </section>
+      </details>
 
-      <section class="panel" id="table-link-panel">
-        <h2>Tabell</h2>
+      <details class="panel" id="table-link-panel" open>
+        <summary><h2>Tabell</h2></summary>
         <a href="/table" id="nav-table">Tabell</a>
-      </section>
+      </details>
 
       <div id="status" class="status muted"></div>
     </aside>
+    <div id="drawer-backdrop"></div>
     <div id="map"></div>
   </div>
 

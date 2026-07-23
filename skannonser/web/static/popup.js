@@ -8,6 +8,7 @@
 // re-open reflects the saved values.
 
 import { saveAnnotation } from "./annotations.js";
+import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -36,8 +37,15 @@ function el(tag, cls, text) {
 function addRow(dl, label, value) {
   if (value === null || value === undefined || value === "") return;
   dl.appendChild(el("dt", null, label));
-  dl.appendChild(el("dd", null, String(value)));
+  if (value instanceof Node) {
+    const dd = el("dd");
+    dd.appendChild(value);
+    dl.appendChild(dd);
+  } else {
+    dl.appendChild(el("dd", null, String(value)));
+  }
 }
+
 
 // destinations: [{key,label}] from /api/meta (for the travel-minute rows).
 export function buildPopupContent(item, destinations) {
@@ -60,6 +68,7 @@ export function buildPopupContent(item, destinations) {
   const tag = el("span", "source-tag" + (item.sold ? " sold" : item.source === "dnb" ? " dnb" : ""));
   tag.textContent = item.sold ? "Solgt" : item.source === "dnb" ? "DNB" : "Eie";
   addr.appendChild(tag);
+  if (isNew(item)) addr.appendChild(el("span", "ny-badge", "Ny"));
   body.appendChild(addr);
 
   const prisText = fmtPris(item.pris);
@@ -72,6 +81,29 @@ export function buildPopupContent(item, destinations) {
   }
 
   const dl = el("dl");
+
+  // Sold outcome (tinglyst) first, so the sale result sits right under the
+  // last-seen asking price it should be read against.
+  if (item.sold) {
+    const soldText = fmtPris(item.sold_price);
+    if (soldText) {
+      addRow(dl, "Solgt for", soldText);
+      const dateText = fmtDate(item.sold_date);
+      if (dateText) addRow(dl, "Solgt dato", dateText);
+      const pct = premiumPct(item);
+      if (pct != null) {
+        const span = el(
+          "span",
+          pct >= 0 ? "premie-pos" : "premie-neg",
+          fmtPremium(pct) + " vs prisant."
+        );
+        addRow(dl, "Budpremie", span);
+      }
+    } else {
+      addRow(dl, "Solgt pris", el("span", "ingen-solgtpris", "ingen tinglyst pris ennå"));
+    }
+  }
+
   const travel = item.travel || {};
   (destinations || []).forEach((d) => {
     const mins = travel[d.key];
@@ -145,6 +177,10 @@ function buildEditor(item) {
       tagInput.value = saved.tag || "";
       feedback.className = "saved";
       feedback.textContent = "Lagret ✓";
+      // Let app.js refresh tag-dependent UI (tag filter list, tag rings).
+      document.dispatchEvent(
+        new CustomEvent("sk-annotation-saved", { detail: { finnkode: item.finnkode } })
+      );
     } catch (err) {
       feedback.className = "error";
       feedback.textContent = "Feil: " + err.message;

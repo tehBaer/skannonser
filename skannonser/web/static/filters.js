@@ -126,9 +126,14 @@ function rangeRow(parent, { label, min, max, step, value, fmt, onInput }) {
   const paint = () => {
     val.textContent = fmt(Number(input.value));
   };
+  // The value label repaints on every tick; the actual onInput (which
+  // triggers a full re-cluster of every source) is trailing-debounced so a
+  // drag costs one rebuild, not one per pixel.
+  let debounce = null;
   input.addEventListener("input", () => {
     paint();
-    onInput(Number(input.value));
+    clearTimeout(debounce);
+    debounce = setTimeout(() => onInput(Number(input.value)), 120);
   });
   paint();
   wrap.appendChild(head);

@@ -71,13 +71,18 @@ export function boligtypePalette(boligtyper) {
 }
 
 export function createMap(container) {
-  return new maplibregl.Map({
+  const map = new maplibregl.Map({
     container,
     style: OSM_STYLE,
-    center: [10.75, 59.91], // Oslo
+    center: [10.75, 59.91], // Oslo (pre-fitBounds fallback; app.js fits the polygon)
     zoom: 10,
     attributionControl: true,
   });
+  map.addControl(
+    new maplibregl.NavigationControl({ showCompass: false }),
+    "top-right"
+  );
+  return map;
 }
 
 // --- group model ------------------------------------------------------------
@@ -165,6 +170,45 @@ const SOLD_BORDER = "#ffffff";
 const IS_SOLD = ["==", ["get", "sold"], true];
 const NOT_SOLD = ["==", ["get", "sold"], false];
 
+// Ring drawn beneath any listing that carries a tag -- the "this one is
+// annotated" marker, independent of boligtype colour.
+const TAG_RING_COLOR = "#7c3aed";
+
+// Sold-dot colour in "budpremie" mode: tinglyst sold price vs prisantydning,
+// bucketed. `premium` is a percent number precomputed on the feature
+// (app.js); features without one (no tinglyst price yet) stay neutral.
+const PREMIUM_COLOR = [
+  "case",
+  ["!", ["has", "premium"]], "#b9c4be",
+  ["<", ["get", "premium"], -2], "#0f8c56",
+  ["<", ["get", "premium"], 2], "#8a949e",
+  ["<", ["get", "premium"], 8], "#e08a00",
+  "#be3a34",
+];
+
+// Legend rows for the budpremie mode (rendered by app.js when it's on).
+export const PREMIUM_LEGEND = [
+  { color: "#0f8c56", label: "Under prisantydning (< −2 %)" },
+  { color: "#8a949e", label: "Rundt prisantydning (±2 %)" },
+  { color: "#e08a00", label: "+2–8 % over" },
+  { color: "#be3a34", label: "> 8 % over" },
+  { color: "#b9c4be", label: "Ingen tinglyst pris ennå" },
+];
+
+// Flip every "-sold" layer between boligtype colour and the budpremie scale.
+export function setSoldColorMode(map, groups, premiumOn) {
+  groups.forEach((g) => {
+    if (!g.hasSold) return;
+    const layerId = g.id + "-sold";
+    if (!map.getLayer(layerId)) return;
+    map.setPaintProperty(
+      layerId,
+      "circle-color",
+      premiumOn ? PREMIUM_COLOR : g.color
+    );
+  });
+}
+
 // Adds one clustered source per group, with unclustered GL layers. Both active
 // and sold are coloured by their boligtype (g.color); active gets a dark border,
 // sold a white border. Layers are gated by g.hasActive/g.hasSold so a "both"
@@ -210,6 +254,22 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-stroke-color": clusterBorder,
         "circle-opacity": clusterOpacity,
         "circle-stroke-opacity": clusterOpacity,
+      },
+    });
+
+    // Tagged-listing ring: a hollow circle slightly larger than the dot,
+    // drawn BENEATH the dot layers (added first) so it reads as a halo.
+    map.addLayer({
+      id: g.id + "-tagring",
+      type: "circle",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, ["==", ["get", "hasTag"], true]],
+      paint: {
+        "circle-radius": 12,
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": TAG_RING_COLOR,
+        "circle-stroke-opacity": ["min", 0.9, OP],
       },
     });
 

@@ -6,6 +6,7 @@
 // existing hash-focus handling).
 
 import { saveAnnotation } from "./annotations.js";
+import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 const STORAGE_KEY = "skannonser.ui.v1"; // shared with app.js -- only the
@@ -23,16 +24,24 @@ const NUMERIC_COLUMNS = new Set([
   "brj",
   "mvv",
   "mvv_uni",
+  "sold_price",
+  "premium",
 ]);
 
 // key: how a column's raw value is read off an item (travel columns reach
-// into item.travel). label: header text. sortable: false for the two
-// action-only columns (Kommentar/Tag are sortable as text; Kart never is).
+// into item.travel; premium is derived). label: header text. sortable: false
+// only for the action-only Kart column. Kart sits right after Adresse so the
+// map handoff never needs a horizontal scroll.
 const COLUMNS = [
   { key: "adresse", label: "Adresse", sortable: true },
+  { key: "kart", label: "Kart", sortable: false },
+  { key: "scraped_at", label: "Først sett", sortable: true },
   { key: "postnummer", label: "Postnummer", sortable: true },
   { key: "pris", label: "Pris", sortable: true },
   { key: "pris_kvm", label: "Pris/kvm", sortable: true },
+  { key: "sold_price", label: "Solgt for", sortable: true },
+  { key: "sold_date", label: "Solgt dato", sortable: true },
+  { key: "premium", label: "Budpremie", sortable: true },
   { key: "bra_i", label: "BRA-i", sortable: true },
   { key: "boligtype", label: "Boligtype", sortable: true },
   { key: "byggeaar", label: "Byggeår", sortable: true },
@@ -42,15 +51,14 @@ const COLUMNS = [
   { key: "tilgjengelighet", label: "Tilgjengelighet", sortable: true },
   { key: "kommentar", label: "Kommentar", sortable: true },
   { key: "tag", label: "Tag", sortable: true },
-  { key: "kart", label: "Kart", sortable: false },
 ];
 
 const state = {
   items: [], // all loaded items (eie + dnb, + sold once toggled on)
   soldLoaded: false,
   showSold: false, // tracks "Vis solgte" toggle state; sold items stay in items
-  sortKey: "adresse",
-  sortDir: "asc",
+  sortKey: "scraped_at", // newest first: the scanner's daily question
+  sortDir: "desc",
   filterText: "",
 };
 
@@ -87,8 +95,10 @@ function saveSoldPref(sold) {
   }
 }
 
+// sold=truthy fetches ONLY the sold bucket (?bucket=sold) -- the actives are
+// already loaded, so the old merged ?sold=1 shape just re-shipped them.
 async function fetchListings(sold) {
-  const resp = await fetch("/api/listings" + (sold ? "?sold=1" : ""));
+  const resp = await fetch("/api/listings" + (sold ? "?bucket=sold" : ""));
   if (!resp.ok) throw new Error("HTTP " + resp.status);
   const data = await resp.json();
   return data.listings || [];
@@ -100,6 +110,8 @@ function cellValue(item, key) {
     case "mvv":
     case "mvv_uni":
       return (item.travel || {})[key];
+    case "premium":
+      return premiumPct(item);
     case "kart":
       return null;
     default:
@@ -134,7 +146,8 @@ function compareItems(a, b, key, dir) {
 function matchesFilter(item, text) {
   if (!text) return true;
   const needle = text.toLowerCase();
-  return [item.adresse, item.postnummer, item.boligtype].some(
+  // Includes kommentar/tag so your own notes are searchable.
+  return [item.adresse, item.postnummer, item.boligtype, item.kommentar, item.tag].some(
     (v) => !isBlank(v) && String(v).toLowerCase().includes(needle)
   );
 }
@@ -252,12 +265,34 @@ function buildRow(item) {
           td.textContent = item.adresse || "(ukjent adresse)";
         }
         if (item.sold) td.appendChild(el("span", "sold-badge", "Solgt"));
+        if (isNew(item)) td.appendChild(el("span", "ny-badge", "Ny"));
+        break;
+      }
+      case "scraped_at": {
+        td.textContent = fmtDate(item.scraped_at) || "";
+        td.classList.add("num");
         break;
       }
       case "pris":
-      case "pris_kvm": {
+      case "pris_kvm":
+      case "sold_price": {
         const formatted = fmtPris(item[col.key]);
         td.textContent = formatted || "";
+        td.classList.add("num");
+        break;
+      }
+      case "sold_date": {
+        td.textContent = fmtDate(item.sold_date) || "";
+        td.classList.add("num");
+        break;
+      }
+      case "premium": {
+        const pct = premiumPct(item);
+        if (pct != null) {
+          td.appendChild(
+            el("span", pct >= 0 ? "premie-pos" : "premie-neg", fmtPremium(pct))
+          );
+        }
         td.classList.add("num");
         break;
       }
@@ -324,8 +359,7 @@ function wireToolbar() {
       soldToggle.disabled = true;
       setStatus("Laster solgte …");
       try {
-        const sold = (await fetchListings(1)).filter((it) => it.sold);
-        state.items = state.items.concat(sold);
+        state.items = state.items.concat(await fetchListings(1));
         state.soldLoaded = true;
       } catch (err) {
         setStatus("Kunne ikke laste solgte: " + err.message);
@@ -349,8 +383,7 @@ async function init() {
   const soldToggle = document.getElementById("table-sold");
   if (soldToggle.checked) {
     try {
-      const sold = (await fetchListings(1)).filter((it) => it.sold);
-      state.items = state.items.concat(sold);
+      state.items = state.items.concat(await fetchListings(1));
       state.soldLoaded = true;
       state.showSold = true;
     } catch (_) {
