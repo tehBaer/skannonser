@@ -26,8 +26,11 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
   upsert + inactive-lifecycle logic per source.
 - **`ingest/`** — crawling and parsing. `finn/` (`crawl.py` result-page crawler,
   `parse.py` ad-HTML parser, `refresh.py` status re-checks, `html_cache.py` the on-disk
-  ad-HTML cache) and `dnb/` (`crawl.py`, `parse.py` JSON-LD parser, `load.py` polygon
-  filter + FINN address matching). `base.py` holds the shared normalized-listing model.
+  ad-HTML cache, `parse_details.py` the listing-details parser [soverom/eieform/
+  fasiliteter/energimerke/totalpris/felleskost/matrikkel from the same cached ad HTML],
+  `backfill.py` the offline details re-parse used by `tools backfill-details`) and
+  `dnb/` (`crawl.py`, `parse.py` JSON-LD parser, `load.py` polygon filter + FINN address
+  matching). `base.py` holds the shared normalized-listing model.
 - **`enrich/`** — post-ingest enrichment, all API calls routed through `gateway.py`
   (see below). `geocode.py` (Google Geocoding, 3-pass Norway strategy), `travel.py`
   (the orchestrator for BRJ/MVV/MVV-UNI commute times via `travel_api.py`, Google
@@ -58,6 +61,13 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
   Map niceties: mobile drawer layout, collapsible sidebar panels, per-tag
   visibility + tag rings, "Ny"/"nye siden sist" freshness, sold-price rows in
   popups + a "budpremie" colour mode for sold dots, polygon-fit start view.
+  Listing details (soverom/eieform/fasiliteter/energimerke/totalpris/felleskost)
+  ride along in `/api/listings` and `/api/meta`, with derived totalpris-per-kvm
+  and månedskost (totalpris/kvm + felleskost) computed client-side; filter panel
+  adds soverom/totalpris/felleskost/eieform/energimerke/fasiliteter controls plus
+  an "inkluder ukjent" toggle (null values pass filters by default instead of
+  being excluded), and the table gains Totalpris/Total-per-kvm/Felleskost/
+  Mnd-kost/Soverom/Eieform/Energi columns, all sortable.
 - **`ids.py`** — shared path-safe identifier helpers (DNB synthetic ids, thumbnail
   filenames) used by both `web/api.py` and `enrich/thumbs.py` so they can't drift.
 - **`geo.py`** — polygon point-in-region test used by the DNB filter.
@@ -111,6 +121,15 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   cron snippet — deliberately **separate from and not part of** `nightly.py`
   (a test enforces the latter). It targets a `robots.txt`-disallowed FINN path
   (`/map/`); keep the cadence low and let it stop itself if FINN pushes back.
+
+  **Listing-details enrichment (no extra FINN traffic):** `skannonser/ingest/finn/parse_details.py`
+  + `store/repositories/details.py` + migration `010_listing_details.sql` derive a
+  `listing_details`/`listing_facilities` cache (soverom, eieform, energimerke,
+  totalpris/felleskost and other pricing-details fields, matrikkel, facility list)
+  by re-parsing ad HTML that FINN ingest/refresh already caches to disk — nothing
+  new is fetched. It's rebuildable offline any time via `skannonser tools
+  backfill-details [--wipe|--status]`, which replays `html_extracted/*.html`
+  through the same parser.
 - **`web`** — same image, runs `skannonser web --host 0.0.0.0 --port 8000`, published
   as `100.77.139.22:8377:8000` (tailnet-only — not bound to `0.0.0.0` on the host, so
   it's unreachable from the LAN). Healthcheck hits `GET /healthz` every 60s.
@@ -148,6 +167,7 @@ skannonser estimate [--targets ...]               # predict enrich API-call volu
 skannonser notify daily | weekly                 # Pushover summary via NOTIFY_BIN
 skannonser web [--host --port --db]               # serve the FastAPI app (default :8377)
 skannonser tools import-sheet-annotations         # one-time Kommentar/Tag → annotations rescue
+skannonser tools backfill-details [--wipe|--status]  # offline re-parse of cached ad HTML into listing_details/listing_facilities
 ```
 
 **Backup/restore:** `skannonser db backup --keep N` copies the live DB via SQLite's
@@ -172,13 +192,13 @@ listing's already-fetched travel time within `reuse_within_meters` (default 300m
 ```
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-pytest tests/rebuild -q      # 557 tests, zero warnings
+pytest tests/rebuild -q      # 616 tests, zero warnings
 ```
 
 The standing correctness checks (now that the legacy `main/`-comparison verify
 harnesses are gone) are:
 
-- **The full pytest suite** (`tests/rebuild/`, 557 tests).
+- **The full pytest suite** (`tests/rebuild/`, 616 tests).
 - **The fixture corpora** (`tests/rebuild/fixtures/`) — real, previously-legacy-verified
   FINN/DNB HTML pinned as golden input/output, so parsing behavior stays correct
   without needing the old `main.*` code at test time.
@@ -187,7 +207,7 @@ harnesses are gone) are:
 - **`GET /healthz`** on the deployed web app — live liveness/readiness check.
 
 **Migrations:** numbered SQL files under `skannonser/store/migrations/` (currently
-`001`–`005`), applied explicitly and atomically (one transaction per file, with
+`001`–`010`), applied explicitly and atomically (one transaction per file, with
 rollback) by `skannonser db migrate` — never implicitly on connect. To add one, drop
 in the next-numbered `.sql` file and run `skannonser db migrate`.
 
@@ -220,6 +240,11 @@ HERE in the same commit that discovers it — never only in chat.)*
   its own); the DB/web values are zero-padded (migration 008 backfilled the
   legacy-stripped rows). A `norm_postnummer` apostrophe-prefix fix exists in
   `skannonser/publish/export.py` if the Sheet display ever needs to match.
+- **Deploy note (listing-details enrichment):** after deploying this feature to
+  the server, run `skannonser db migrate` then `skannonser tools backfill-details`
+  once (~5,900 local parses from already-cached ad HTML, no network, ~1 min) to
+  populate `listing_details`/`listing_facilities` for existing rows; new rows
+  fill in automatically on the next ingest/refresh.
 
 ## History
 
