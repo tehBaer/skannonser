@@ -26,6 +26,12 @@ const NUMERIC_COLUMNS = new Set([
   "mvv_uni",
   "sold_price",
   "premium",
+  "soverom",
+  "etasje",
+  "totalpris",
+  "felleskost_mnd",
+  "pris_kvm_totalpris",
+  "maanedskost",
 ]);
 
 // key: how a column's raw value is read off an item (travel columns reach
@@ -39,12 +45,20 @@ const COLUMNS = [
   { key: "postnummer", label: "Postnummer", sortable: true },
   { key: "pris", label: "Pris", sortable: true },
   { key: "pris_kvm", label: "Pris/kvm", sortable: true },
+  { key: "totalpris", label: "Totalpris", sortable: true },
+  { key: "pris_kvm_totalpris", label: "Total/kvm", sortable: true },
+  { key: "felleskost_mnd", label: "Felleskost", sortable: true },
+  { key: "maanedskost", label: "Mnd-kost", sortable: true },
   { key: "sold_price", label: "Solgt for", sortable: true },
   { key: "sold_date", label: "Solgt dato", sortable: true },
   { key: "premium", label: "Budpremie", sortable: true },
   { key: "bra_i", label: "BRA-i", sortable: true },
+  { key: "soverom", label: "Sov", sortable: true },
+  { key: "etasje", label: "Etg", sortable: true },
   { key: "boligtype", label: "Boligtype", sortable: true },
+  { key: "eieform", label: "Eieform", sortable: true },
   { key: "byggeaar", label: "Byggeår", sortable: true },
+  { key: "energimerke", label: "Energi", sortable: true },
   { key: "brj", label: "BRJ", sortable: true },
   { key: "mvv", label: "MVV", sortable: true },
   { key: "mvv_uni", label: "UNI", sortable: true },
@@ -275,6 +289,10 @@ function buildRow(item) {
       }
       case "pris":
       case "pris_kvm":
+      case "totalpris":
+      case "pris_kvm_totalpris":
+      case "felleskost_mnd":
+      case "maanedskost":
       case "sold_price": {
         const formatted = fmtPris(item[col.key]);
         td.textContent = formatted || "";
@@ -297,6 +315,8 @@ function buildRow(item) {
         break;
       }
       case "bra_i":
+      case "soverom":
+      case "etasje":
       case "byggeaar":
       case "brj":
       case "mvv":
