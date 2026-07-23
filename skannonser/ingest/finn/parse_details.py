@@ -161,6 +161,53 @@ def _pricing_details(soup) -> dict:
     return out
 
 
+def _facilities(soup) -> list[str]:
+    """The Fasiliteter grid: leaf <div>s inside the section, deduped,
+    document order preserved (a bounded controlled vocabulary -- 26 distinct
+    values across the 12 fixtures)."""
+    section = soup.find(attrs={"data-testid": "object-facilities"})
+    if section is None:
+        return []
+    out: list[str] = []
+    for div in section.find_all("div"):
+        if div.find("div") is not None:  # container, not a facility cell
+            continue
+        text = div.get_text(strip=True)
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+# cadastre-info row label -> ListingDetails field. Values stay TEXT --
+# matrikkel numbers are identity keys, not quantities.
+_CADASTRE_LABELS = {
+    "Kommunenr": "kommunenr",
+    "Gårdsnr": "gardsnr",
+    "Bruksnr": "bruksnr",
+    "Seksjonsnr": "seksjonsnr",
+    "Borettslag-navn": "borettslag_navn",
+    "Borettslag-orgnummer": "borettslag_orgnr",
+    "Borettslag-andelsnummer": "borettslag_andelsnr",
+}
+
+
+def _cadastre(soup) -> dict:
+    out: dict = {}
+    section = soup.find(attrs={"data-testid": "cadastre-info"})
+    if section is None:
+        return out
+    for div in section.find_all("div"):
+        if div.find("div") is not None:  # only leaf rows carry one label:value
+            continue
+        match = re.match(r"([^:]+?)\s*:\s*(\S.*)$", div.get_text(" ", strip=True))
+        if not match:
+            continue
+        field = _CADASTRE_LABELS.get(match.group(1).strip())
+        if field and field not in out:
+            out[field] = match.group(2).strip()
+    return out
+
+
 def parse_details(html: str, finnkode: str) -> ListingDetails:
     soup = BeautifulSoup(html, "html.parser")
     targeting = _gam_targeting(soup)
@@ -174,5 +221,7 @@ def parse_details(html: str, finnkode: str) -> ListingDetails:
         nabolag=_nabolag(soup),
         energimerke=energimerke,
         energifarge=energifarge,
+        facilities=_facilities(soup),
         **_pricing_details(soup),
+        **_cadastre(soup),
     )

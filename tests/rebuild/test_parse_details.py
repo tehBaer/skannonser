@@ -139,3 +139,54 @@ def test_energy_bare_heading_is_none():
     html = '<html><body><div data-testid="energy-label">Energimerking</div></body></html>'
     d = parse_details(html, "123")
     assert d.energimerke is None and d.energifarge is None
+
+
+def test_facilities_list():
+    html = (
+        '<html><body><section data-testid="object-facilities"><h2>Fasiliteter</h2>'
+        '<div class="grid">'
+        '<div class="py-4 break-words">Heis</div>'
+        '<div class="py-4 break-words">Garasje/P-plass</div>'
+        '<div class="py-4 break-words">Heis</div>'  # dupe must collapse
+        "</div></section></body></html>"
+    )
+    assert parse_details(html, "123").facilities == ["Heis", "Garasje/P-plass"]
+
+
+def test_no_facilities_section_empty_list():
+    assert parse_details("<html></html>", "123").facilities == []
+
+
+def test_cadastre_fields():
+    html = (
+        '<html><body><section data-testid="cadastre-info"><h2>Matrikkel</h2><div>'
+        "<div>Kommunenr : 3301</div>"
+        "<div>Gårdsnr : 114</div>"
+        "<div>Bruksnr : 314</div>"
+        "<div>Seksjonsnr : 23</div>"
+        "<div>Borettslag-navn : GALLERIET BORETTSLAG</div>"
+        "<div>Borettslag-orgnummer : 921554192</div>"
+        "<div>Borettslag-andelsnummer : 23</div>"
+        "</div></section></body></html>"
+    )
+    d = parse_details(html, "123")
+    assert d.kommunenr == "3301"
+    assert d.gardsnr == "114"
+    assert d.bruksnr == "314"
+    assert d.seksjonsnr == "23"
+    assert d.borettslag_navn == "GALLERIET BORETTSLAG"
+    assert d.borettslag_orgnr == "921554192"
+    assert d.borettslag_andelsnr == "23"
+
+
+def test_cadastre_container_div_not_misparsed():
+    # The wrapper <div> holding all rows must not swallow every value into
+    # one label -- only LEAF divs (no div children) are parsed.
+    html = (
+        '<html><body><section data-testid="cadastre-info"><div>'
+        "<div>Kommunenr : 3301</div><div>Gårdssnr-ukjent-label : 999</div>"
+        "</div></section></body></html>"
+    )
+    d = parse_details(html, "123")
+    assert d.kommunenr == "3301"
+    assert d.gardsnr is None
