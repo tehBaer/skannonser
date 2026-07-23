@@ -86,9 +86,31 @@ def _known_finnkodes(conn) -> set[str]:
     }
 
 
+def record_attempts(conn, finnkodes) -> None:
+    """Charge one attempt to each of ``finnkodes`` (see migration 009).
+
+    Called once per target the sweep actually centers a box on -- NOT once per
+    request (a capped-and-missed box costs two requests for one target) and NOT
+    for targets matched incidentally by a neighbour's box, which cost nothing.
+    """
+    conn.executemany(
+        """
+        INSERT INTO sold_price_attempts (finnkode, attempts, last_attempted_at)
+        VALUES (?, 1, datetime('now'))
+        ON CONFLICT(finnkode) DO UPDATE SET
+            attempts = attempts + 1,
+            last_attempted_at = datetime('now')
+        """,
+        [(str(fk),) for fk in finnkodes],
+    )
+    conn.commit()
+
+
 def select_sold_targets(conn, min_age_days: Optional[int] = None) -> list[dict]:
     """Listings that need a sold price: status Solgt, with coordinates, and no
-    non-null ``sold_price`` stored yet. Returns ``[{finnkode, lat, lng}]``.
+    non-null ``sold_price`` stored yet. Returns
+    ``[{finnkode, lat, lng, attempts}]``, where ``attempts`` is how many times
+    the sweep has already spent a request on that target (0 if never).
 
     The ``sold_price IS NULL`` clause keeps a listing in the target set across
     sweeps until its price is actually tinglyst (~100-day lag). When
@@ -103,10 +125,12 @@ def select_sold_targets(conn, min_age_days: Optional[int] = None) -> list[dict]:
         params = (f"-{int(min_age_days)} days",)
     rows = conn.execute(
         f"""
-        SELECT e.finnkode AS finnkode, p.lat AS lat, p.lng AS lng
+        SELECT e.finnkode AS finnkode, p.lat AS lat, p.lng AS lng,
+               COALESCE(a.attempts, 0) AS attempts
         FROM eiendom e
         JOIN eiendom_processed p ON e.finnkode = p.finnkode
         LEFT JOIN sold_prices s ON e.finnkode = s.finnkode
+        LEFT JOIN sold_price_attempts a ON e.finnkode = a.finnkode
         WHERE LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) = 'solgt'
           AND p.lat IS NOT NULL AND p.lng IS NOT NULL
           AND (s.finnkode IS NULL OR s.sold_price IS NULL)
@@ -115,7 +139,12 @@ def select_sold_targets(conn, min_age_days: Optional[int] = None) -> list[dict]:
         params,
     )
     return [
-        {"finnkode": str(r["finnkode"]), "lat": r["lat"], "lng": r["lng"]}
+        {
+            "finnkode": str(r["finnkode"]),
+            "lat": r["lat"],
+            "lng": r["lng"],
+            "attempts": r["attempts"],
+        }
         for r in rows
     ]
 
@@ -241,9 +270,17 @@ def run_sold_sweep(
 
     ``targets`` defaults to :func:`select_sold_targets`. ``delay`` (if given)
     paces between fetches. ``max_requests`` hard-caps requests this run;
-    leftover targets wait for the next run. ``order_by_density`` processes the
-    targets with the most neighbours first, so a tight budget buys the most
-    matches per request. Lets :class:`Throttled` propagate. Returns
+    leftover targets wait for the next run.
+
+    ``order_by_density`` sorts by FEWEST PRIOR ATTEMPTS first, then by most
+    neighbours -- so a tight budget still buys the most matches per request
+    (density) but can never be monopolised by targets that keep missing. Without
+    the attempt tier, a permanently-ungettable target at the top of the density
+    ranking would absorb the budget on every single run forever, since a target
+    stays selectable until its price actually lands (see migration 009).
+
+    Every target the sweep centers a box on is charged one attempt via
+    :func:`record_attempts`. Lets :class:`Throttled` propagate. Returns
     ``{"targets", "tiles_queried", "cards_seen", "matched", "stored",
     "budget_exhausted"}``.
     """
@@ -257,12 +294,15 @@ def run_sold_sweep(
     if order_by_density:
         order = sorted(
             targets,
-            key=lambda t: len(_targets_in_bbox(targets, target_bbox(t, pad_lon, pad_lat))),
-            reverse=True,
+            key=lambda t: (
+                t.get("attempts", 0),
+                -len(_targets_in_bbox(targets, target_bbox(t, pad_lon, pad_lat))),
+            ),
         )
 
     matched: set[str] = set()
     records: list[dict] = []
+    attempted: list[str] = []
     tiles_queried = cards_seen = 0
     budget_exhausted = False
     first = True
@@ -288,6 +328,8 @@ def run_sold_sweep(
                 delay()
             first = False
 
+            if scale == 1.0:
+                attempted.append(t["finnkode"])  # one charge per target, not per request
             docs = fetch_sold_cards(
                 target_bbox(t, pad_lon * scale, pad_lat * scale), fetch=fetch
             )
@@ -300,6 +342,8 @@ def run_sold_sweep(
         if budget_exhausted:
             break
 
+    if attempted:
+        record_attempts(conn, attempted)
     stats = SoldPricesRepo(conn).upsert(records)
     return {
         "targets": len(targets),

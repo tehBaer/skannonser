@@ -98,7 +98,10 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   fetch tinglyst sold prices from FINN's sold map into `sold_prices`, keyed by
   finnkode. `skannonser run enrich-sold` runs one budgeted **backlog** pass:
   suspend-aware, coverage-aware (targets listings sold >100 days ago, stops at
-  80% coverage), densest-clusters-first, hard-capped at `--requests` (default 4),
+  80% coverage), fewest-prior-attempts-first with densest-clusters-first as the
+  tiebreak (migration `009_sold_attempts.sql` ledgers per-target attempts so
+  never-tinglyst sales can't monopolise the budget), hard-capped at
+  `--requests` (default 4),
   querying a tight ~120 m box centered on each target listing (with one adaptive
   shrink if the target is crowded out of the 15-card cap). On throttle
   (429/403/503 or a block page) it **suspends itself, persists that, and pings

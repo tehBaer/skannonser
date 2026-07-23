@@ -4,20 +4,24 @@
 # slowly fill the sold-price backlog while keeping the footprint tiny.
 #
 # Each invocation makes at most SKANNONSER_SOLD_REQUESTS FINN requests (default
-# 1), densest-cells-first. On throttle it suspends itself and pings Pushover;
-# it then stays idle (every later run is a no-op) until you clear it:
+# 1), fewest-prior-attempts first and densest-cluster first within that tier.
+# On throttle it suspends itself and pings Pushover; it then stays idle (every
+# later run is a no-op) until a HUMAN clears it:
 #     skannonser run enrich-sold --resume
 # Check state any time without hitting FINN:
 #     skannonser run enrich-sold --status
 #
-# Suggested crontab on the server (4 spaced runs/day, ~1 request each = up to
-# ~60 listings/day given the 15-per-request cap). A small random start-jitter
-# per entry avoids hitting FINN at the same minute daily:
+# NEVER put --resume in the crontab. It is not a "run anyway" flag: it clears
+# the suspension and RETURNS WITHOUT SWEEPING, so a scheduled --resume would
+# both disarm the throttle guard daily and stop the sweep from ever running.
+# The wrapper below deliberately passes only --requests.
 #
-#   9  0    * * *  sleep $((RANDOM \% 1800)); ~/run_sold_backlog.sh
-#   37 8    * * *  sleep $((RANDOM \% 1800)); ~/run_sold_backlog.sh
-#   3  14   * * *  sleep $((RANDOM \% 1800)); ~/run_sold_backlog.sh
-#   51 20   * * *  sleep $((RANDOM \% 1800)); ~/run_sold_backlog.sh
+# Crontab actually deployed on the server -- ONE session per day at a random
+# time inside a 7-hour window, 13-17 requests in that session (the jitter and
+# the odd request count keep the daily footprint from looking metronomic):
+#
+#   0 9 * * * /bin/bash -c 'sleep $((RANDOM \% 25200)); \
+#       SKANNONSER_SOLD_REQUESTS=$((13 + RANDOM \% 5)) ~/kode/skannonser/ops/run_sold_backlog.sh'
 #
 # NOT part of the nightly pipeline -- deliberately separate, low, and spaced.
 #

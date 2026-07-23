@@ -604,3 +604,111 @@ def test_sold_progress_reports_suspension(conn):
 
     suspend(conn, "429")
     assert sold_progress(conn)["suspended"] is True
+
+
+# ---------------------------------------------------------------------------
+# Per-target attempt tracking (starvation guard)
+# ---------------------------------------------------------------------------
+
+
+def _attempts(conn) -> dict:
+    return {
+        r["finnkode"]: (r["attempts"], r["last_attempted_at"])
+        for r in conn.execute(
+            "SELECT finnkode, attempts, last_attempted_at FROM sold_price_attempts"
+        )
+    }
+
+
+def test_sweep_records_one_attempt_per_target_it_queries(conn):
+    from skannonser.enrich.sold import run_sold_sweep, select_sold_targets
+
+    _seed_aged(conn, "101", 200, lat=59.8010, lng=10.2610)
+
+    run_sold_sweep(
+        conn,
+        fetch=_card_fetch({}),  # no cards come back -- a miss
+        targets=select_sold_targets(conn, min_age_days=100),
+    )
+
+    got = _attempts(conn)
+    assert got["101"][0] == 1
+    assert got["101"][1] is not None  # last_attempted_at stamped
+
+
+def test_sweep_counts_one_attempt_even_when_box_is_tightened(conn):
+    from skannonser.enrich.sold import run_sold_sweep
+
+    # A capped-but-missed box costs TWO requests (full, then the adaptive
+    # shrink) for ONE target -- the attempt count tracks targets, not requests.
+    _seed(conn, "500001", "Solgt", 59.805, 10.261)
+    filler = [{"adId": 900000 + i} for i in range(15)]
+
+    stats = run_sold_sweep(conn, fetch=lambda url, **kw: FakeResp({"docs": filler}))
+
+    assert stats["tiles_queried"] == 2
+    assert _attempts(conn)["500001"][0] == 1
+
+
+def test_target_caught_by_a_neighbour_box_records_no_attempt(conn):
+    from skannonser.enrich.sold import run_sold_sweep, select_sold_targets
+
+    # 102 sits inside 101's box, so it is matched without a request of its own
+    # -- it must not be charged an attempt.
+    _seed_aged(conn, "101", 200, lat=59.8010, lng=10.2610)
+    _seed_aged(conn, "102", 200, lat=59.8013, lng=10.2613)
+    coords = {"101": (59.8010, 10.2610), "102": (59.8013, 10.2613)}
+
+    run_sold_sweep(
+        conn,
+        fetch=_card_fetch(coords),
+        targets=select_sold_targets(conn, min_age_days=100),
+        order_by_density=True,
+    )
+
+    got = _attempts(conn)
+    assert got["101"][0] == 1
+    assert "102" not in got
+
+
+def test_select_sold_targets_carries_attempt_counts(conn):
+    from skannonser.enrich.sold import record_attempts, select_sold_targets
+
+    _seed_aged(conn, "101", 200)
+    _seed_aged(conn, "102", 200)
+    record_attempts(conn, ["101"])
+    record_attempts(conn, ["101"])
+
+    by_kode = {t["finnkode"]: t for t in select_sold_targets(conn, min_age_days=100)}
+    assert by_kode["101"]["attempts"] == 2
+    assert by_kode["102"]["attempts"] == 0
+
+
+def test_repeatedly_missed_targets_yield_to_untried_ones(conn):
+    from skannonser.enrich.sold import (
+        record_attempts,
+        run_sold_sweep,
+        select_sold_targets,
+    )
+
+    # The starvation case: a DENSE cluster (101+102) that has been queried five
+    # times without ever producing a card -- those sales may never be tinglyst.
+    # A lone, never-tried target (201) must win the single request, even though
+    # density alone would keep handing it to the cluster forever.
+    _seed_aged(conn, "101", 200, lat=59.8010, lng=10.2610)
+    _seed_aged(conn, "102", 200, lat=59.8013, lng=10.2613)
+    _seed_aged(conn, "201", 200, lat=59.900, lng=10.500)
+    for _ in range(5):
+        record_attempts(conn, ["101", "102"])
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=_card_fetch({"201": (59.900, 10.500)}),
+        targets=select_sold_targets(conn, min_age_days=100),
+        max_requests=1,
+        order_by_density=True,
+    )
+
+    stored = {r["finnkode"] for r in conn.execute("SELECT finnkode FROM sold_prices")}
+    assert stored == {"201"}
+    assert stats["tiles_queried"] == 1
