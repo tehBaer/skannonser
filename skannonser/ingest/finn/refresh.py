@@ -44,6 +44,8 @@ from skannonser.config.domain import DomainConfig
 from skannonser.http import browser_get
 from skannonser.ingest.finn import html_cache
 from skannonser.ingest.finn import parse as finn_parse
+from skannonser.ingest.finn import parse_details as finn_parse_details
+from skannonser.store.repositories.details import DetailsRepo
 from skannonser.store.repositories.listings import ListingsRepo
 
 MODES: tuple[str, ...] = ("all", "inactive", "stale-open")
@@ -120,6 +122,7 @@ def refresh_listings(
     project_dir = Path(project_dir)
     rows = _select_rows(conn, domain, mode)
     repo = ListingsRepo(conn)
+    details_repo = DetailsRepo(conn)
 
     candidates = len(rows)
     refreshed = 0
@@ -144,6 +147,15 @@ def refresh_listings(
             if repo.record_status_change_if_changed(finnkode, old_status, new_status):
                 status_changed += 1
             refreshed += 1
+
+            # Re-parse details off the fresh HTML too -- felleskost/totalpris
+            # changes ride along with the status refresh for free. Best-effort.
+            try:
+                details_repo.upsert_details(
+                    [finn_parse_details.parse_details(html, finnkode)]
+                )
+            except Exception:
+                pass
 
         if i < candidates - 1:
             if listing_delay is not None:

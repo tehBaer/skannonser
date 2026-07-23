@@ -58,6 +58,8 @@ from skannonser.ingest.dnb import parse as dnb_parse
 from skannonser.ingest.finn import crawl as finn_crawl
 from skannonser.ingest.finn import html_cache
 from skannonser.ingest.finn import parse as finn_parse
+from skannonser.ingest.finn import parse_details as finn_parse_details
+from skannonser.store.repositories.details import DetailsRepo
 from skannonser.store.repositories.dnb import DnbRepo
 from skannonser.store.repositories.listings import ListingsRepo
 
@@ -91,7 +93,8 @@ def run_finn_ingest(
     offline end-to-end test to drive the pipeline purely off cached
     fixtures.
 
-    Returns counts: `crawled`, `parsed`, `failed`, `upserted`, `deactivated`.
+    Returns counts: `crawled`, `parsed`, `failed`, `upserted`, `deactivated`,
+    `details_upserted`.
     """
     project_dir = Path(project_dir)
 
@@ -110,6 +113,7 @@ def run_finn_ingest(
     parsed = 0
     failed = 0
     listings = []
+    details = []
     for finnkode, url in pairs:
         try:
             html = html_cache.load_or_fetch(
@@ -119,9 +123,22 @@ def run_finn_ingest(
             parsed += 1
         except Exception:
             failed += 1
+            continue
+        # Details are best-effort enrichment: a failure here (parser bug,
+        # markup drift) must never fail the listing itself.
+        try:
+            details.append(finn_parse_details.parse_details(html, finnkode))
+        except Exception:
+            pass
 
     repo = ListingsRepo(conn)
     upsert_stats = repo.upsert(listings)
+
+    details_upserted = 0
+    try:
+        details_upserted = DetailsRepo(conn).upsert_details(details)["upserted"]
+    except Exception:
+        pass  # derived cache only -- never blocks ingest
 
     deactivated = 0
     if crawled > 0 and not _failure_rate_too_high(crawled, failed):
@@ -134,6 +151,7 @@ def run_finn_ingest(
         "failed": failed,
         "upserted": upsert_stats["inserted"] + upsert_stats["updated"],
         "deactivated": deactivated,
+        "details_upserted": details_upserted,
     }
 
 

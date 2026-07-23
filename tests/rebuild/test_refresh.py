@@ -474,3 +474,35 @@ def test_cli_refresh_routes_to_refresh_listings(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert calls == ["stale-open"]
+
+
+# ---------------------------------------------------------------------------
+# Task 7: refresh re-parses details off the freshly-fetched HTML too.
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_reparses_details(conn, domain, tmp_path):
+    repo = ListingsRepo(conn)
+    fk = "448347467"
+    repo.upsert([_listing(fk, Tilgjengelighet="Til salgs")])
+    assert repo.active_finnkodes() == {fk}
+
+    html = (FINN_FIXTURES / "448347467.html").read_text(encoding="utf-8", errors="replace")
+
+    def fake_fetch(url):
+        class FakeResponse:
+            content = html.encode("utf-8")
+
+            def raise_for_status(self):
+                pass
+
+        return FakeResponse()
+
+    refresh_listings(
+        conn, domain, tmp_path / "proj", mode="all", fetch=fake_fetch, fetch_delay=lambda: None
+    )
+
+    row = conn.execute(
+        "SELECT totalpris FROM listing_details WHERE finnkode = ?", (fk,)
+    ).fetchone()
+    assert row is not None and row["totalpris"] is not None

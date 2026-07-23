@@ -132,6 +132,7 @@ def test_finn_mark_inactive_skipped_when_crawl_yields_zero_urls(conn, domain, tm
         "failed": 0,
         "upserted": 0,
         "deactivated": 0,
+        "details_upserted": 0,
     }
     # The previously-active listing must NOT have been deactivated by an
     # empty crawl.
@@ -434,6 +435,7 @@ def test_finn_parse_failure_is_counted_and_not_upserted(tmp_path):
         "failed": 1,
         "upserted": 0,
         "deactivated": 0,
+        "details_upserted": 0,
     }
     assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] == 0
 
@@ -611,3 +613,71 @@ def test_refresh_listings_defaults_to_browser_user_agent():
     assert (
         inspect.signature(refresh_listings).parameters["fetch"].default is browser_get
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 7: details capture during FINN ingest (best-effort, never fails the
+# listing upsert).
+# ---------------------------------------------------------------------------
+
+
+def test_finn_ingest_writes_listing_details(tmp_path):
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    fixture_dir = FINN_FIXTURES
+    cases = [fixture_dir / "448347467.html"]
+    (proj / "html_extracted").mkdir(parents=True)
+    for c in cases:
+        shutil.copy(c, proj / "html_extracted" / c.name)
+    urls = [
+        (c.stem, f"https://www.finn.no/realestate/homes/ad.html?finnkode={c.stem}")
+        for c in cases
+    ]
+
+    stats = run_finn_ingest(
+        load_domain(), conn, proj, fetch=_fail_if_called, skip_crawl_urls=urls
+    )
+
+    assert stats["details_upserted"] == stats["parsed"]
+    row = conn.execute(
+        "SELECT totalpris, felleskost_mnd FROM listing_details WHERE finnkode = '448347467'"
+    ).fetchone()
+    assert row["totalpris"] == 4944646
+    assert row["felleskost_mnd"] == 13813
+    facs = {
+        r["facility"]
+        for r in conn.execute(
+            "SELECT facility FROM listing_facilities WHERE finnkode = '448347467'"
+        )
+    }
+    assert "Heis" in facs
+
+
+def test_finn_ingest_details_failure_never_fails_listing_upsert(tmp_path, monkeypatch):
+    from skannonser.ingest.finn import parse_details as pd_mod
+
+    monkeypatch.setattr(
+        pd_mod, "parse_details", lambda *a, **k: (_ for _ in ()).throw(RuntimeError)
+    )
+
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    fixture_dir = FINN_FIXTURES
+    cases = [fixture_dir / "448347467.html"]
+    (proj / "html_extracted").mkdir(parents=True)
+    for c in cases:
+        shutil.copy(c, proj / "html_extracted" / c.name)
+    urls = [
+        (c.stem, f"https://www.finn.no/realestate/homes/ad.html?finnkode={c.stem}")
+        for c in cases
+    ]
+
+    stats = run_finn_ingest(
+        load_domain(), conn, proj, fetch=_fail_if_called, skip_crawl_urls=urls
+    )
+
+    assert stats["parsed"] >= 1
+    assert stats["details_upserted"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] >= 1
