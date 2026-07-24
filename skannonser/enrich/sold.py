@@ -107,7 +107,10 @@ def record_attempts(conn, finnkodes) -> None:
 
 
 def select_sold_targets(
-    conn, min_age_days: Optional[int] = None, grace_days: int = 180
+    conn,
+    min_age_days: Optional[int] = None,
+    grace_days: int = 180,
+    max_attempts: int = 5,
 ) -> list[dict]:
     """Listings that need a sold price. Two tiers (2026-07-24 closed-status
     spec):
@@ -130,12 +133,24 @@ def select_sold_targets(
     returned (proxy: ``eiendom.updated_at`` -- Solgt/Inaktiv rows aren't
     re-touched by the stale-open refresh, so it tracks the close date).
     Focusing on aged listings avoids spending requests on recent closes that
-    have no price yet."""
+    have no price yet.
+
+    ``max_attempts`` is a per-target attempts ceiling: once a target's
+    recorded ``sold_price_attempts.attempts`` reaches it, the target drops out
+    of selection for good (see :func:`given_up_targets`). This DELIBERATELY
+    REVERSES migration 009's "they are never dropped" stance -- tinglysing lag
+    is still real (a miss today may hit later), which is why the default is
+    generous, not why targets should cycle forever. Because
+    :func:`run_sold_sweep` orders fewest-attempts-first, a target only reaches
+    the ceiling after the whole eligible backlog has been combed that many
+    times, so the sweep provably goes quiet instead of grinding on
+    never-tinglyst listings. Replaces the old 80% coverage gate."""
     age_clause = ""
     params: list = [f"-{int(grace_days)} days"]
     if min_age_days is not None:
         age_clause = "AND e.updated_at < datetime('now', ?)"
         params.append(f"-{int(min_age_days)} days")
+    params.append(int(max_attempts))
     rows = conn.execute(
         f"""
         SELECT e.finnkode AS finnkode, p.lat AS lat, p.lng AS lng,
@@ -155,6 +170,7 @@ def select_sold_targets(
           AND p.lat IS NOT NULL AND p.lng IS NOT NULL
           AND (s.finnkode IS NULL OR s.sold_price IS NULL)
           {age_clause}
+          AND COALESCE(a.attempts, 0) < ?
         """,
         params,
     )
@@ -217,6 +233,32 @@ def inaktiv_pending(conn, grace_days: int = 180) -> dict:
         (f"-{int(grace_days)} days",),
     ).fetchone()
     return {"pending": row["pending"] or 0, "priced": row["priced"] or 0}
+
+
+def given_up_targets(conn, max_attempts: int = 5) -> int:
+    """Targets permanently abandoned by the attempts ceiling: still price-less
+    but attempted at least ``max_attempts`` times, so no longer selectable.
+
+    Mirrors :func:`select_sold_targets`'s eligibility (either raw status,
+    coordinate-bearing, no stored price) but with the attempts comparison
+    flipped -- ``>= max_attempts`` instead of ``< max_attempts`` -- so this and
+    the selector partition the aged/coordinated/price-less backlog into
+    "still selectable" and "given up"."""
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM eiendom e
+        JOIN eiendom_processed p ON e.finnkode = p.finnkode
+        LEFT JOIN sold_prices s ON e.finnkode = s.finnkode
+        JOIN sold_price_attempts a ON e.finnkode = a.finnkode
+        WHERE LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) IN ('solgt', 'inaktiv')
+          AND p.lat IS NOT NULL AND p.lng IS NOT NULL
+          AND (s.finnkode IS NULL OR s.sold_price IS NULL)
+          AND a.attempts >= ?
+        """,
+        (int(max_attempts),),
+    ).fetchone()
+    return row["n"] or 0
 
 
 def sold_progress(conn, since_hours: int = 24, min_age_days: int = 100) -> dict:
@@ -414,22 +456,41 @@ def run_sold_backlog(
     notify: Optional[Callable[[str], None]] = None,
     max_requests: int = 4,
     min_age_days: int = 100,
-    coverage_target: float = 0.80,
     delay: Optional[Callable[[], None]] = None,
     force: bool = False,
     grace_days: int = 180,
+    max_attempts: int = 5,
 ) -> dict:
     """One careful, budgeted backlog pass -- the scheduled entry point.
 
     Order of guards:
       1. If suspended (a prior throttle), do nothing.
-      2. If aged-listing coverage already >= ``coverage_target`` (and not
-         ``force``), do nothing -- we don't chase 100%.
-      3. Otherwise sweep the densest cells first, capped at ``max_requests``.
+      2. Otherwise sweep the densest cells first, capped at ``max_requests``.
+
+    The old guard 2 -- an early return once aged-listing coverage reached 80%
+    -- is DELETED (2026-07-24 follow-up spec). It counted raw-'solgt' rows
+    only, so it starved the inaktiv tier once solgt coverage crossed 80%, and
+    it was never a real termination guarantee: a backlog with a large
+    never-tinglyst share (borettslag share sales, fall-throughs, ads marked
+    Solgt that never register) could sit below 80% forever, grinding the
+    sweep on it indefinitely. A per-target attempts ceiling
+    (``max_attempts``, threaded into :func:`select_sold_targets`) replaces it:
+    ordering there is fewest-attempts-first, so a target only reaches the
+    ceiling once the whole eligible backlog has been combed that many times --
+    the sweep provably goes quiet, and it self-scales with backlog size
+    instead of needing to track every future tier. ``sold_coverage`` survives
+    as a reporting metric (see the returned stats and :func:`sold_progress`);
+    only its use as a gate is gone.
+
+    ``force`` no longer bypasses anything (the thing it used to bypass, the
+    coverage gate, is deleted) -- kept as a parameter for CLI/caller
+    compatibility rather than silently changing the CLI surface.
 
     ``grace_days`` is passed through to :func:`select_sold_targets` -- it
     bounds how long a closed-but-not-Solgt (Inaktiv) listing stays in the
     sweep's target set (see `load_domain().sold.trukket_grace_days`).
+    ``max_attempts`` is likewise passed through -- see
+    `load_domain().sold.max_attempts` and :func:`given_up_targets`.
 
     On :class:`Throttled`, the run suspends the sweep (persisted) and calls
     ``notify`` -- so pushback is recognized immediately and no further requests
@@ -442,11 +503,9 @@ def run_sold_backlog(
     if is_suspended(conn):
         return {"suspended": True, "reason": "already suspended", "swept": 0}
 
-    coverage = sold_coverage(conn, min_age_days)
-    if not force and coverage["total"] > 0 and coverage["fraction"] >= coverage_target:
-        return {"suspended": False, "target_reached": True, "coverage": coverage, "swept": 0}
-
-    targets = select_sold_targets(conn, min_age_days=min_age_days, grace_days=grace_days)
+    targets = select_sold_targets(
+        conn, min_age_days=min_age_days, grace_days=grace_days, max_attempts=max_attempts
+    )
     try:
         stats = run_sold_sweep(
             conn,

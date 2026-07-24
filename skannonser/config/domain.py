@@ -87,6 +87,14 @@ class Sold(BaseModel):
     # and dropped from the sweep's target set.
     trukket_grace_days: int = 180
 
+    # Per-target attempts ceiling for the sold-price sweep. Replaces the old
+    # 80 % coverage gate (which counted only raw-Solgt rows, starving the
+    # inaktiv tier, and was no real termination guarantee): the sweep goes
+    # quiet once every target has genuinely been tried this many times.
+    # Deliberately reverses migration 009's "never dropped" stance; generous
+    # default so tinglysing lag still gets many chances (see config/domain.toml).
+    max_attempts: int = 5
+
 
 class DomainConfig(BaseModel):
     filters: Filters

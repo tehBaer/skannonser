@@ -334,12 +334,13 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
     calls = []
 
     def fake_backlog(conn, notify=None, max_requests=4, force=False, delay=None,
-                      grace_days=180):
+                      grace_days=180, max_attempts=5):
         calls.append({
             "max_requests": max_requests,
             "notify": notify,
             "delay": delay,
             "grace_days": grace_days,
+            "max_attempts": max_attempts,
         })
         return {"suspended": False, "coverage": {"priced": 0, "total": 0, "fraction": 0.0}}
 
@@ -352,6 +353,7 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert calls[0]["max_requests"] == 4
     assert calls[0]["grace_days"] == 180  # config [sold] trukket_grace_days threaded through
+    assert calls[0]["max_attempts"] == 5  # config [sold] max_attempts threaded through
     assert callable(calls[0]["notify"])   # Pushover sink wired
     assert callable(calls[0]["delay"])    # paced
 
@@ -525,21 +527,39 @@ def test_backlog_is_noop_when_suspended(conn):
     assert calls == []                       # no network while suspended
 
 
-def test_backlog_is_noop_when_coverage_target_reached(conn):
+def test_backlog_no_longer_early_returns_at_high_coverage(conn):
+    # Regression: the old 80% coverage gate used to early-return once solgt
+    # coverage crossed 80%. That gate is deleted -- the sweep must still run
+    # against remaining targets even when coverage is already >= 80% (the
+    # exact threshold that used to trip the old gate).
     from skannonser.enrich.sold import run_sold_backlog
 
-    _seed_aged(conn, "101", 200)
-    conn.execute("INSERT INTO sold_prices (finnkode, sold_price) VALUES ('101', 5000000)")
+    # 4 already-priced solgt listings + 1 still-unpriced target = 80% coverage,
+    # precisely the old gate's trip point (fraction >= 0.80).
+    for i in range(4):
+        fk = f"20{i}"
+        _seed_aged(conn, fk, 200)
+        conn.execute(
+            "INSERT INTO sold_prices (finnkode, sold_price) VALUES (?, 5000000)", (fk,)
+        )
+    _seed_aged(conn, "500001", 200, lat=59.805, lng=10.261)   # still needs a price
     conn.commit()
-    calls = []
+
+    from skannonser.enrich.sold import sold_coverage
+    assert sold_coverage(conn, min_age_days=100)["fraction"] >= 0.80  # sanity: gate would trip
 
     stats = run_sold_backlog(
         conn,
-        fetch=lambda url, **k: calls.append(1) or FakeResp({"docs": []}),
-        coverage_target=0.80,
+        fetch=_card_fetch({"500001": (59.805, 10.261)}),
+        max_requests=4,
     )
-    assert stats["target_reached"] is True
-    assert calls == []                       # already >=80% covered
+
+    assert "target_reached" not in stats      # the gate is gone entirely
+    assert stats["tiles_queried"] == 1         # the sweep actually ran
+    row = conn.execute(
+        "SELECT sold_price FROM sold_prices WHERE finnkode = '500001'"
+    ).fetchone()
+    assert row["sold_price"] == 5000000
 
 
 def test_backlog_suspends_and_notifies_on_throttle(conn):
@@ -817,3 +837,54 @@ def test_inaktiv_pending_counts(conn):
 
     out = inaktiv_pending(conn, grace_days=180)
     assert out == {"pending": 1, "priced": 1}
+
+
+# ---------------------------------------------------------------------------
+# Attempts ceiling (replaces the 80% coverage gate): a target only reaches
+# max_attempts after the whole eligible backlog has been combed that many
+# times (fewest-attempts-first ordering), so the sweep provably goes quiet.
+# ---------------------------------------------------------------------------
+
+
+def test_select_sold_targets_excludes_target_at_attempts_ceiling(conn):
+    from skannonser.enrich.sold import record_attempts, select_sold_targets
+
+    _seed_aged(conn, "101", 200)   # will sit AT the ceiling -> excluded
+    _seed_aged(conn, "102", 200)   # one attempt short of the ceiling -> included
+    for _ in range(5):
+        record_attempts(conn, ["101"])
+    for _ in range(4):
+        record_attempts(conn, ["102"])
+
+    got = {
+        t["finnkode"]
+        for t in select_sold_targets(conn, min_age_days=100, max_attempts=5)
+    }
+    assert got == {"102"}
+
+
+def test_select_sold_targets_ceiling_applies_to_both_tiers(conn):
+    from skannonser.enrich.sold import record_attempts, select_sold_targets
+
+    _seed_aged(conn, "111", 10, status="Solgt")
+    _seed_aged(conn, "222", 10, status="Inaktiv")
+    for _ in range(5):
+        record_attempts(conn, ["111", "222"])
+
+    assert select_sold_targets(conn, grace_days=180, max_attempts=5) == []
+
+
+def test_given_up_targets_counts_priceless_at_or_above_ceiling(conn):
+    from skannonser.enrich.sold import given_up_targets, record_attempts
+
+    _seed_aged(conn, "101", 200)   # reaches the ceiling, still priceless -> given up
+    _seed_aged(conn, "102", 200)   # below the ceiling -> not given up
+    _seed_aged(conn, "103", 200)   # reaches the ceiling but IS priced -> not given up
+    conn.execute("INSERT INTO sold_prices (finnkode, sold_price) VALUES ('103', 5000000)")
+    conn.commit()
+    for _ in range(5):
+        record_attempts(conn, ["101", "103"])
+    for _ in range(4):
+        record_attempts(conn, ["102"])
+
+    assert given_up_targets(conn, max_attempts=5) == 1

@@ -8,6 +8,7 @@ from skannonser.config.settings import get_secrets
 from skannonser.enrich.dnb_travel import run_dnb_travel
 from skannonser.enrich.geocode import run_geocode
 from skannonser.enrich.sold import (
+    given_up_targets,
     inaktiv_pending,
     is_suspended,
     resume,
@@ -272,7 +273,10 @@ def enrich_sold(
         4, "--requests", help="Backlog mode: max FINN requests this run (hard cap)"
     ),
     force: bool = typer.Option(
-        False, "--force", help="Backlog mode: sweep even if the coverage target is reached"
+        False,
+        "--force",
+        help="Backlog mode: no-op (kept for CLI compatibility; the coverage "
+        "gate it used to bypass was replaced by an attempts ceiling)",
     ),
     resume_flag: bool = typer.Option(
         False, "--resume", help="Clear a throttle-suspension and re-enable sweeps"
@@ -341,6 +345,10 @@ def enrich_sold(
             f"  inaktiv tier: {pend['pending']} pending (in grace), "
             f"{pend['priced']} priced (promoted to Solgt)"
         )
+        given_up = given_up_targets(conn, domain.sold.max_attempts)
+        typer.echo(
+            f"  given up: {given_up} targets (>= {domain.sold.max_attempts} attempts, no price)"
+        )
         return
 
     if parts is not None:
@@ -356,6 +364,7 @@ def enrich_sold(
             force=force,
             delay=delay,
             grace_days=domain.sold.trukket_grace_days,
+            max_attempts=domain.sold.max_attempts,
         )
     typer.echo(f"enrich-sold: {stats}")
 

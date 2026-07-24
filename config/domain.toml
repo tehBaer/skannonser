@@ -87,3 +87,12 @@ max_pages = 200
 # Days after closing before a price-less Inaktiv listing is considered
 # Trukket (withdrawn) rather than pending -- see the 2026-07-24 spec.
 trukket_grace_days = 180
+
+# Give up on a sold-price target after this many attempts. Ordering is
+# fewest-attempts-first, so a target only reaches N after the whole eligible
+# backlog has been combed N times -- N is "combed everything N times", and it
+# self-scales with backlog size. Replaces the old 80 % coverage gate, which
+# counted only raw-Solgt rows (starving the inaktiv tier) and was no real
+# termination guarantee. Deliberately reverses migration 009's "never dropped"
+# stance; the default is generous so tinglysing lag still gets many chances.
+max_attempts = 5
