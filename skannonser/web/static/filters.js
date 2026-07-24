@@ -354,215 +354,112 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") closePopover();
 });
 
-export function buildMetricFilterUI(container, meta, ui, onChange) {
-  container.innerHTML = "";
-  const priceBound = priceBoundOf(meta);
+// Notion-style compact select-field over a HIDDEN-set: closed it shows a
+// summary ("Alle" when nothing is hidden, chips of the visible values when
+// ≤3 remain, else "N av M"); clicking opens the shared popover with the
+// familiar checkbox rows (checked = visible). Storage semantics unchanged.
+export function selectField(parent, { label, options, hidden, swatches, searchable, onChange }) {
+  const field = document.createElement("button");
+  field.type = "button";
+  field.className = "select-field";
+  const name = document.createElement("span");
+  name.className = "select-field-label";
+  name.textContent = label;
+  const value = document.createElement("span");
+  value.className = "select-field-value";
+  field.appendChild(name);
+  field.appendChild(value);
 
-  rangeRow(container, {
-    label: "Maks pris",
-    min: 0,
-    max: priceBound,
-    step: 50000,
-    value: ui.filters.priceMax,
-    fmt: (v) => (v >= priceBound ? "Av" : NOK.format(v) + " kr"),
-    onInput: (v) => {
-      ui.filters.priceMax = v;
-      onChange();
-    },
-  });
+  const paint = () => {
+    value.innerHTML = "";
+    value.classList.remove("muted");
+    const visible = options.filter((o) => !hidden[o.key]);
+    if (visible.length === options.length) {
+      value.textContent = "Alle";
+      value.classList.add("muted");
+    } else if (visible.length === 0) {
+      value.textContent = "Ingen";
+    } else if (visible.length <= 3) {
+      visible.forEach((o) => {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        if (swatches && o.swatch) {
+          const dot = document.createElement("span");
+          dot.className = "chip-dot";
+          dot.style.background = o.swatch;
+          chip.appendChild(dot);
+        }
+        chip.appendChild(document.createTextNode(o.label));
+        value.appendChild(chip);
+      });
+    } else {
+      value.textContent = visible.length + " av " + options.length;
+    }
+  };
 
-  rangeRow(container, {
-    label: "Min BRA-i",
-    min: 0,
-    max: BRA_I_SLIDER_MAX,
-    step: 5,
-    value: ui.filters.braIMin,
-    fmt: (v) => (v <= 0 ? "Av" : v + " m²"),
-    onInput: (v) => {
-      ui.filters.braIMin = v;
-      onChange();
-    },
-  });
-
-  rangeRow(container, {
-    label: "Maks totalpris",
-    min: 0,
-    max: TOTALPRIS_MAX,
-    step: 100000,
-    value: ui.filters.totalprisMax,
-    fmt: (v) => (v >= TOTALPRIS_MAX ? "Av" : NOK.format(v) + " kr"),
-    onInput: (v) => {
-      ui.filters.totalprisMax = v;
-      onChange();
-    },
-  });
-
-  rangeRow(container, {
-    label: "Maks felleskost/mnd",
-    min: 0,
-    max: FELLESKOST_MAX,
-    step: 250,
-    value: ui.filters.felleskostMax,
-    fmt: (v) => (v >= FELLESKOST_MAX ? "Av" : NOK.format(v) + " kr"),
-    onInput: (v) => {
-      ui.filters.felleskostMax = v;
-      onChange();
-    },
-  });
-
-  rangeRow(container, {
-    label: "Min soverom",
-    min: 0,
-    max: 6,
-    step: 1,
-    value: ui.filters.soveromMin,
-    fmt: (v) => (v <= 0 ? "Av" : "≥ " + v),
-    onInput: (v) => {
-      ui.filters.soveromMin = v;
-      onChange();
-    },
-  });
-
-  rangeRow(container, {
-    label: "Min byggeår",
-    min: BYGGEAAR_FLOOR,
-    max: BYGGEAAR_CEIL,
-    step: 1,
-    value: ui.filters.byggeaarMin,
-    fmt: (v) => (v <= BYGGEAAR_FLOOR ? "Av" : "≥ " + v),
-    onInput: (v) => {
-      ui.filters.byggeaarMin = v;
-      onChange();
-    },
-  });
-
-  rangeRow(container, {
-    label: "Maks total/kvm",
-    min: 0,
-    max: TOTAL_KVM_MAX,
-    step: 1000,
-    value: ui.filters.totalKvmMax,
-    fmt: (v) => (v >= TOTAL_KVM_MAX ? "Av" : NOK.format(v) + " kr"),
-    onInput: (v) => {
-      ui.filters.totalKvmMax = v;
-      onChange();
-    },
-  });
-
-  rangeRow(container, {
-    label: "Maks mnd-kost",
-    min: 0,
-    max: MAANEDSKOST_MAX,
-    step: 250,
-    value: ui.filters.maanedskostMax,
-    fmt: (v) => (v >= MAANEDSKOST_MAX ? "Av" : NOK.format(v) + " kr"),
-    onInput: (v) => {
-      ui.filters.maanedskostMax = v;
-      onChange();
-    },
-  });
-
-  (meta.destinations || []).forEach((d) => {
-    rangeRow(container, {
-      label: "Maks " + shortDest(d.key) + " (min)",
-      min: 0,
-      max: TRAVEL_MAX,
-      step: 1,
-      value: ui.filters.travelMax[d.key],
-      fmt: (v) => (v >= TRAVEL_MAX ? "Av" : "≤ " + v + " min"),
-      onInput: (v) => {
-        ui.filters.travelMax[d.key] = v;
+  const buildBody = (pop) => {
+    if (searchable) {
+      const search = document.createElement("input");
+      search.type = "text";
+      search.placeholder = "Søk …";
+      search.className = "multi-search";
+      pop.appendChild(search);
+      const listWrap = document.createElement("div");
+      listWrap.className = "multi-list";
+      pop.appendChild(listWrap);
+      const render = () => {
+        const q = search.value.trim().toLowerCase();
+        listWrap.innerHTML = "";
+        checkboxGroup(listWrap, {
+          options: options.filter((o) => !q || o.label.toLowerCase().includes(q)),
+          hidden,
+          onChange: () => {
+            paint();
+            onChange();
+          },
+        });
+      };
+      search.addEventListener("input", render);
+      render();
+      return;
+    }
+    checkboxGroup(pop, {
+      options,
+      hidden,
+      onChange: () => {
+        paint();
         onChange();
       },
     });
+  };
+
+  field.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    openPopover(field, buildBody);
   });
-
-  rangeRow(container, {
-    label: "Filtret nedtoning",
-    min: 0,
-    max: 100,
-    step: 5,
-    value: ui.dimIntensity,
-    fmt: (v) => v + " %",
-    onInput: (v) => {
-      ui.dimIntensity = v;
-      onChange();
-    },
-  });
-
-  rangeRow(container, {
-    label: "Solgt nedtoning",
-    min: 0,
-    max: 100,
-    step: 5,
-    value: ui.soldDim || 0,
-    fmt: (v) => (v <= 0 ? "Av" : v + " %"),
-    onInput: (v) => {
-      ui.soldDim = v;
-      onChange();
-    },
-  });
-
-  checkboxGroup(container, {
-    label: "Eieform",
-    options: (meta.eieformer || []).map((v) => ({ key: v, label: v })),
-    hidden: ui.filters.eieformHidden,
-    onChange,
-  });
-
-  if ((meta.energimerker || []).length) {
-    checkboxGroup(container, {
-      label: "Energimerking",
-      options: (meta.energimerker || []).map((v) => ({ key: v, label: v })),
-      hidden: ui.filters.energiHidden,
-      onChange,
-    });
-  }
-
-  // Required facilities (checked = must have), sorted by frequency from meta.
-  if ((meta.facilities || []).length) {
-    const facWrap = document.createElement("div");
-    facWrap.className = "filter-row facilities-row";
-    const facLabel = document.createElement("div");
-    facLabel.className = "filter-head";
-    facLabel.textContent = "Må ha fasiliteter";
-    facWrap.appendChild(facLabel);
-    (meta.facilities || []).forEach((f) => {
-      const row = document.createElement("label");
-      row.className = "toggle facility-toggle";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = Boolean(ui.filters.facilitiesRequired[f.name]);
-      cb.addEventListener("change", () => {
-        if (cb.checked) ui.filters.facilitiesRequired[f.name] = true;
-        else delete ui.filters.facilitiesRequired[f.name];
-        onChange();
-      });
-      row.appendChild(cb);
-      row.appendChild(document.createTextNode(f.name + " (" + f.count + ")"));
-      facWrap.appendChild(row);
-    });
-    container.appendChild(facWrap);
-  }
-
-  // Unknown-value policy for every details filter above.
-  const unkRow = document.createElement("label");
-  unkRow.className = "toggle";
-  const unkCb = document.createElement("input");
-  unkCb.type = "checkbox";
-  unkCb.checked = ui.filters.includeUnknown !== false;
-  unkCb.addEventListener("change", () => {
-    ui.filters.includeUnknown = unkCb.checked;
-    onChange();
-  });
-  unkRow.appendChild(unkCb);
-  unkRow.appendChild(document.createTextNode("Inkluder ukjent verdi"));
-  container.appendChild(unkRow);
+  paint();
+  parent.appendChild(field);
+  return field;
 }
 
-export function buildBoligtypeFilterUI(container, meta, colorByType, filters, onChange) {
+// The whole "Filtre" panel body: five select-fields, three collapsible
+// slider sub-groups (collapse state persisted via ui.collapsed through
+// onCollapse), and the unknown-value policy toggle. Replaces the old
+// metric-filter / boligtype-filter / more-filters builder trio --
+// facilities/postnummer/nabolag deliberately have NO sidebar UI (2026-07-24
+// sidebar-tabs spec §2): they are edited from the table popovers and
+// surfaced via the active-filter list.
+export function buildFilterPanelUI(
+  container,
+  { meta, vocabs, colorByType, filters, collapsed, onChange, onCollapse }
+) {
   container.innerHTML = "";
-  checkboxGroup(container, {
+  container.classList.remove("muted");
+
+  const fields = document.createElement("div");
+  fields.className = "filter-fields";
+  selectField(fields, {
+    label: "Boligtype",
     options: [
       ...(meta.boligtyper || []).map((t) => ({
         key: t,
@@ -572,31 +469,136 @@ export function buildBoligtypeFilterUI(container, meta, colorByType, filters, on
       { key: "", label: "Ukjent boligtype", swatch: (colorByType && colorByType[""]) || "#6f7e76" },
     ],
     hidden: filters.boligtypeHidden,
+    swatches: true,
     onChange,
   });
-}
-
-// The "Flere filtre" sidebar panel: status + place vocabularies derived from
-// the loaded listings (deriveVocabs), same components the table popovers use.
-export function buildMoreFiltersUI(container, vocabs, filters, onChange) {
-  container.innerHTML = "";
-  container.classList.remove("muted");
-  checkboxGroup(container, {
+  selectField(fields, {
+    label: "Eieform",
+    options: (meta.eieformer || []).map((v) => ({ key: v, label: v })),
+    hidden: filters.eieformHidden,
+    onChange,
+  });
+  selectField(fields, {
+    label: "Energimerking",
+    options: (meta.energimerker || []).map((v) => ({ key: v, label: v })),
+    hidden: filters.energiHidden,
+    onChange,
+  });
+  selectField(fields, {
     label: "Tilgjengelighet",
     options: vocabs.tilgjengelighet,
     hidden: filters.tilgjengelighetHidden,
     onChange,
   });
-  searchableMultiSelect(container, {
-    label: "Postnummer",
-    options: vocabs.postnummer,
-    selected: filters.postnummerSelected,
+  selectField(fields, {
+    label: "Tags",
+    options: vocabs.tags,
+    hidden: filters.tagHidden,
+    searchable: true,
     onChange,
   });
-  searchableMultiSelect(container, {
-    label: "Nabolag",
-    options: vocabs.nabolag,
-    selected: filters.nabolagSelected,
-    onChange,
+  container.appendChild(fields);
+
+  const group = (id, title) => {
+    const det = document.createElement("details");
+    det.className = "subgroup";
+    det.id = id;
+    det.open = !collapsed[id];
+    const sum = document.createElement("summary");
+    sum.textContent = title;
+    det.appendChild(sum);
+    det.addEventListener("toggle", () => {
+      if (det.open) delete collapsed[id];
+      else collapsed[id] = true;
+      onCollapse();
+    });
+    container.appendChild(det);
+    return det;
+  };
+  const kr = (bound) => (v) => (v >= bound ? "Av" : NOK.format(v) + " kr");
+  const priceBound = priceBoundOf(meta);
+
+  const pris = group("grp-pris", "Pris og kostnad");
+  rangeRow(pris, {
+    label: "Maks pris", min: 0, max: priceBound, step: 50000,
+    value: filters.priceMax, fmt: kr(priceBound),
+    onInput: (v) => { filters.priceMax = v; onChange(); },
+  });
+  rangeRow(pris, {
+    label: "Maks totalpris", min: 0, max: TOTALPRIS_MAX, step: 100000,
+    value: filters.totalprisMax, fmt: kr(TOTALPRIS_MAX),
+    onInput: (v) => { filters.totalprisMax = v; onChange(); },
+  });
+  rangeRow(pris, {
+    label: "Maks felleskost/mnd", min: 0, max: FELLESKOST_MAX, step: 250,
+    value: filters.felleskostMax, fmt: kr(FELLESKOST_MAX),
+    onInput: (v) => { filters.felleskostMax = v; onChange(); },
+  });
+  rangeRow(pris, {
+    label: "Maks mnd-kost", min: 0, max: MAANEDSKOST_MAX, step: 250,
+    value: filters.maanedskostMax, fmt: kr(MAANEDSKOST_MAX),
+    onInput: (v) => { filters.maanedskostMax = v; onChange(); },
+  });
+  rangeRow(pris, {
+    label: "Maks total/kvm", min: 0, max: TOTAL_KVM_MAX, step: 1000,
+    value: filters.totalKvmMax, fmt: kr(TOTAL_KVM_MAX),
+    onInput: (v) => { filters.totalKvmMax = v; onChange(); },
+  });
+
+  const bolig = group("grp-bolig", "Bolig");
+  rangeRow(bolig, {
+    label: "Min BRA-i", min: 0, max: BRA_I_SLIDER_MAX, step: 5,
+    value: filters.braIMin, fmt: (v) => (v <= 0 ? "Av" : v + " m²"),
+    onInput: (v) => { filters.braIMin = v; onChange(); },
+  });
+  rangeRow(bolig, {
+    label: "Min soverom", min: 0, max: 6, step: 1,
+    value: filters.soveromMin, fmt: (v) => (v <= 0 ? "Av" : "≥ " + v),
+    onInput: (v) => { filters.soveromMin = v; onChange(); },
+  });
+  rangeRow(bolig, {
+    label: "Min byggeår", min: BYGGEAAR_FLOOR, max: BYGGEAAR_CEIL, step: 1,
+    value: filters.byggeaarMin, fmt: (v) => (v <= BYGGEAAR_FLOOR ? "Av" : "≥ " + v),
+    onInput: (v) => { filters.byggeaarMin = v; onChange(); },
+  });
+
+  const reise = group("grp-reisetid", "Reisetid");
+  (meta.destinations || []).forEach((d) => {
+    rangeRow(reise, {
+      label: "Maks " + shortDest(d.key) + " (min)", min: 0, max: TRAVEL_MAX, step: 1,
+      value: filters.travelMax[d.key],
+      fmt: (v) => (v >= TRAVEL_MAX ? "Av" : "≤ " + v + " min"),
+      onInput: (v) => { filters.travelMax[d.key] = v; onChange(); },
+    });
+  });
+
+  const unkRow = document.createElement("label");
+  unkRow.className = "toggle";
+  const unkCb = document.createElement("input");
+  unkCb.type = "checkbox";
+  unkCb.checked = filters.includeUnknown !== false;
+  unkCb.addEventListener("change", () => {
+    filters.includeUnknown = unkCb.checked;
+    onChange();
+  });
+  unkRow.appendChild(unkCb);
+  unkRow.appendChild(document.createTextNode("Inkluder ukjent verdi"));
+  container.appendChild(unkRow);
+}
+
+// The "Visning" panel's sliders: display settings, NOT filters. (The
+// klyng/budpremie checkboxes live in static HTML in the same panel, wired
+// by app.js's existing wireLayerToggles/wirePremiumToggle.)
+export function buildDisplayUI(container, ui, onChange) {
+  container.innerHTML = "";
+  rangeRow(container, {
+    label: "Filtret nedtoning", min: 0, max: 100, step: 5,
+    value: ui.dimIntensity, fmt: (v) => v + " %",
+    onInput: (v) => { ui.dimIntensity = v; onChange(); },
+  });
+  rangeRow(container, {
+    label: "Solgt nedtoning", min: 0, max: 100, step: 5,
+    value: ui.soldDim || 0, fmt: (v) => (v <= 0 ? "Av" : v + " %"),
+    onInput: (v) => { ui.soldDim = v; onChange(); },
   });
 }
