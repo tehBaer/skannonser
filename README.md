@@ -61,6 +61,16 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
   Map niceties: mobile drawer layout, collapsible sidebar panels, per-tag
   visibility + tag rings, "Ny"/"nye siden sist" freshness, sold-price rows in
   popups + a "budpremie" colour mode for sold dots, polygon-fit start view.
+  **Derived closed status** (2026-07-24): a closed listing's displayed status is
+  DERIVED, never written back — `Solgt` when a tinglyst `sold_price` exists
+  (this also *promotes* a raw-`Inaktiv` listing whose price later lands),
+  `Inaktiv` while it's price-less and closed less than `trukket_grace_days`
+  (180) ago, and `Trukket` once past that grace with still no price. Before
+  this, everything closed was labelled "Solgt" regardless. The Lag panel has
+  four toggles — "Finn.no" (renamed from "Eie"), "DNB", "Solgt", and
+  "Inaktiv/Trukket" — with Inaktiv/Trukket dots painted a muted grey so real
+  sales stay visually distinct; popup/table badges read the derived status, and
+  Inaktiv/Trukket rows are muted and carry no sold-price/budpremie values.
   Listing details (soverom/eieform/fasiliteter/energimerke/totalpris/felleskost)
   ride along in `/api/listings` and `/api/meta`, with derived totalpris-per-kvm
   and månedskost (felleskost + kommunale avg/12) computed in the API at query
@@ -126,11 +136,20 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   + `store/repositories/sold.py` + migrations `006_sold_prices.sql`/`007_sold_sweep_state.sql`
   fetch tinglyst sold prices from FINN's sold map into `sold_prices`, keyed by
   finnkode. `skannonser run enrich-sold` runs one budgeted **backlog** pass:
-  suspend-aware, coverage-aware (targets listings sold >100 days ago, stops at
+  suspend-aware, coverage-aware (targets listings closed >100 days ago, stops at
   80% coverage), fewest-prior-attempts-first with densest-clusters-first as the
   tiebreak (migration `009_sold_attempts.sql` ledgers per-target attempts so
   never-tinglyst sales can't monopolise the budget), hard-capped at
   `--requests` (default 4),
+  **Targets cover both `Solgt` AND still-in-grace `Inaktiv` listings** (2026-07-24):
+  FINN sometimes flips a sold ad to Inaktiv rather than Solgt, so an Inaktiv
+  listing may still have a tinglyst price. Inaktiv targets are a STRICT second
+  tier — every Solgt target is attempted before any Inaktiv one (they're far
+  likelier to yield a price) — and they drop out of the target set entirely
+  once older than `[sold] trukket_grace_days` (default 180, `config/domain.toml`),
+  at which point they're treated as withdrawn and we stop spending requests on
+  them. Combined with the >100-day floor, an Inaktiv listing is swept in the
+  ~100–180-day window after it closed (a price cannot be tinglyst before that).
   querying a tight ~120 m box centered on each target listing (with one adaptive
   shrink if the target is crowded out of the 15-card cap). On throttle
   (429/403/503 or a block page) it **suspends itself, persists that, and pings
