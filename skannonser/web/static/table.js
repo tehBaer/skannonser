@@ -203,7 +203,7 @@ function matchesFilter(item, text) {
 
 function visibleRows() {
   const filtered = state.items.filter((item) => {
-    if (!state.showSold && item.sold) return false;
+    if (!state.showSold && item.closed) return false;
     if (listingExcluded(item, state.filters, state.meta)) return false;
     return matchesFilter(item, state.filterText);
   });
@@ -312,7 +312,7 @@ function wireCellEdit(input, item, field) {
 }
 
 function buildRow(item) {
-  const tr = el("tr", item.sold ? "sold-row" : null);
+  const tr = el("tr", item.sold ? "sold-row" : item.closed ? "inactive-row" : null);
 
   COLUMNS.forEach((col) => {
     const td = el("td");
@@ -328,6 +328,7 @@ function buildRow(item) {
           td.textContent = item.adresse || "(ukjent adresse)";
         }
         if (item.sold) td.appendChild(el("span", "sold-badge", "Solgt"));
+        else if (item.closed) td.appendChild(el("span", "inactive-badge", item.tilgjengelighet));
         if (isNew(item)) td.appendChild(el("span", "ny-badge", "Ny"));
         break;
       }

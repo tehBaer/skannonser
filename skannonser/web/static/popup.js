@@ -65,8 +65,17 @@ export function buildPopupContent(item, destinations) {
   const body = el("div", "body");
 
   const addr = el("p", "adresse", item.adresse || "(ukjent adresse)");
-  const tag = el("span", "source-tag" + (item.sold ? " sold" : item.source === "dnb" ? " dnb" : ""));
-  tag.textContent = item.sold ? "Solgt" : item.source === "dnb" ? "DNB" : "Eie";
+  const tagClass =
+    "source-tag" +
+    (item.sold ? " sold" : item.closed ? " inactive" : item.source === "dnb" ? " dnb" : "");
+  const tag = el("span", tagClass);
+  tag.textContent = item.sold
+    ? "Solgt"
+    : item.closed
+      ? item.tilgjengelighet // derived "Inaktiv" / "Trukket"
+      : item.source === "dnb"
+        ? "DNB"
+        : "Eie";
   addr.appendChild(tag);
   if (isNew(item)) addr.appendChild(el("span", "ny-badge", "Ny"));
   body.appendChild(addr);
