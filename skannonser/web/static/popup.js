@@ -75,7 +75,7 @@ export function buildPopupContent(item, destinations) {
       ? item.tilgjengelighet // derived "Inaktiv" / "Trukket"
       : item.source === "dnb"
         ? "DNB"
-        : "Eie";
+        : "Finn";
   addr.appendChild(tag);
   if (isNew(item)) addr.appendChild(el("span", "ny-badge", "Ny"));
   body.appendChild(addr);
