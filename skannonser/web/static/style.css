@@ -411,3 +411,37 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 }
 .cell-edit.saved { border-color: var(--accent); }
 .cell-edit.error { border-color: #a2392e; }
+/* --- table header filters + popovers (unified filtering, 2026-07-24) --- */
+.th-filter {
+  background: none;
+  border: 0;
+  padding: 2px 3px;
+  margin-left: 4px;
+  cursor: pointer;
+  color: var(--muted, #8a938c);
+  vertical-align: middle;
+}
+.th-filter:hover { color: var(--text, #222); }
+.th-filter.active { color: var(--accent, #2f6f4f); }
+#listings-table th.filter-active { background: rgba(47, 111, 79, 0.08); }
+.th-popover {
+  position: fixed;
+  z-index: 60;
+  background: var(--panel-bg, #fff);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 10px 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  font-size: 13px;
+}
+.multi-search { width: 100%; margin: 4px 0 6px; padding: 4px 6px; }
+.multi-list { max-height: 200px; overflow-y: auto; }
+.multi-clear { margin-top: 6px; font-size: 12px; cursor: pointer; }
+.active-filters { margin: 4px 0 8px; font-size: 12px; }
+.reset-filters { margin-top: 8px; font-size: 12px; cursor: pointer; }
+.toolbar-filter-btn { font-size: 13px; cursor: pointer; }
+@media (max-width: 480px) {
+  .th-popover { left: 8px !important; right: 8px; width: auto !important; }
+}
