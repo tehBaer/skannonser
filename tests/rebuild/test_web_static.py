@@ -87,15 +87,19 @@ def test_index_served_at_root(tmp_path):
     assert 'type="module"' in body and "/app.js" in body
 
 
-def test_index_has_task7_sidebar_sections(tmp_path):
-    """The Task 7 sidebar sections (filters, per-boligtype visibility, station
+def test_index_has_sidebar_sections(tmp_path):
+    """The sidebar sections (filter panel, display/Visning panel, tab nav, station
     overlays + commute filter, missing-coords) and their mount points are
     present in index.html."""
     body = _client(tmp_path).get("/").text
-    # Metric filters + dim, boligtype visibility, stations, missing-coords.
+    # Filter panel, display sliders, tab nav, stations, missing-coords.
     for anchor in (
-        'id="metric-filters"',
-        'id="boligtype-filter"',
+        'id="filter-panel-body"',
+        'id="active-filters"',
+        'id="reset-filters"',
+        'id="display-sliders"',
+        'id="visning-panel"',
+        'class="app-tabs"',
         'id="stations-panel"',
         'id="toggle-stations"',
         'id="toggle-hide-outside"',
@@ -105,8 +109,8 @@ def test_index_has_task7_sidebar_sections(tmp_path):
         'id="missing-coords"',
     ):
         assert anchor in body, anchor
-    # Task 7 modules are loaded (via app.js's static imports, but assert the
-    # files are referenced by the app module graph entrypoint at minimum).
+    # App module is loaded (via app.js's static imports, but assert the
+    # file is referenced by the app module graph entrypoint at minimum).
     assert 'src="/app.js"' in body
 
 
