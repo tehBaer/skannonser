@@ -20,13 +20,20 @@ import {
 import { buildPopupContent } from "./popup.js";
 import { isNew, parseScrapedAt, premiumPct } from "./listingmeta.js";
 import {
-  defaultFilterState,
-  metricDimmed,
-  boligtypeHidden,
+  listingExcluded,
   residualOpacity,
   buildMetricFilterUI,
   buildBoligtypeFilterUI,
+  buildMoreFiltersUI,
+  deriveVocabs,
 } from "./filters.js";
+import {
+  defaultFilters,
+  loadFilters,
+  activeFilterCount,
+  subscribeOtherTabs,
+  resetFilters,
+} from "./filterstate.js";
 import {
   addStationLayers,
   updateStationLayers,
@@ -54,7 +61,7 @@ function defaultUi(meta) {
     eie: true,
     dnb: true,
     sold: false,
-    filters: defaultFilterState(meta),
+    filters: defaultFilters(meta),
     dimIntensity: 75, // % dimming for non-matching listings
     // Sold-only dimming defaults ON (50 %): with thousands of sold dots at
     // full strength the actives drown -- subdued-by-default keeps the sold
@@ -62,8 +69,6 @@ function defaultUi(meta) {
     soldDim: 50,
     soldPremium: false, // colour sold dots by budpremie instead of boligtype
     combineSold: false, // cluster sold + active together (vs separately)
-    boligtypeHidden: {},
-    tagHidden: {}, // {tag: true} -> listings with that tag are hidden ("" = untagged)
     collapsed: {}, // {panelId: true} -> sidebar panel collapsed
     stations: {
       show: false,
@@ -102,15 +107,7 @@ function loadUi(meta) {
       const ui = {
         ...base,
         ...stored,
-        filters: {
-          ...base.filters,
-          ...(stored.filters || {}),
-          travelMax: { ...base.filters.travelMax, ...((stored.filters || {}).travelMax || {}) },
-          energiHidden: { ...((stored.filters || {}).energiHidden || {}) },
-          facilitiesRequired: { ...((stored.filters || {}).facilitiesRequired || {}) },
-        },
-        boligtypeHidden: { ...(stored.boligtypeHidden || {}) },
-        tagHidden: { ...(stored.tagHidden || {}) },
+        filters: loadFilters(meta),
         collapsed: { ...(stored.collapsed || {}) },
         stations: {
           ...base.stations,
@@ -126,6 +123,10 @@ function loadUi(meta) {
         ui.soldDim = Math.max(Number(ui.soldDim) || 0, 50);
         ui.soldDimNudged = true;
       }
+      // Legacy roots migrated into filters by loadFilters -- strip them so
+      // saveUi can never re-persist the old shape.
+      delete ui.boligtypeHidden;
+      delete ui.tagHidden;
       return ui;
     }
   } catch (_) {
@@ -157,7 +158,7 @@ function bucketOf(item) {
 // Per-listing dim decision: metric filters OR commute OR hide-outside-radius.
 // `ctx` carries the once-per-recompute station context.
 function isDimmed(item, ctx) {
-  if (metricDimmed(item, state.ui, state.meta)) return true;
+  if (listingExcluded(item, state.ui.filters, state.meta)) return true;
 
   const st = state.ui.stations;
   const covering = nearestCoveringStation(item, ctx.stations, ctx.visibleLines);
@@ -211,21 +212,25 @@ function featureCollectionsByGroup() {
     anyStation: anyLineVisibleStation(state.meta.stations || [], visibleLineSet(state.ui)),
   };
   const residual = residualOpacity(state.ui);
-  // Sold listings are DETACHED from the filters + "Nedtoning": their opacity is
-  // driven solely by the separate "Solgt nedtoning" slider (uniform). Active
-  // listings are driven solely by the filters + "Nedtoning".
+  // Sold listings now follow the filters + "Nedtoning" like active ones do;
+  // only PASSING sold dots additionally get the separate "Solgt nedtoning"
+  // slider (see the op ternary below).
   const soldPct = Math.max(0, Math.min(100, Number(state.ui.soldDim) || 0));
   const soldOpacity = 1 - soldPct / 100;
   const byGroup = {};
   state.groups.forEach((g) => (byGroup[g.id] = []));
+  const hideExcluded = Number(state.ui.dimIntensity) >= 100;
   state.itemsById.forEach((item) => {
     if (item.lat == null || item.lng == null) return;
     if (!state.ui[bucketOf(item)]) return; // layer toggle (eie/dnb/sold)
-    if (boligtypeHidden(item, state.ui)) return; // per-type visibility (hidden)
-    if (state.ui.tagHidden[tagKeyOf(item)]) return; // tag visibility (hidden)
+    const excluded = isDimmed(item, ctx);
+    // Nedtoning at 100 % = today's hard-hide (incl. cluster counts).
+    if (excluded && hideExcluded) return;
     const gid = groupIdForItem(item, state.validGroupIds, state.ui.combineSold);
     if (!byGroup[gid]) return; // safety: no source for this group
-    const op = item.sold ? soldOpacity : isDimmed(item, ctx) ? residual : 1;
+    // Sold dots follow the filters too now (approved change): excluded ->
+    // filter dim; passing sold dots keep the separate "Solgt nedtoning".
+    const op = excluded ? residual : item.sold ? soldOpacity : 1;
     byGroup[gid].push(itemToFeature(item, op));
   });
   return byGroup;
@@ -284,7 +289,7 @@ function ensureSoldLoaded() {
       const data = await resp.json();
       ingestItems(data.listings || []);
       state.soldLoaded = true;
-      buildTagFilterUI(); // sold items may introduce tags
+      rebuildFilterUIs(); // sold items may add tags AND grow other vocabularies
       updateStatus();
     } catch (err) {
       setStatus("Kunne ikke laste solgte: " + err.message);
@@ -472,12 +477,11 @@ function buildTagFilterUI() {
     row.className = "toggle boligtype-toggle";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = !state.ui.tagHidden[key];
+    cb.checked = !state.ui.filters.tagHidden[key];
     cb.addEventListener("change", () => {
-      if (cb.checked) delete state.ui.tagHidden[key];
-      else state.ui.tagHidden[key] = true;
-      saveUi();
-      applyAll();
+      if (cb.checked) delete state.ui.filters.tagHidden[key];
+      else state.ui.filters.tagHidden[key] = true;
+      onFilterChange();
     });
     row.appendChild(cb);
     row.appendChild(document.createTextNode(label));
@@ -666,6 +670,45 @@ function fitToPolygon(map, polygon) {
   map.fitBounds(bounds, { padding: 40, animate: false });
 }
 
+function renderActiveFilterLine() {
+  const node = document.getElementById("active-filters");
+  if (!node) return;
+  const n = activeFilterCount(state.ui.filters, state.meta);
+  node.textContent = n ? n + " filtre aktive" : "Ingen aktive filtre";
+}
+
+function onFilterChange() {
+  saveUi();
+  renderActiveFilterLine();
+  applyAll();
+}
+
+// (Re)build every filter control that renders shared state -- used at init,
+// after reset, and when another tab changes the filters.
+function rebuildFilterUIs() {
+  buildBoligtypeFilterUI(
+    document.getElementById("boligtype-filter"),
+    state.meta,
+    { ...state.colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
+    state.ui.filters,
+    onFilterChange
+  );
+  buildMetricFilterUI(
+    document.getElementById("metric-filters"),
+    state.meta,
+    state.ui,
+    onFilterChange
+  );
+  buildMoreFiltersUI(
+    document.getElementById("more-filters"),
+    deriveVocabs([...state.itemsById.values()]),
+    state.ui.filters,
+    onFilterChange
+  );
+  buildTagFilterUI();
+  renderActiveFilterLine();
+}
+
 async function init() {
   setStatus("Laster …");
   let meta, listings;
@@ -713,21 +756,8 @@ async function init() {
   // Sidebar FIRST, before the map exists: the persisted UI state must show
   // immediately, not after the (possibly slow) first tile load. Control
   // handlers call applyAll(), which no-ops until the map layers are ready.
-  buildBoligtypeFilterUI(
-    document.getElementById("boligtype-filter"),
-    meta,
-    { ...colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
-    state.ui,
-    () => { saveUi(); applyAll(); }
-  );
+  rebuildFilterUIs();
   renderSourceLegend();
-  buildMetricFilterUI(
-    document.getElementById("metric-filters"),
-    meta,
-    state.ui,
-    () => { saveUi(); applyAll(); }
-  );
-  buildTagFilterUI();
   wireLayerToggles();
   wirePremiumToggle();
   wireStationControls();
@@ -737,6 +767,21 @@ async function init() {
   document.addEventListener("sk-annotation-saved", () => {
     buildTagFilterUI();
     applyAll(); // tag rings / tag-visibility may have changed
+  });
+
+  const resetBtn = document.getElementById("reset-filters");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      resetFilters(state.ui.filters, state.meta);
+      rebuildFilterUIs();
+      onFilterChange();
+    });
+  }
+  // Live cross-tab sync: another tab (e.g. the table) changed the filters.
+  subscribeOtherTabs(() => {
+    state.ui.filters = loadFilters(state.meta);
+    rebuildFilterUIs();
+    applyAll();
   });
 
   const map = createMap("map");
