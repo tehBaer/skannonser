@@ -16,7 +16,6 @@ import {
   resetFilters,
 } from "./filterstate.js";
 import {
-  COLUMN_FILTERS,
   isColumnFilterActive,
   makeFilterButton,
   openFacilitiesPopover,
@@ -288,6 +287,15 @@ function wireCellEdit(input, item, field) {
       input.value = saved[field] || "";
       input.classList.add("saved");
       setTimeout(() => input.classList.remove("saved"), 1500);
+      // Tag vocab may have gained a new value -- refresh it and re-render so
+      // the Tag column filter's option list and any active tag filter both
+      // reflect it. render() rebuilds the table body (this input included),
+      // which is fine: commit only fires on blur/Enter, so the user is done
+      // editing by the time we get here, and the `saving` guard above (plus
+      // blur already having fired) means the now-detached input can't
+      // re-trigger commit.
+      refreshVocabs();
+      render();
     } catch (err) {
       input.classList.add("error");
     } finally {
@@ -405,6 +413,14 @@ function render() {
     rows.length + " av " + state.items.length + " annonser" +
     (n ? " · " + n + " filtre aktive" : "")
   );
+  // Runs on every render (onFilterChange + cross-tab sync included) so the
+  // button's active cue never drifts from the actual filter state.
+  const facBtn = document.getElementById("facilities-filter-btn");
+  if (facBtn) {
+    const hasFacilities =
+      Object.keys(state.filters.facilitiesRequired || {}).length > 0;
+    facBtn.classList.toggle("active", hasFacilities);
+  }
 }
 
 function wireToolbar() {

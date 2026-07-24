@@ -442,6 +442,7 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 .active-filters { margin: 4px 0 8px; font-size: 12px; }
 .reset-filters { margin-top: 8px; font-size: 12px; cursor: pointer; }
 .toolbar-filter-btn { font-size: 13px; cursor: pointer; }
+.toolbar-filter-btn.active { color: var(--accent, #2f6f4f); font-weight: 600; }
 @media (max-width: 480px) {
   .th-popover { left: 8px !important; right: 8px; width: auto !important; }
 }
