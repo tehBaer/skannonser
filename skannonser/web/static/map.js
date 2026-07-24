@@ -128,7 +128,10 @@ export function buildGroups(boligtyper, colorByType) {
 // otherwise the "active"/"sold" split. `validIds` folds an unrecognised type
 // into the unknown bucket, preserving the variant.
 export function groupIdForItem(item, validIds, combineSold) {
-  const variant = combineSold ? "both" : item.sold ? "sold" : "active";
+  // NOTE: the internal variant/source name stays "sold" (data-plumbing rename
+  // not worth the churn), but it now selects on `item.closed` -- the variant
+  // means "closed" (Solgt + derived Inaktiv/Trukket), not just genuine sold.
+  const variant = combineSold ? "both" : item.closed ? "sold" : "active";
   const id = groupId(item.boligtype || "", variant);
   if (validIds && !validIds.has(id)) return groupId("", variant);
   return id;
@@ -167,8 +170,15 @@ function ensureSquareIcon(map, color, strokeColor) {
 const ACTIVE_BORDER = "#111111";
 const SOLD_BORDER = "#ffffff";
 
-const IS_SOLD = ["==", ["get", "sold"], true];
-const NOT_SOLD = ["==", ["get", "sold"], false];
+// Closed-without-a-sale (derived Inaktiv/Trukket) dots: one neutral grey,
+// not boligtype-coloured -- visually quiet, distinct from genuine Solgt.
+const INACTIVE_COLOR = "#9aa39c";
+// Normal-mode colour for a closed layer: genuine sold keeps the group's
+// boligtype colour, inactive/trukket goes grey.
+const closedColorExpr = (color) => ["case", ["==", ["get", "sold"], true], color, INACTIVE_COLOR];
+
+const IS_CLOSED = ["==", ["get", "closed"], true];
+const NOT_CLOSED = ["==", ["get", "closed"], false];
 
 // Ring drawn beneath any listing that carries a tag -- the "this one is
 // annotated" marker, independent of boligtype colour.
@@ -204,7 +214,7 @@ export function setSoldColorMode(map, groups, premiumOn) {
     map.setPaintProperty(
       layerId,
       "circle-color",
-      premiumOn ? PREMIUM_COLOR : g.color
+      premiumOn ? PREMIUM_COLOR : closedColorExpr(g.color)
     );
   });
 }
@@ -278,7 +288,7 @@ export function addListingGroups(map, groups, onListingClick) {
         id: g.id + "-eie",
         type: "circle",
         source: g.id,
-        filter: ["all", NOT_CLUSTER, NOT_SOLD, ["==", ["get", "source"], "eie"]],
+        filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "eie"]],
         paint: {
           "circle-color": g.color,
           "circle-radius": 7,
@@ -292,7 +302,7 @@ export function addListingGroups(map, groups, onListingClick) {
         id: g.id + "-dnb",
         type: "symbol",
         source: g.id,
-        filter: ["all", NOT_CLUSTER, NOT_SOLD, ["==", ["get", "source"], "dnb"]],
+        filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "dnb"]],
         layout: {
           "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
           "icon-size": 1,
@@ -307,9 +317,9 @@ export function addListingGroups(map, groups, onListingClick) {
         id: g.id + "-sold",
         type: "circle",
         source: g.id,
-        filter: ["all", NOT_CLUSTER, IS_SOLD],
+        filter: ["all", NOT_CLUSTER, IS_CLOSED],
         paint: {
-          "circle-color": g.color, // sold coloured by boligtype
+          "circle-color": closedColorExpr(g.color), // sold: boligtype colour; inactive/trukket: grey
           "circle-radius": 6,
           "circle-stroke-width": 1.5,
           "circle-stroke-color": SOLD_BORDER, // sold = white border

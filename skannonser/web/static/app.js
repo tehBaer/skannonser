@@ -60,6 +60,7 @@ function defaultUi(meta) {
     eie: true,
     dnb: true,
     sold: false,
+    inactive: false,
     filters: defaultFilters(meta),
     dimIntensity: 75, // % dimming for non-matching listings
     // Sold-only dimming defaults ON (50 %): with thousands of sold dots at
@@ -150,6 +151,7 @@ function setStatus(text) {
 
 function bucketOf(item) {
   if (item.sold) return "sold";
+  if (item.closed) return "inactive";
   if (item.source === "dnb") return "dnb";
   return "eie";
 }
@@ -186,6 +188,7 @@ function itemToFeature(item, op) {
     finnkode: item.finnkode,
     source: item.source,
     sold: !!item.sold,
+    closed: !!item.closed,
     boligtype: item.boligtype || "",
     op, // 1, or the dimmed residual opacity (see filters.residualOpacity)
   };
@@ -229,7 +232,7 @@ function featureCollectionsByGroup() {
     if (!byGroup[gid]) return; // safety: no source for this group
     // Sold dots follow the filters too now (approved change): excluded ->
     // filter dim; passing sold dots keep the separate "Solgt nedtoning".
-    const op = excluded ? residual : item.sold ? soldOpacity : 1;
+    const op = excluded ? residual : item.closed ? soldOpacity : 1;
     byGroup[gid].push(itemToFeature(item, op));
   });
   return byGroup;
@@ -361,7 +364,12 @@ function panPopupIntoView() {
 }
 
 function wireLayerToggles() {
-  const map = { eie: "toggle-eie", dnb: "toggle-dnb", sold: "toggle-sold" };
+  const map = {
+    eie: "toggle-eie",
+    dnb: "toggle-dnb",
+    sold: "toggle-sold",
+    inactive: "toggle-inactive",
+  };
   Object.entries(map).forEach(([bucket, id]) => {
     const input = document.getElementById(id);
     if (!input) return;
@@ -369,7 +377,7 @@ function wireLayerToggles() {
     input.addEventListener("change", async () => {
       state.ui[bucket] = input.checked;
       saveUi();
-      if (bucket === "sold" && input.checked) {
+      if ((bucket === "sold" || bucket === "inactive") && input.checked) {
         input.disabled = true;
         try {
           await ensureSoldLoaded();
@@ -377,7 +385,7 @@ function wireLayerToggles() {
           // Fetch failed (status already says so): roll the toggle back so
           // the UI never claims a sold layer it doesn't have.
           input.checked = false;
-          state.ui.sold = false;
+          state.ui[bucket] = false;
           saveUi();
         } finally {
           input.disabled = false;
@@ -606,9 +614,10 @@ async function handleHash() {
     item = state.itemsById.get(finnkode);
   }
   if (!item || item.lat == null || item.lng == null) return;
-  if (item.sold && !state.ui.sold) {
-    state.ui.sold = true;
-    const cb = document.getElementById("toggle-sold");
+  const bucket = bucketOf(item);
+  if ((bucket === "sold" || bucket === "inactive") && !state.ui[bucket]) {
+    state.ui[bucket] = true;
+    const cb = document.getElementById(bucket === "sold" ? "toggle-sold" : "toggle-inactive");
     if (cb) cb.checked = true;
     saveUi();
   }
@@ -725,7 +734,7 @@ async function init() {
     const prevTs = Date.parse(prevVisit);
     state.itemsById.forEach((item) => {
       const t = parseScrapedAt(item.scraped_at);
-      if (!item.sold && t != null && t > prevTs) state.newSinceLast += 1;
+      if (!item.closed && t != null && t > prevTs) state.newSinceLast += 1;
     });
   }
   try {

@@ -515,3 +515,10 @@ details.subgroup > summary {
 .af-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin: 3px 0; gap: 6px; }
 .af-clear { background: none; border: 0; cursor: pointer; color: var(--muted, #8a938c); font-size: 14px; padding: 0 2px; }
 .af-clear:hover { color: #b3402f; }
+
+/* --- closed-status (2026-07-24): muted badge for Inaktiv/Trukket --- */
+.source-tag.inactive, .inactive-badge {
+  background: #9aa39c;
+  color: #fff;
+}
+.inactive-row td { color: var(--muted, #8a938c); }
