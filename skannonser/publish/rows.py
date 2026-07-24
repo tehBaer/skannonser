@@ -92,6 +92,7 @@ _EIE_SELECT_TAIL = """
     ep.travel_copy_from_finnkode AS "TRAVEL_COPY_FROM_FINNKODE",
     ep.google_maps_url AS "GOOGLE_MAPS_URL",
     e.scraped_at AS "SCRAPED_AT",
+    e.updated_at AS "UPDATED_AT",
     ld.bedrooms AS "SOVEROM",
     ld.rooms AS "ROM",
     ld.floor AS "ETASJE",

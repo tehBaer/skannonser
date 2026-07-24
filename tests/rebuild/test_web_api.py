@@ -232,7 +232,7 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
     assert set(item.keys()) == {
         "finnkode", "adresse", "postnummer", "pris", "pris_kvm", "boligtype",
         "tilgjengelighet", "lat", "lng", "travel", "bra_i", "byggeaar", "url",
-        "image", "kommentar", "tag", "scraped_at", "source", "sold",
+        "image", "kommentar", "tag", "scraped_at", "source", "sold", "closed",
         # Listing-details enrichment (migration 010; Task 9).
         "soverom", "rom", "etasje", "eieform", "nabolag", "energimerke",
         "energifarge", "totalpris", "omkostninger", "fellesgjeld",
@@ -247,6 +247,7 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
     assert item["lng"] == 10.7
     assert item["source"] == "eie"
     assert item["sold"] is False
+    assert item["closed"] is False
     assert item["image"] is True
     # Donor-resolved: A inherits B's travel values.
     assert item["travel"] == {"brj": 11, "mvv": 22, "mvv_uni": 33}
@@ -421,6 +422,106 @@ def test_listing_detail_sold_carries_sold_price_fields(db_path, client):
     detail = client.get("/api/listings/sold-priced").json()
     assert detail["sold"] is True
     assert detail["sold_price"] == 7_000_000
+
+
+# ---------------------------------------------------------------------------
+# Closed-status derivation (Solgt/Inaktiv/Trukket -- 2026-07-24 spec)
+# ---------------------------------------------------------------------------
+
+def _age_updated_at(conn, finnkode, days_ago):
+    conn.execute(
+        "UPDATE eiendom SET updated_at = datetime('now', ?) WHERE finnkode = ?",
+        (f"-{days_ago} days", finnkode),
+    )
+    conn.commit()
+
+
+def test_closed_raw_solgt_is_solgt_even_without_price(client, db_path):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "raw-solgt", tilgjengelighet="Solgt", active=0)
+    _ins_processed(conn, "raw-solgt")
+    _age_updated_at(conn, "raw-solgt", 300)
+    conn.close()
+
+    item = _by_finnkode(
+        client.get("/api/listings", params={"bucket": "sold"}).json()["listings"],
+        "raw-solgt",
+    )
+    assert item["sold"] is True
+    assert item["closed"] is True
+    assert item["tilgjengelighet"] == "Solgt"
+
+
+def test_closed_inaktiv_with_price_promoted_to_solgt(client, db_path):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "inaktiv-priced", tilgjengelighet="Inaktiv", active=0)
+    _ins_processed(conn, "inaktiv-priced")
+    _ins_sold_price(conn, "inaktiv-priced", sold_price=4_500_000)
+    conn.close()
+
+    item = _by_finnkode(
+        client.get("/api/listings", params={"bucket": "sold"}).json()["listings"],
+        "inaktiv-priced",
+    )
+    assert item["sold"] is True
+    assert item["tilgjengelighet"] == "Solgt"
+    assert item["sold_price"] == 4_500_000
+
+
+def test_closed_inaktiv_young_is_inaktiv(client, db_path):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "inaktiv-young", tilgjengelighet="Inaktiv", active=0)
+    _ins_processed(conn, "inaktiv-young")
+    _age_updated_at(conn, "inaktiv-young", 10)
+    conn.close()
+
+    item = _by_finnkode(
+        client.get("/api/listings", params={"bucket": "sold"}).json()["listings"],
+        "inaktiv-young",
+    )
+    assert item["sold"] is False
+    assert item["closed"] is True
+    assert item["tilgjengelighet"] == "Inaktiv"
+
+
+def test_closed_inaktiv_aged_is_trukket(client, db_path):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "inaktiv-aged", tilgjengelighet="Inaktiv", active=0)
+    _ins_processed(conn, "inaktiv-aged")
+    _age_updated_at(conn, "inaktiv-aged", 200)
+    conn.close()
+
+    item = _by_finnkode(
+        client.get("/api/listings", params={"bucket": "sold"}).json()["listings"],
+        "inaktiv-aged",
+    )
+    assert item["sold"] is False
+    assert item["tilgjengelighet"] == "Trukket"
+
+
+def test_open_listing_keeps_raw_status_and_not_closed(client, db_path):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "open-one", tilgjengelighet="Kommer for salg", active=1)
+    _ins_processed(conn, "open-one")
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "open-one")
+    assert item["closed"] is False
+    assert item["sold"] is False
+    assert item["tilgjengelighet"] == "Kommer for salg"
+
+
+def test_detail_exposes_raw_and_derived(client, db_path):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "111", tilgjengelighet="Inaktiv", active=0)
+    _ins_processed(conn, "111")
+    _age_updated_at(conn, "111", 200)
+    conn.close()
+
+    data = client.get("/api/listings/111").json()
+    assert data["tilgjengelighet"] == "Trukket"   # derived (item spread)
+    assert data["Tilgjengelighet"] == "Inaktiv"   # raw (column spread)
+    assert data["closed"] is True
 
 
 def test_responses_are_gzipped_when_accepted(db_path, client):

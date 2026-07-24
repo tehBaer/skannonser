@@ -289,6 +289,22 @@ def test_eie_sheet_payload_unchanged_by_details(conn):
     assert before == after
 
 
+def test_eie_sheet_payload_unchanged_by_updated_at_column(conn):
+    """Task 3 (closed-status derivation) adds ``e.updated_at AS "UPDATED_AT"``
+    to ``_EIE_SELECT_TAIL`` -- a fragment shared with this sheet export. Since
+    ``eie_rows`` only ever projects ``EIE_HEADER`` names over the fetched
+    record dicts (see ``test_eie_sheet_payload_unchanged_by_details`` above),
+    the new column must stay invisible here: no new header, no wider rows."""
+    _ins_eiendom(conn, "1", bra_i=100)
+    _ins_processed(conn, "1")
+
+    assert "UPDATED_AT" not in EIE_HEADER
+
+    header, rows = eie_rows(conn)
+    assert header == EIE_HEADER
+    assert rows and all(len(row) == len(EIE_HEADER) for row in rows)
+
+
 # ---------------------------------------------------------------------------
 # Eie visibility filter matrix
 # ---------------------------------------------------------------------------

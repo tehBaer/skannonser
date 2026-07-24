@@ -293,10 +293,12 @@ def _eie_item(
     rec: dict,
     domain: DomainConfig,
     *,
-    sold: bool,
+    closed: bool,
     thumbs_dir: Path | None = None,
     facilities: list[str] | None = None,
 ) -> dict:
+    derived = _derived_status(rec, domain.sold.trukket_grace_days) if closed else None
+    sold = derived == "Solgt"
     finnkode = rec.get("_finnkode")
     item = {
         "finnkode": finnkode,
@@ -305,7 +307,7 @@ def _eie_item(
         "pris": rec.get("Pris"),
         "pris_kvm": rec.get("PRIS KVM"),
         "boligtype": _clean_boligtype(rec.get("_boligtype_raw")),
-        "tilgjengelighet": rec.get("Tilgjengelighet"),
+        "tilgjengelighet": derived if derived is not None else rec.get("Tilgjengelighet"),
         "lat": rec.get("_lat"),
         "lng": rec.get("_lng"),
         "travel": _travel_from_record(rec, domain),
@@ -318,6 +320,7 @@ def _eie_item(
         "scraped_at": rec.get("SCRAPED_AT"),
         "source": "eie",
         "sold": sold,
+        "closed": derived is not None,
         # Listing-details enrichment (migration 010; None/[] when unparsed).
         "soverom": rec.get("SOVEROM"),
         "rom": rec.get("ROM"),
@@ -337,8 +340,8 @@ def _eie_item(
         "pris_kvm_totalpris": _pris_kvm_totalpris(rec),
         "maanedskost": _maanedskost(rec),
     }
-    if sold:
-        # Only sold items carry the tinglyst outcome (see _SOLD_PRICE_COLS);
+    if closed:
+        # Whole closed bucket ships the keys (Solgt/Inaktiv/Trukket alike);
         # actives omit the keys entirely rather than shipping always-null noise.
         item["sold_price"] = rec.get("SOLD_PRICE")
         item["sold_date"] = rec.get("SOLD_DATE")
@@ -406,6 +409,40 @@ def _dnb_annotations(
     return {r["finnkode"]: (r["kommentar"], r["tag"]) for r in rows}
 
 
+def _age_days(updated_at) -> float | None:
+    """Days since ``eiendom.updated_at`` ('YYYY-MM-DD HH:MM:SS', UTC).
+    None when missing/unparsable -- callers treat that as 'young' (keep the
+    listing pending rather than prematurely stamping Trukket)."""
+    if not updated_at:
+        return None
+    try:
+        dt = datetime.strptime(str(updated_at)[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return (datetime.utcnow() - dt).total_seconds() / 86400.0
+
+
+def _derived_status(rec: dict, grace_days: int) -> str | None:
+    """Closed-listing display status (2026-07-24 closed-status spec §1):
+    raw Solgt -> "Solgt"; raw Inaktiv + tinglyst price -> "Solgt" (promoted);
+    price-less Inaktiv -> "Inaktiv" inside the grace window, "Trukket" after.
+    None for open listings (raw status is shown instead). Stored status is
+    never mutated -- this is display-only derivation."""
+    if rec.get("_active"):
+        return None
+    raw = str(rec.get("Tilgjengelighet") or "").strip().lower()
+    if raw == "solgt":
+        return "Solgt"
+    if raw != "inaktiv":
+        return None
+    if rec.get("SOLD_PRICE") is not None:
+        return "Solgt"
+    age = _age_days(rec.get("UPDATED_AT"))
+    if age is None or age < grace_days:
+        return "Inaktiv"
+    return "Trukket"
+
+
 def _sold_from_hidden(rec: dict) -> bool:
     """Same predicate as the Sold visibility filter (active=0 AND status in
     solgt/inaktiv), applied to an already-fetched hidden-field-enriched
@@ -441,7 +478,7 @@ def get_listings(
         return {
             "listings": [
                 _eie_item(
-                    rec, domain, sold=True, thumbs_dir=thumbs_dir,
+                    rec, domain, closed=True, thumbs_dir=thumbs_dir,
                     facilities=facs.get(rec.get("_finnkode")),
                 )
                 for rec in _sold_records(conn)
@@ -450,7 +487,7 @@ def get_listings(
 
     items = [
         _eie_item(
-            rec, domain, sold=False, thumbs_dir=thumbs_dir,
+            rec, domain, closed=False, thumbs_dir=thumbs_dir,
             facilities=facs.get(rec.get("_finnkode")),
         )
         for rec in listing_rows(conn, include_hidden_fields=True)
@@ -468,7 +505,7 @@ def get_listings(
     if sold:
         items += [
             _eie_item(
-                rec, domain, sold=True, thumbs_dir=thumbs_dir,
+                rec, domain, closed=True, thumbs_dir=thumbs_dir,
                 facilities=facs.get(rec.get("_finnkode")),
             )
             for rec in _sold_records(conn)
@@ -524,7 +561,7 @@ def get_listing_detail(
             (finnkode,),
         ).fetchall()
         item = _eie_item(
-            rec, domain, sold=_sold_from_hidden(rec), thumbs_dir=thumbs_dir,
+            rec, domain, closed=_sold_from_hidden(rec), thumbs_dir=thumbs_dir,
             facilities=[r["facility"] for r in fac_rows],
         )
         raw = {k: v for k, v in rec.items() if not k.startswith("_")}
