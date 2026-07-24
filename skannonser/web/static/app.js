@@ -402,7 +402,7 @@ function wireLayerToggles() {
       state.ui.combineSold = combine.checked;
       saveUi();
       // Combining needs the sold set loaded to be meaningful.
-      if (combine.checked && state.ui.sold && !state.soldLoaded) {
+      if (combine.checked && (state.ui.sold || state.ui.inactive) && !state.soldLoaded) {
         try {
           await ensureSoldLoaded();
         } catch (_) {
@@ -796,7 +796,7 @@ async function init() {
     map.on("render", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));
     map.on("moveend", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));
 
-    if (state.ui.sold && !state.soldLoaded) {
+    if ((state.ui.sold || state.ui.inactive) && !state.soldLoaded) {
       ensureSoldLoaded().then(applyAll).catch(() => {});
     }
 
