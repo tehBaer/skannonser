@@ -75,7 +75,7 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
   tilgjengelighet), searchable multi-selects for postnummer/nabolag, and a
   "må ha fasiliteter" set — rendered as sidebar panels on the map and as
   Notion-style column-header popovers on the table (`static/tablefilters.js`).
-  Filtered-out listings DIM on the map ("Nedtoning" at 100 % hides them,
+  Filtered-out listings DIM on the map ("Filtret nedtoning" at 100 % hides them,
   clusters included) and are hidden from the table; the "inkluder ukjent"
   toggle is the single null-value policy. Both pages carry an active-filter
   count and a "Nullstill filtre" reset.

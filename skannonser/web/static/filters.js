@@ -432,7 +432,7 @@ export function buildMetricFilterUI(container, meta, ui, onChange) {
   });
 
   rangeRow(container, {
-    label: "Nedtoning",
+    label: "Filtret nedtoning",
     min: 0,
     max: 100,
     step: 5,
