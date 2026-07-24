@@ -333,7 +333,8 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_backlog(conn, notify=None, max_requests=4, force=False, delay=None):
+    def fake_backlog(conn, notify=None, max_requests=4, force=False, delay=None,
+                      grace_days=180):
         calls.append({"max_requests": max_requests, "notify": notify, "delay": delay})
         return {"suspended": False, "coverage": {"priced": 0, "total": 0, "fraction": 0.0}}
 
@@ -712,3 +713,101 @@ def test_repeatedly_missed_targets_yield_to_untried_ones(conn):
     stored = {r["finnkode"] for r in conn.execute("SELECT finnkode FROM sold_prices")}
     assert stored == {"201"}
     assert stats["tiles_queried"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Inaktiv sweep tier (2026-07-24 closed-status spec): widen the target set to
+# in-grace Inaktiv listings, with strict Solgt-first priority -- Solgt is far
+# likelier to have a tinglyst price, so a tight budget must go there first,
+# ahead of both density and the attempts sub-order.
+# ---------------------------------------------------------------------------
+
+
+def _attempted_finnkodes(conn) -> list[str]:
+    """Finnkodes with at least one recorded sweep attempt (see `_attempts`)."""
+    return sorted(_attempts(conn))
+
+
+def test_targets_include_inaktiv_within_grace(conn):
+    from skannonser.enrich.sold import select_sold_targets
+
+    # solgt row, inaktiv row closed 10 days ago, inaktiv row closed 200 days ago
+    _seed_aged(conn, "111", 10, status="Solgt")
+    _seed_aged(conn, "222", 10, status="Inaktiv")
+    _seed_aged(conn, "333", 200, status="Inaktiv")
+
+    targets = select_sold_targets(conn, grace_days=180)
+    by_fk = {t["finnkode"]: t for t in targets}
+    assert set(by_fk) == {"111", "222"}          # aged-out inaktiv excluded
+    assert by_fk["111"]["status"] == "solgt"
+    assert by_fk["222"]["status"] == "inaktiv"
+
+
+def test_targets_inaktiv_with_price_excluded(conn):
+    from skannonser.enrich.sold import select_sold_targets
+
+    _seed_aged(conn, "222", 10, status="Inaktiv")
+    conn.execute("INSERT INTO sold_prices (finnkode, sold_price) VALUES ('222', 5000000)")
+    conn.commit()
+    assert select_sold_targets(conn, grace_days=180) == []
+
+
+def test_sweep_orders_solgt_tier_first(conn):
+    from skannonser.enrich.sold import record_attempts, run_sold_sweep, select_sold_targets
+
+    # Two inaktiv targets DENSER than the solgt target (a tight neighbour pair
+    # vs. an isolated point) -- AND the solgt target has MORE prior attempts
+    # than either of them, so the old (attempts-then-density) order would have
+    # ranked it last. With a 1-request budget the solgt target must still be
+    # attempted first: the status tier beats both density and attempts.
+    _seed_aged(conn, "202", 10, lat=59.8010, lng=10.2610, status="Inaktiv")
+    _seed_aged(conn, "203", 10, lat=59.8013, lng=10.2613, status="Inaktiv")  # ~35 m from 202
+    _seed_aged(conn, "111", 10, lat=59.900, lng=10.500, status="Solgt")      # isolated
+    for _ in range(3):
+        record_attempts(conn, ["111"])
+
+    targets = select_sold_targets(conn, grace_days=180)
+    run_sold_sweep(
+        conn,
+        fetch=_card_fetch({}),   # no cards -- only attempt-charging matters here
+        targets=targets,
+        max_requests=1,
+        order_by_density=True,
+    )
+
+    assert _attempted_finnkodes(conn) == ["111"]
+
+
+def test_sweep_stores_price_for_inaktiv_target(conn):
+    from skannonser.enrich.sold import run_sold_sweep, select_sold_targets
+
+    # An inaktiv in-grace target whose bbox returns a card with a price: the
+    # price must be stored (this is the whole point of the widening).
+    _seed_aged(conn, "222", 10, lat=59.805, lng=10.261, status="Inaktiv")
+
+    targets = select_sold_targets(conn, grace_days=180)
+    run_sold_sweep(
+        conn,
+        fetch=lambda url, **k: FakeResp(
+            {"docs": [{"adId": 222, "cadastralSoldPrice": 4500000}]}
+        ),
+        targets=targets,
+    )
+
+    row = conn.execute(
+        "SELECT sold_price FROM sold_prices WHERE finnkode='222'"
+    ).fetchone()
+    assert row["sold_price"] == 4500000
+
+
+def test_inaktiv_pending_counts(conn):
+    from skannonser.enrich.sold import inaktiv_pending
+
+    _seed_aged(conn, "222", 10, status="Inaktiv")    # pending
+    _seed_aged(conn, "333", 200, status="Inaktiv")   # aged out
+    _seed_aged(conn, "444", 10, status="Inaktiv")
+    conn.execute("INSERT INTO sold_prices (finnkode, sold_price) VALUES ('444', 1)")  # priced
+    conn.commit()
+
+    out = inaktiv_pending(conn, grace_days=180)
+    assert out == {"pending": 1, "priced": 1}

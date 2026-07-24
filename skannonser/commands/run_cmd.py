@@ -8,6 +8,7 @@ from skannonser.config.settings import get_secrets
 from skannonser.enrich.dnb_travel import run_dnb_travel
 from skannonser.enrich.geocode import run_geocode
 from skannonser.enrich.sold import (
+    inaktiv_pending,
     is_suspended,
     resume,
     run_sold_backlog,
@@ -329,17 +330,24 @@ def enrich_sold(
         return
 
     if status:
+        domain = load_domain()
         cov = sold_coverage(conn)
         typer.echo(
             f"enrich-sold status: suspended={is_suspended(conn)} "
             f"coverage={cov['priced']}/{cov['total']} ({cov['fraction']:.0%})"
+        )
+        pend = inaktiv_pending(conn, domain.sold.trukket_grace_days)
+        typer.echo(
+            f"  inaktiv tier: {pend['pending']} pending (in grace), "
+            f"{pend['priced']} priced (promoted to Solgt)"
         )
         return
 
     if parts is not None:
         stats = run_sold_enrich(conn, [tuple(parts)], restrict=not all_cards)
     else:
-        cr = load_domain().crawl
+        domain = load_domain()
+        cr = domain.crawl
         delay = jittered_delay(cr.fetch_delay_min_s, cr.fetch_delay_max_s)
         stats = run_sold_backlog(
             conn,
@@ -347,6 +355,7 @@ def enrich_sold(
             max_requests=requests_budget,
             force=force,
             delay=delay,
+            grace_days=domain.sold.trukket_grace_days,
         )
     typer.echo(f"enrich-sold: {stats}")
 

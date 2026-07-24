@@ -106,32 +106,52 @@ def record_attempts(conn, finnkodes) -> None:
     conn.commit()
 
 
-def select_sold_targets(conn, min_age_days: Optional[int] = None) -> list[dict]:
-    """Listings that need a sold price: status Solgt, with coordinates, and no
-    non-null ``sold_price`` stored yet. Returns
-    ``[{finnkode, lat, lng, attempts}]``, where ``attempts`` is how many times
-    the sweep has already spent a request on that target (0 if never).
+def select_sold_targets(
+    conn, min_age_days: Optional[int] = None, grace_days: int = 180
+) -> list[dict]:
+    """Listings that need a sold price. Two tiers (2026-07-24 closed-status
+    spec):
+
+    - ``status: "solgt"`` -- raw-Solgt listings, unconditionally (as before).
+    - ``status: "inaktiv"`` -- Inaktiv listings still within ``grace_days`` of
+      closing. A sale that FINN never re-labels Solgt can still turn up
+      tinglyst; once a listing ages out of grace it is presumed Trukket and
+      drops out of the sweep for good.
+
+    Both tiers require coordinates and no non-null ``sold_price`` stored yet.
+    Returns ``[{finnkode, lat, lng, status, attempts}]``, where ``attempts`` is
+    how many times the sweep has already spent a request on that target (0 if
+    never) and ``status`` records which tier it belongs to (see
+    :func:`run_sold_sweep`'s strict Solgt-first ordering).
 
     The ``sold_price IS NULL`` clause keeps a listing in the target set across
     sweeps until its price is actually tinglyst (~100-day lag). When
-    ``min_age_days`` is given, only listings marked Solgt at least that long ago
-    are returned (proxy: ``eiendom.updated_at`` -- Solgt rows aren't re-touched
-    by the stale-open refresh, so it tracks the sold date). Focusing on aged
-    listings avoids spending requests on recent sales that have no price yet."""
+    ``min_age_days`` is given, only listings closed at least that long ago are
+    returned (proxy: ``eiendom.updated_at`` -- Solgt/Inaktiv rows aren't
+    re-touched by the stale-open refresh, so it tracks the close date).
+    Focusing on aged listings avoids spending requests on recent closes that
+    have no price yet."""
     age_clause = ""
-    params: tuple = ()
+    params: list = [f"-{int(grace_days)} days"]
     if min_age_days is not None:
         age_clause = "AND e.updated_at < datetime('now', ?)"
-        params = (f"-{int(min_age_days)} days",)
+        params.append(f"-{int(min_age_days)} days")
     rows = conn.execute(
         f"""
         SELECT e.finnkode AS finnkode, p.lat AS lat, p.lng AS lng,
+               LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) AS status,
                COALESCE(a.attempts, 0) AS attempts
         FROM eiendom e
         JOIN eiendom_processed p ON e.finnkode = p.finnkode
         LEFT JOIN sold_prices s ON e.finnkode = s.finnkode
         LEFT JOIN sold_price_attempts a ON e.finnkode = a.finnkode
-        WHERE LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) = 'solgt'
+        WHERE (
+            LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) = 'solgt'
+            OR (
+              LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) = 'inaktiv'
+              AND e.updated_at >= datetime('now', ?)
+            )
+          )
           AND p.lat IS NOT NULL AND p.lng IS NOT NULL
           AND (s.finnkode IS NULL OR s.sold_price IS NULL)
           {age_clause}
@@ -143,6 +163,7 @@ def select_sold_targets(conn, min_age_days: Optional[int] = None) -> list[dict]:
             "finnkode": str(r["finnkode"]),
             "lat": r["lat"],
             "lng": r["lng"],
+            "status": r["status"],
             "attempts": r["attempts"],
         }
         for r in rows
@@ -175,6 +196,27 @@ def sold_coverage(conn, min_age_days: int = 100) -> dict:
         "total": total,
         "fraction": (priced / total) if total else 0.0,
     }
+
+
+def inaktiv_pending(conn, grace_days: int = 180) -> dict:
+    """The inaktiv sweep tier at a glance: how many in-grace Inaktiv listings
+    still await a price (``pending``) and how many Inaktiv listings have been
+    priced -- i.e. promoted to derived-Solgt (``priced``)."""
+    row = conn.execute(
+        """
+        SELECT
+          SUM(CASE WHEN s.sold_price IS NULL
+                    AND e.updated_at >= datetime('now', ?) THEN 1 ELSE 0 END) AS pending,
+          SUM(CASE WHEN s.sold_price IS NOT NULL THEN 1 ELSE 0 END) AS priced
+        FROM eiendom e
+        JOIN eiendom_processed p ON e.finnkode = p.finnkode
+        LEFT JOIN sold_prices s ON e.finnkode = s.finnkode
+        WHERE LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) = 'inaktiv'
+          AND p.lat IS NOT NULL AND p.lng IS NOT NULL
+        """,
+        (f"-{int(grace_days)} days",),
+    ).fetchone()
+    return {"pending": row["pending"] or 0, "priced": row["priced"] or 0}
 
 
 def sold_progress(conn, since_hours: int = 24, min_age_days: int = 100) -> dict:
@@ -272,12 +314,16 @@ def run_sold_sweep(
     paces between fetches. ``max_requests`` hard-caps requests this run;
     leftover targets wait for the next run.
 
-    ``order_by_density`` sorts by FEWEST PRIOR ATTEMPTS first, then by most
+    Every target is first split into a strict Solgt-first tier (2026-07-24
+    spec): ALL raw-Solgt targets sort ahead of ALL Inaktiv targets, regardless
+    of density or attempts -- Solgt listings are far likelier to have a
+    tinglyst price, so a tight budget goes to them first. ``order_by_density``
+    then sorts WITHIN each tier by FEWEST PRIOR ATTEMPTS first, then by most
     neighbours -- so a tight budget still buys the most matches per request
     (density) but can never be monopolised by targets that keep missing. Without
-    the attempt tier, a permanently-ungettable target at the top of the density
-    ranking would absorb the budget on every single run forever, since a target
-    stays selectable until its price actually lands (see migration 009).
+    the attempt sub-order, a permanently-ungettable target at the top of the
+    density ranking would absorb the budget on every single run forever, since a
+    target stays selectable until its price actually lands (see migration 009).
 
     Every target the sweep centers a box on is charged one attempt via
     :func:`record_attempts`. Lets :class:`Throttled` propagate. Returns
@@ -290,15 +336,22 @@ def run_sold_sweep(
         targets = select_sold_targets(conn)
     known = {t["finnkode"] for t in targets}
 
-    order = targets
+    # Strict two-tier priority (2026-07-24 spec): every raw-Solgt target
+    # before any Inaktiv target -- Solgt listings are far likelier to have a
+    # tinglyst price, so a tight budget goes to them first. Within a tier
+    # the existing fewest-attempts-then-density ordering applies.
+    tier = lambda t: 0 if t.get("status", "solgt") == "solgt" else 1  # noqa: E731
     if order_by_density:
         order = sorted(
             targets,
             key=lambda t: (
+                tier(t),
                 t.get("attempts", 0),
                 -len(_targets_in_bbox(targets, target_bbox(t, pad_lon, pad_lat))),
             ),
         )
+    else:
+        order = sorted(targets, key=tier)  # stable sort keeps given order within tiers
 
     matched: set[str] = set()
     records: list[dict] = []
@@ -364,6 +417,7 @@ def run_sold_backlog(
     coverage_target: float = 0.80,
     delay: Optional[Callable[[], None]] = None,
     force: bool = False,
+    grace_days: int = 180,
 ) -> dict:
     """One careful, budgeted backlog pass -- the scheduled entry point.
 
@@ -372,6 +426,10 @@ def run_sold_backlog(
       2. If aged-listing coverage already >= ``coverage_target`` (and not
          ``force``), do nothing -- we don't chase 100%.
       3. Otherwise sweep the densest cells first, capped at ``max_requests``.
+
+    ``grace_days`` is passed through to :func:`select_sold_targets` -- it
+    bounds how long a closed-but-not-Solgt (Inaktiv) listing stays in the
+    sweep's target set (see `load_domain().sold.trukket_grace_days`).
 
     On :class:`Throttled`, the run suspends the sweep (persisted) and calls
     ``notify`` -- so pushback is recognized immediately and no further requests
@@ -388,7 +446,7 @@ def run_sold_backlog(
     if not force and coverage["total"] > 0 and coverage["fraction"] >= coverage_target:
         return {"suspended": False, "target_reached": True, "coverage": coverage, "swept": 0}
 
-    targets = select_sold_targets(conn, min_age_days=min_age_days)
+    targets = select_sold_targets(conn, min_age_days=min_age_days, grace_days=grace_days)
     try:
         stats = run_sold_sweep(
             conn,
