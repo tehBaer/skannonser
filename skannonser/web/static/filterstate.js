@@ -115,34 +115,112 @@ export function subscribeOtherTabs(cb) {
   });
 }
 
-// Number of ACTIVE filter dimensions (each narrowed slider, each non-empty
-// set, facilities as one) — drives the "N filtre aktive" line on both pages.
+// One entry per ACTIVE filter dimension: {key, label, valueText, clear(f)}.
+// Drives the expandable active-filter list (map sidebar). clear() mutates
+// sub-objects IN PLACE (delete keys / splice) so live component references
+// into the shared filters object stay valid.
+export function activeFilterEntries(filters, meta) {
+  const NOK = new Intl.NumberFormat("nb-NO");
+  const entries = [];
+  const kr = (v) => NOK.format(v) + " kr";
+  const maxSlider = (key, label, ceiling, fmt) => {
+    if (filters[key] < ceiling) {
+      entries.push({
+        key,
+        label,
+        valueText: fmt(filters[key]),
+        clear: (f) => {
+          f[key] = ceiling;
+        },
+      });
+    }
+  };
+  const minSlider = (key, label, floor, fmt) => {
+    if (filters[key] > floor) {
+      entries.push({
+        key,
+        label,
+        valueText: fmt(filters[key]),
+        clear: (f) => {
+          f[key] = floor;
+        },
+      });
+    }
+  };
+
+  maxSlider("priceMax", "Maks pris", priceBoundOf(meta), kr);
+  maxSlider("totalprisMax", "Maks totalpris", TOTALPRIS_MAX, kr);
+  maxSlider("felleskostMax", "Maks felleskost", FELLESKOST_MAX, kr);
+  maxSlider("maanedskostMax", "Maks mnd-kost", MAANEDSKOST_MAX, kr);
+  maxSlider("totalKvmMax", "Maks total/kvm", TOTAL_KVM_MAX, kr);
+  minSlider("braIMin", "Min BRA-i", 0, (v) => "≥ " + v + " m²");
+  minSlider("soveromMin", "Min soverom", 0, (v) => "≥ " + v);
+  minSlider("byggeaarMin", "Min byggeår", BYGGEAAR_FLOOR, (v) => "≥ " + v);
+
+  Object.keys(filters.travelMax || {}).forEach((destKey) => {
+    if (filters.travelMax[destKey] < TRAVEL_MAX) {
+      entries.push({
+        key: "travelMax." + destKey,
+        label: "Maks " + destKey.split("_").pop().toUpperCase(),
+        valueText: "≤ " + filters.travelMax[destKey] + " min",
+        clear: (f) => {
+          f.travelMax[destKey] = TRAVEL_MAX;
+        },
+      });
+    }
+  });
+
+  const hiddenSet = (key, label) => {
+    const n = Object.keys(filters[key] || {}).length;
+    if (n) {
+      entries.push({
+        key,
+        label,
+        valueText: n + " skjult",
+        clear: (f) => {
+          Object.keys(f[key]).forEach((k) => delete f[key][k]);
+        },
+      });
+    }
+  };
+  hiddenSet("boligtypeHidden", "Boligtype");
+  hiddenSet("eieformHidden", "Eieform");
+  hiddenSet("energiHidden", "Energimerking");
+  hiddenSet("tilgjengelighetHidden", "Tilgjengelighet");
+  hiddenSet("tagHidden", "Tag");
+
+  const selectedSet = (key, label) => {
+    const n = (filters[key] || []).length;
+    if (n) {
+      entries.push({
+        key,
+        label,
+        valueText: n + " valgt",
+        clear: (f) => {
+          f[key].splice(0, f[key].length);
+        },
+      });
+    }
+  };
+  selectedSet("postnummerSelected", "Postnummer");
+  selectedSet("nabolagSelected", "Nabolag");
+
+  const nFac = Object.keys(filters.facilitiesRequired || {}).length;
+  if (nFac) {
+    entries.push({
+      key: "facilitiesRequired",
+      label: "Fasiliteter",
+      valueText: nFac + " krav",
+      clear: (f) => {
+        Object.keys(f.facilitiesRequired).forEach((k) => delete f.facilitiesRequired[k]);
+      },
+    });
+  }
+  return entries;
+}
+
 export function activeFilterCount(filters, meta) {
-  let n = 0;
-  if (filters.priceMax < priceBoundOf(meta)) n++;
-  if (filters.braIMin > 0) n++;
-  Object.keys(filters.travelMax || {}).forEach((k) => {
-    if (filters.travelMax[k] < TRAVEL_MAX) n++;
-  });
-  if (filters.soveromMin > 0) n++;
-  if (filters.totalprisMax < TOTALPRIS_MAX) n++;
-  if (filters.felleskostMax < FELLESKOST_MAX) n++;
-  if (filters.byggeaarMin > BYGGEAAR_FLOOR) n++;
-  if (filters.totalKvmMax < TOTAL_KVM_MAX) n++;
-  if (filters.maanedskostMax < MAANEDSKOST_MAX) n++;
-  [
-    "boligtypeHidden",
-    "tagHidden",
-    "energiHidden",
-    "eieformHidden",
-    "tilgjengelighetHidden",
-  ].forEach((k) => {
-    if (Object.keys(filters[k] || {}).length) n++;
-  });
-  if ((filters.postnummerSelected || []).length) n++;
-  if ((filters.nabolagSelected || []).length) n++;
-  if (Object.keys(filters.facilitiesRequired || {}).length) n++;
-  return n;
+  return activeFilterEntries(filters, meta).length;
 }
 
 // Reset IN PLACE (both pages hold live references into this object),
