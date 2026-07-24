@@ -7,6 +7,21 @@
 
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
+import { listingExcluded, deriveVocabs } from "./filters.js";
+import {
+  loadFilters,
+  saveFilters,
+  activeFilterCount,
+  subscribeOtherTabs,
+  resetFilters,
+} from "./filterstate.js";
+import {
+  COLUMN_FILTERS,
+  isColumnFilterActive,
+  makeFilterButton,
+  openFacilitiesPopover,
+  closePopover,
+} from "./tablefilters.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 const STORAGE_KEY = "skannonser.ui.v1"; // shared with app.js -- only the
@@ -74,7 +89,28 @@ const state = {
   sortKey: "scraped_at", // newest first: the scanner's daily question
   sortDir: "desc",
   filterText: "",
+  meta: null,
+  filters: null,
+  vocabs: null,
 };
+
+function filterCtx() {
+  return {
+    filters: state.filters,
+    meta: state.meta,
+    vocabs: state.vocabs,
+    onChange: onFilterChange,
+  };
+}
+
+function onFilterChange() {
+  saveFilters(state.filters);
+  render();
+}
+
+function refreshVocabs() {
+  state.vocabs = deriveVocabs(state.items);
+}
 
 function fmtPris(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -168,8 +204,8 @@ function matchesFilter(item, text) {
 
 function visibleRows() {
   const filtered = state.items.filter((item) => {
-    // Hide sold items when showSold is false
     if (!state.showSold && item.sold) return false;
+    if (listingExcluded(item, state.filters, state.meta)) return false;
     return matchesFilter(item, state.filterText);
   });
   filtered.sort((a, b) => compareItems(a, b, state.sortKey, state.sortDir));
@@ -202,6 +238,11 @@ function renderHead() {
         }
         render();
       });
+    }
+    const filterBtn = makeFilterButton(col.key, filterCtx());
+    if (filterBtn) {
+      th.appendChild(filterBtn);
+      if (isColumnFilterActive(col.key, filterCtx())) th.classList.add("filter-active");
     }
     row.appendChild(th);
   });
@@ -359,7 +400,11 @@ function render() {
   body.innerHTML = "";
   const rows = visibleRows();
   rows.forEach((item) => body.appendChild(buildRow(item)));
-  setStatus(rows.length + " av " + state.items.length + " annonser");
+  const n = activeFilterCount(state.filters, state.meta);
+  setStatus(
+    rows.length + " av " + state.items.length + " annonser" +
+    (n ? " · " + n + " filtre aktive" : "")
+  );
 }
 
 function wireToolbar() {
@@ -381,6 +426,7 @@ function wireToolbar() {
       try {
         state.items = state.items.concat(await fetchListings(1));
         state.soldLoaded = true;
+        refreshVocabs();
       } catch (err) {
         setStatus("Kunne ikke laste solgte: " + err.message);
       } finally {
@@ -389,27 +435,73 @@ function wireToolbar() {
     }
     render();
   });
+
+  const facBtn = document.getElementById("facilities-filter-btn");
+  if (facBtn) {
+    facBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openFacilitiesPopover(facBtn, filterCtx());
+    });
+  }
+
+  const unk = document.getElementById("table-include-unknown");
+  if (unk) {
+    unk.checked = state.filters.includeUnknown !== false;
+    unk.addEventListener("change", () => {
+      state.filters.includeUnknown = unk.checked;
+      onFilterChange();
+    });
+  }
+
+  const reset = document.getElementById("table-reset-filters");
+  if (reset) {
+    reset.addEventListener("click", () => {
+      resetFilters(state.filters, state.meta);
+      if (unk) unk.checked = state.filters.includeUnknown !== false;
+      closePopover();
+      onFilterChange();
+    });
+  }
 }
 
 async function init() {
   setStatus("Laster …");
-  wireToolbar();
   try {
-    state.items = await fetchListings(0);
+    const [meta, items] = await Promise.all([
+      fetch("/api/meta").then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      }),
+      fetchListings(0),
+    ]);
+    state.meta = meta;
+    state.filters = loadFilters(meta);
+    state.items = items;
   } catch (err) {
     setStatus("Kunne ikke laste data: " + err.message);
     return;
   }
+  refreshVocabs();
+  wireToolbar();
   const soldToggle = document.getElementById("table-sold");
   if (soldToggle.checked) {
     try {
       state.items = state.items.concat(await fetchListings(1));
       state.soldLoaded = true;
       state.showSold = true;
+      refreshVocabs();
     } catch (_) {
       /* fall through with just the non-sold rows loaded */
     }
   }
+  // Live cross-tab sync: the map (or another table tab) changed the filters.
+  subscribeOtherTabs(() => {
+    state.filters = loadFilters(state.meta);
+    closePopover();
+    const unk = document.getElementById("table-include-unknown");
+    if (unk) unk.checked = state.filters.includeUnknown !== false;
+    render();
+  });
   render();
 }
 
