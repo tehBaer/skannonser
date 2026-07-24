@@ -82,3 +82,8 @@ region_guids = [
     "OSLO_e6cde8d6-578c-4d73-b94e-08d59bb7ce4c",
 ]
 max_pages = 200
+
+[sold]
+# Days after closing before a price-less Inaktiv listing is considered
+# Trukket (withdrawn) rather than pending -- see the 2026-07-24 spec.
+trukket_grace_days = 180

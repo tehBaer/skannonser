@@ -79,6 +79,15 @@ class Crawl(BaseModel):
         return self
 
 
+class Sold(BaseModel):
+    # Grace period for closed-listing status derivation + the sold-price
+    # sweep's inaktiv tier (2026-07-24 closed-status spec): an Inaktiv
+    # listing with no tinglyst price is "pending" (still swept, labelled
+    # Inaktiv) until this many days after it closed, then derived "Trukket"
+    # and dropped from the sweep's target set.
+    trukket_grace_days: int = 180
+
+
 class DomainConfig(BaseModel):
     filters: Filters
     coords: CoordBounds
@@ -88,6 +97,7 @@ class DomainConfig(BaseModel):
     budget: Budget
     dnb: Dnb
     crawl: Crawl = Crawl()
+    sold: Sold = Sold()
 
     @field_validator("polygon_points")
     @classmethod

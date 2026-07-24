@@ -74,3 +74,61 @@ def test_load_domain_destinations_have_column_config():
     assert mvv_uni.df_column == "MVV UNI RUSH"
     assert mvv_uni.db_column == "pendl_rush_mvv_uni_rush"
     assert mvv_uni.exclusive is True
+
+
+def _minimal_toml_text():
+    """Minimal valid TOML for load_domain, without [sold] section."""
+    return """\
+[filters]
+sheets_max_price = 1000000
+url_max_price = 1000000
+min_bra_i = 70
+include_unlisted = true
+
+[coords]
+lat_min = 57.0
+lat_max = 72.0
+lng_min = 4.0
+lng_max = 32.0
+
+[travel]
+reuse_within_meters = 300
+max_travel_minutes = 360
+
+[[destinations]]
+key = "test"
+label = "Test"
+address = "Test Address"
+df_column = "TEST"
+db_column = "test"
+
+[polygon]
+points = [[10.0, 59.0], [10.1, 59.1], [10.2, 59.2]]
+
+[budget]
+routes_monthly_cap = 9000
+geocode_monthly_cap = 9000
+warn_pcts = [50, 80]
+
+[dnb]
+region_guids = []
+max_pages = 1
+"""
+
+
+def test_sold_grace_days_default(tmp_path):
+    # A config WITHOUT a [sold] section still loads, with the 180 default.
+    minimal_toml = _minimal_toml_text()
+    p = tmp_path / "domain.toml"
+    p.write_text(minimal_toml)
+    cfg = load_domain(p)
+    assert cfg.sold.trukket_grace_days == 180
+
+
+def test_sold_grace_days_from_toml(tmp_path):
+    # Copy the minimal toml, append a [sold] section, assert override.
+    minimal_toml = _minimal_toml_text()
+    body = minimal_toml + "\n[sold]\ntrukket_grace_days = 90\n"
+    p = tmp_path / "domain.toml"
+    p.write_text(body)
+    assert load_domain(p).sold.trukket_grace_days == 90
