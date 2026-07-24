@@ -15,7 +15,7 @@ import {
   MAANEDSKOST_MAX,
   priceBoundOf,
 } from "./filterstate.js";
-import { rangeRow, checkboxGroup, searchableMultiSelect } from "./filters.js";
+import { rangeRow, checkboxGroup, searchableMultiSelect, openPopover, closePopover } from "./filters.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 const fmtKr = (bound) => (v) => (v >= bound ? "Av" : NOK.format(v) + " kr");
@@ -75,50 +75,7 @@ export function isColumnFilterActive(colKey, ctx) {
   }
 }
 
-// --- popover singleton ---
-
-let popoverEl = null;
-let popoverAnchor = null;
-
-export function closePopover() {
-  if (popoverEl) popoverEl.remove();
-  popoverEl = null;
-  popoverAnchor = null;
-}
-
-function placePopover(pop, anchor) {
-  const r = anchor.getBoundingClientRect();
-  // position:fixed -> viewport coords; clamp horizontally.
-  pop.style.top = r.bottom + 4 + "px";
-  const width = Math.min(280, window.innerWidth - 16);
-  pop.style.width = width + "px";
-  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) + "px";
-}
-
-function openPopover(anchor, build) {
-  if (popoverAnchor === anchor) {
-    closePopover(); // toggling the same funnel closes it
-    return;
-  }
-  closePopover();
-  popoverEl = document.createElement("div");
-  popoverEl.className = "th-popover";
-  build(popoverEl);
-  document.body.appendChild(popoverEl);
-  placePopover(popoverEl, anchor);
-  popoverAnchor = anchor;
-}
-
-// One document-level dismiss wiring (idempotent via module init).
-document.addEventListener("click", (ev) => {
-  if (!popoverEl) return;
-  if (popoverEl.contains(ev.target)) return;
-  if (popoverAnchor && popoverAnchor.contains(ev.target)) return;
-  closePopover();
-});
-document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closePopover();
-});
+export { closePopover } from "./filters.js";
 
 function buildBody(pop, desc, ctx) {
   const f = ctx.filters;

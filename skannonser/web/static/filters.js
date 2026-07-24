@@ -308,6 +308,52 @@ export function searchableMultiSelect(parent, { label, options, selected, onChan
   return wrap;
 }
 
+// --- shared popover singleton (moved from tablefilters.js 2026-07-24) ---
+// Used by the table's header filters AND the sidebar's select-fields.
+
+let popoverEl = null;
+let popoverAnchor = null;
+
+export function closePopover() {
+  if (popoverEl) popoverEl.remove();
+  popoverEl = null;
+  popoverAnchor = null;
+}
+
+function placePopover(pop, anchor) {
+  const r = anchor.getBoundingClientRect();
+  // position:fixed -> viewport coords; clamp horizontally.
+  pop.style.top = r.bottom + 4 + "px";
+  const width = Math.min(280, window.innerWidth - 16);
+  pop.style.width = width + "px";
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) + "px";
+}
+
+export function openPopover(anchor, build) {
+  if (popoverAnchor === anchor) {
+    closePopover(); // toggling the same anchor closes it
+    return;
+  }
+  closePopover();
+  popoverEl = document.createElement("div");
+  popoverEl.className = "th-popover";
+  build(popoverEl);
+  document.body.appendChild(popoverEl);
+  placePopover(popoverEl, anchor);
+  popoverAnchor = anchor;
+}
+
+// One document-level dismiss wiring (module init).
+document.addEventListener("click", (ev) => {
+  if (!popoverEl) return;
+  if (popoverEl.contains(ev.target)) return;
+  if (popoverAnchor && popoverAnchor.contains(ev.target)) return;
+  closePopover();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closePopover();
+});
+
 export function buildMetricFilterUI(container, meta, ui, onChange) {
   container.innerHTML = "";
   const priceBound = priceBoundOf(meta);
