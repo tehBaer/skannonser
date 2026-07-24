@@ -296,7 +296,7 @@ def enrich_sold(
 ) -> None:
     """Fetch tinglyst sold prices from FINN's sold map.
 
-    Default: one careful budgeted BACKLOG pass -- suspend-aware, coverage-aware,
+    Default: one careful budgeted BACKLOG pass -- suspend-aware, attempts-capped,
     densest-cells-first, hard-capped at --requests. On throttle (429/403/503 or
     a block page) it suspends itself and pings Pushover; clear that with
     --resume. --status reports coverage without fetching. --bbox probes a

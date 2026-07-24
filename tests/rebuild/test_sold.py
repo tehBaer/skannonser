@@ -334,7 +334,7 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
     calls = []
 
     def fake_backlog(conn, notify=None, max_requests=4, force=False, delay=None,
-                      grace_days=180, max_attempts=5):
+                      grace_days=-1, max_attempts=-1):
         calls.append({
             "max_requests": max_requests,
             "notify": notify,
