@@ -325,6 +325,17 @@ function renderSourceLegend() {
     row.appendChild(document.createTextNode(label));
     node.appendChild(row);
   });
+
+  // Muted dots (derived Inaktiv/Trukket) use a flat grey fill, not the
+  // boligtype colour + border scheme above -- give them their own row.
+  const mutedRow = document.createElement("div");
+  mutedRow.className = "legend-row";
+  const mutedSw = document.createElement("span");
+  mutedSw.className = "legend-swatch";
+  mutedSw.style.background = "#9aa39c";
+  mutedRow.appendChild(mutedSw);
+  mutedRow.appendChild(document.createTextNode("Inaktiv/Trukket (grå)"));
+  node.appendChild(mutedRow);
 }
 
 function openPopup(finnkode, coordinates) {

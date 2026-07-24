@@ -335,7 +335,12 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
 
     def fake_backlog(conn, notify=None, max_requests=4, force=False, delay=None,
                       grace_days=180):
-        calls.append({"max_requests": max_requests, "notify": notify, "delay": delay})
+        calls.append({
+            "max_requests": max_requests,
+            "notify": notify,
+            "delay": delay,
+            "grace_days": grace_days,
+        })
         return {"suspended": False, "coverage": {"priced": 0, "total": 0, "fraction": 0.0}}
 
     monkeypatch.setattr(run_cmd, "run_sold_backlog", fake_backlog)
@@ -346,6 +351,7 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
     assert calls[0]["max_requests"] == 4
+    assert calls[0]["grace_days"] == 180  # config [sold] trukket_grace_days threaded through
     assert callable(calls[0]["notify"])   # Pushover sink wired
     assert callable(calls[0]["delay"])    # paced
 

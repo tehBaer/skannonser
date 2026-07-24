@@ -112,6 +112,36 @@ def test_overrides_applied_at_upsert(repo):
     assert row["postnummer"] == "0555"
 
 
+def test_update_status_unchanged_does_not_bump_updated_at(repo):
+    # closed-status: updated_at doubles as the "when it closed" age proxy for
+    # the Inaktiv->Trukket grace. A no-op status refresh (e.g. from `refresh
+    # --mode all` revisiting an already-closed listing) must not reset it --
+    # see README "Follow-ups & standing notes".
+    repo.upsert([_listing("111", Tilgjengelighet="Solgt")])
+    repo.conn.execute(
+        "UPDATE eiendom SET updated_at = '2020-01-01 00:00:00' WHERE finnkode = '111'"
+    )
+    repo.update_status("111", "Solgt")
+    row = repo.conn.execute(
+        "SELECT tilgjengelighet, updated_at FROM eiendom WHERE finnkode = '111'"
+    ).fetchone()
+    assert row["tilgjengelighet"] == "Solgt"
+    assert row["updated_at"] == "2020-01-01 00:00:00"
+
+
+def test_update_status_changed_bumps_updated_at(repo):
+    repo.upsert([_listing("111", Tilgjengelighet="Solgt")])
+    repo.conn.execute(
+        "UPDATE eiendom SET updated_at = '2020-01-01 00:00:00' WHERE finnkode = '111'"
+    )
+    repo.update_status("111", "Trukket")
+    row = repo.conn.execute(
+        "SELECT tilgjengelighet, updated_at FROM eiendom WHERE finnkode = '111'"
+    ).fetchone()
+    assert row["tilgjengelighet"] == "Trukket"
+    assert row["updated_at"] != "2020-01-01 00:00:00"
+
+
 def test_upsert_is_one_transaction(repo, monkeypatch):
     # The brief's original seam (monkeypatching ``conn.execute``) is not
     # settable — ``sqlite3.Connection.execute`` is a read-only attribute — so

@@ -382,7 +382,7 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 #listings-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 #listings-table tr.sold-row { background: #f6f6f5; color: var(--muted); }
-.sold-badge {
+.sold-badge, .inactive-badge {
   display: inline-block;
   font-size: 11px;
   padding: 1px 6px;

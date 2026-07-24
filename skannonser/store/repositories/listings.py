@@ -230,11 +230,19 @@ class ListingsRepo:
         Port of ``db.py:update_eiendom_status`` (616-638). Note: ``active``
         is managed by the upsert/mark_inactive lifecycle, not by status
         refresh -- this never touches it.
+
+        The WHERE clause only matches when the status actually differs, so
+        ``updated_at`` is left untouched on a no-op call. This matters
+        because ``updated_at`` doubles as the closed-status age proxy (see
+        README "Follow-ups & standing notes"): a full ``refresh --mode all``
+        run calls this for every closed listing on every pass, and without
+        this guard it would reset the Inaktiv->Trukket grace clock on every
+        run even when nothing changed.
         """
         self.conn.execute(
             "UPDATE eiendom SET tilgjengelighet = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE finnkode = ?",
-            (new_status, finnkode),
+            "WHERE finnkode = ? AND COALESCE(tilgjengelighet, '') IS NOT COALESCE(?, '')",
+            (new_status, finnkode, new_status),
         )
 
     def record_status_change_if_changed(self, finnkode: str, old_status, new_status) -> bool:
