@@ -64,11 +64,21 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
   Listing details (soverom/eieform/fasiliteter/energimerke/totalpris/felleskost)
   ride along in `/api/listings` and `/api/meta`, with derived totalpris-per-kvm
   and månedskost (felleskost + kommunale avg/12) computed in the API at query
-  time (never stored); filter panel
-  adds soverom/totalpris/felleskost/eieform/energimerke/fasiliteter controls plus
-  an "inkluder ukjent" toggle (null values pass filters by default instead of
-  being excluded), and the table gains Totalpris/Total-per-kvm/Felleskost/
+  time (never stored); the table gains Totalpris/Total-per-kvm/Felleskost/
   Mnd-kost/Soverom/Eieform/Energi columns, all sortable.
+  **Unified filtering** (2026-07-24): map and table share ONE filter state
+  (`static/filterstate.js`, localStorage-backed, live-synced across open tabs
+  via `storage` events) and one predicate (`listingExcluded` in
+  `static/filters.js`). Sliders for continuous values (pris/totalpris/
+  felleskost/mnd-kost/total-per-kvm/BRA-i/soverom/byggeår/reisetid), checkbox
+  sets for small vocabularies (boligtype/eieform/energimerke/tag/
+  tilgjengelighet), searchable multi-selects for postnummer/nabolag, and a
+  "må ha fasiliteter" set — rendered as sidebar panels on the map and as
+  Notion-style column-header popovers on the table (`static/tablefilters.js`).
+  Filtered-out listings DIM on the map ("Nedtoning" at 100 % hides them,
+  clusters included) and are hidden from the table; the "inkluder ukjent"
+  toggle is the single null-value policy. Both pages carry an active-filter
+  count and a "Nullstill filtre" reset.
 - **`ids.py`** — shared path-safe identifier helpers (DNB synthetic ids, thumbnail
   filenames) used by both `web/api.py` and `enrich/thumbs.py` so they can't drift.
 - **`geo.py`** — polygon point-in-region test used by the DNB filter.
