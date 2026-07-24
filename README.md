@@ -73,12 +73,20 @@ Everything lives under `skannonser/`, laid out by pipeline stage:
   felleskost/mnd-kost/total-per-kvm/BRA-i/soverom/byggeår/reisetid), checkbox
   sets for small vocabularies (boligtype/eieform/energimerke/tag/
   tilgjengelighet), searchable multi-selects for postnummer/nabolag, and a
-  "må ha fasiliteter" set — rendered as sidebar panels on the map and as
-  Notion-style column-header popovers on the table (`static/tablefilters.js`).
-  Filtered-out listings DIM on the map ("Filtret nedtoning" at 100 % hides them,
-  clusters included) and are hidden from the table; the "inkluder ukjent"
-  toggle is the single null-value policy. Both pages carry an active-filter
-  count and a "Nullstill filtre" reset.
+  "må ha fasiliteter" set — rendered on the table as Notion-style
+  column-header popovers (`static/tablefilters.js`). The map sidebar
+  (overhauled 2026-07-24) renders the same state compactly: a shared
+  Kart | Tabell tab header on both pages, Lag / Filtre / Visning / Stasjoner
+  panels, the small vocabularies as Notion-style select-fields (chips +
+  popover, `selectField` in `static/filters.js`), the sliders in three
+  collapsible groups (Pris og kostnad / Bolig / Reisetid), and an expandable
+  active-filter list with per-filter × clear — which is also how
+  fasiliteter/postnummer/nabolag filters (editable only from the table)
+  surface on the map. The nedtoning sliders live in the Visning panel
+  (display settings, not filters). Filtered-out listings DIM on the map
+  ("Filtret nedtoning" at 100 % hides them, clusters included) and are
+  hidden from the table; the "inkluder ukjent" toggle is the single
+  null-value policy. Both pages carry a "Nullstill filtre" reset.
 - **`ids.py`** — shared path-safe identifier helpers (DNB synthetic ids, thumbnail
   filenames) used by both `web/api.py` and `enrich/thumbs.py` so they can't drift.
 - **`geo.py`** — polygon point-in-region test used by the DNB filter.
