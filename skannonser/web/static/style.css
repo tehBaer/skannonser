@@ -440,7 +440,7 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 .multi-list { max-height: 200px; overflow-y: auto; }
 .multi-clear { margin-top: 6px; font-size: 12px; cursor: pointer; }
 .active-filters { margin: 4px 0 8px; font-size: 12px; }
-.reset-filters { margin-top: 8px; font-size: 12px; cursor: pointer; }
+.reset-filters { margin: 4px 0 8px; font-size: 12px; cursor: pointer; }
 .toolbar-filter-btn { font-size: 13px; cursor: pointer; }
 .toolbar-filter-btn.active { color: var(--accent, #2f6f4f); font-weight: 600; }
 @media (max-width: 480px) {
@@ -515,4 +515,3 @@ details.subgroup > summary {
 .af-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin: 3px 0; gap: 6px; }
 .af-clear { background: none; border: 0; cursor: pointer; color: var(--muted, #8a938c); font-size: 14px; padding: 0 2px; }
 .af-clear:hover { color: #b3402f; }
-.reset-filters { margin: 4px 0 8px; }

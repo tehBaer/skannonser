@@ -29,7 +29,6 @@ import {
 import {
   defaultFilters,
   loadFilters,
-  activeFilterCount,
   activeFilterEntries,
   subscribeOtherTabs,
   resetFilters,
