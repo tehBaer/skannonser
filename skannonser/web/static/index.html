@@ -13,37 +13,32 @@
     <aside id="sidebar">
       <h1 class="brand">skannonser</h1>
 
+      <nav class="app-tabs">
+        <a href="/" class="tab active">Kart</a>
+        <a href="/table" class="tab">Tabell</a>
+      </nav>
+
       <details class="panel" id="lag-panel" open>
         <summary><h2>Lag</h2></summary>
         <label class="toggle"><input type="checkbox" id="toggle-eie" checked> Eie</label>
         <label class="toggle"><input type="checkbox" id="toggle-dnb" checked> DNB</label>
         <label class="toggle"><input type="checkbox" id="toggle-sold"> Solgt</label>
-        <label class="toggle"><input type="checkbox" id="toggle-combine-sold"> Klyng solgte + aktive sammen</label>
-        <label class="toggle"><input type="checkbox" id="toggle-sold-premium"> Farg solgte etter budpremie</label>
-        <div id="premium-legend" class="legend" hidden></div>
-      </details>
-
-      <details class="panel" id="boligtype-filter-panel" open>
-        <summary><h2>Boligtype</h2></summary>
-        <div id="boligtype-filter" class="legend muted">Laster …</div>
         <div id="source-legend" class="legend legend-keys"></div>
-      </details>
-
-      <details class="panel" id="tag-panel" open>
-        <summary><h2>Tags</h2></summary>
-        <div id="tag-filter" class="legend muted">Laster …</div>
       </details>
 
       <details class="panel" id="filter-panel" open>
         <summary><h2>Filtre</h2></summary>
         <div id="active-filters" class="muted active-filters"></div>
-        <div id="metric-filters" class="muted">Laster …</div>
+        <button type="button" id="reset-filters" class="reset-filters">Nullstill filtre</button>
+        <div id="filter-panel-body" class="muted">Laster …</div>
       </details>
 
-      <details class="panel" id="more-filters-panel" open>
-        <summary>Flere filtre</summary>
-        <div id="more-filters" class="muted">Laster …</div>
-        <button type="button" id="reset-filters" class="reset-filters">Nullstill filtre</button>
+      <details class="panel" id="visning-panel" open>
+        <summary><h2>Visning</h2></summary>
+        <div id="display-sliders"></div>
+        <label class="toggle"><input type="checkbox" id="toggle-combine-sold"> Klyng solgte + aktive sammen</label>
+        <label class="toggle"><input type="checkbox" id="toggle-sold-premium"> Farg solgte etter budpremie</label>
+        <div id="premium-legend" class="legend" hidden></div>
       </details>
 
       <details class="panel" id="stations-panel" open>
@@ -62,14 +57,9 @@
         <div id="line-toggles" class="legend muted">Laster …</div>
       </details>
 
-      <details class="panel" id="missing-coords-panel" open>
+      <details class="panel" id="missing-coords-panel">
         <summary><h2>Uten koordinater</h2></summary>
         <div id="missing-coords" class="muted">Laster …</div>
-      </details>
-
-      <details class="panel" id="table-link-panel" open>
-        <summary><h2>Tabell</h2></summary>
-        <a href="/table" id="nav-table">Tabell</a>
       </details>
 
       <div id="status" class="status muted"></div>

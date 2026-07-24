@@ -22,15 +22,15 @@ import { isNew, parseScrapedAt, premiumPct } from "./listingmeta.js";
 import {
   listingExcluded,
   residualOpacity,
-  buildMetricFilterUI,
-  buildBoligtypeFilterUI,
-  buildMoreFiltersUI,
+  buildFilterPanelUI,
+  buildDisplayUI,
   deriveVocabs,
 } from "./filters.js";
 import {
   defaultFilters,
   loadFilters,
   activeFilterCount,
+  activeFilterEntries,
   subscribeOtherTabs,
   resetFilters,
 } from "./filterstate.js";
@@ -451,44 +451,6 @@ function wirePremiumToggle() {
   });
 }
 
-// Per-tag visibility -- rebuilt whenever the tag universe can change (initial
-// load, sold load, an annotation save).
-function buildTagFilterUI() {
-  const node = document.getElementById("tag-filter");
-  if (!node) return;
-  const tags = new Set();
-  state.itemsById.forEach((item) => {
-    const t = tagKeyOf(item);
-    if (t) tags.add(t);
-  });
-  node.innerHTML = "";
-  node.classList.remove("muted");
-  if (!tags.size) {
-    node.textContent = "Ingen tags ennå — sett Tag i en popup eller i tabellen.";
-    node.classList.add("muted");
-    return;
-  }
-  const rows = [
-    ...[...tags].sort((a, b) => a.localeCompare(b, "nb")).map((t) => [t, t]),
-    ["", "(uten tag)"],
-  ];
-  rows.forEach(([key, label]) => {
-    const row = document.createElement("label");
-    row.className = "toggle boligtype-toggle";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = !state.ui.filters.tagHidden[key];
-    cb.addEventListener("change", () => {
-      if (cb.checked) delete state.ui.filters.tagHidden[key];
-      else state.ui.filters.tagHidden[key] = true;
-      onFilterChange();
-    });
-    row.appendChild(cb);
-    row.appendChild(document.createTextNode(label));
-    node.appendChild(row);
-  });
-}
-
 // Collapsible sidebar panels: persist which <details> the user closed.
 function wireCollapsiblePanels() {
   document.querySelectorAll("details.panel").forEach((panel) => {
@@ -670,11 +632,46 @@ function fitToPolygon(map, polygon) {
   map.fitBounds(bounds, { padding: 40, animate: false });
 }
 
+// Collapsed/expanded state of the active-filter list (session-local, not persisted).
+let activeFiltersExpanded = false;
+
 function renderActiveFilterLine() {
   const node = document.getElementById("active-filters");
   if (!node) return;
-  const n = activeFilterCount(state.ui.filters, state.meta);
-  node.textContent = n ? n + " filtre aktive" : "Ingen aktive filtre";
+  node.innerHTML = "";
+  const entries = activeFilterEntries(state.ui.filters, state.meta);
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "af-head";
+  head.textContent = entries.length
+    ? entries.length + " filtre aktive · " + (activeFiltersExpanded ? "skjul" : "vis")
+    : "Ingen aktive filtre";
+  head.disabled = !entries.length;
+  head.addEventListener("click", () => {
+    activeFiltersExpanded = !activeFiltersExpanded;
+    renderActiveFilterLine();
+  });
+  node.appendChild(head);
+  if (!activeFiltersExpanded || !entries.length) return;
+  entries.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "af-row";
+    const text = document.createElement("span");
+    text.textContent = entry.label + ": " + entry.valueText;
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "af-clear";
+    clearBtn.setAttribute("aria-label", "Fjern filter");
+    clearBtn.textContent = "×";
+    clearBtn.addEventListener("click", () => {
+      entry.clear(state.ui.filters);
+      rebuildFilterUIs(); // field summaries + sliders must reflect the clear
+      onFilterChange();
+    });
+    row.appendChild(text);
+    row.appendChild(clearBtn);
+    node.appendChild(row);
+  });
 }
 
 function onFilterChange() {
@@ -683,29 +680,19 @@ function onFilterChange() {
   applyAll();
 }
 
-// (Re)build every filter control that renders shared state -- used at init,
-// after reset, and when another tab changes the filters.
+// (Re)build every filter/display control that renders shared state -- init,
+// reset, cross-tab storage event, sold-load, annotation-save.
 function rebuildFilterUIs() {
-  buildBoligtypeFilterUI(
-    document.getElementById("boligtype-filter"),
-    state.meta,
-    { ...state.colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
-    state.ui.filters,
-    onFilterChange
-  );
-  buildMetricFilterUI(
-    document.getElementById("metric-filters"),
-    state.meta,
-    state.ui,
-    onFilterChange
-  );
-  buildMoreFiltersUI(
-    document.getElementById("more-filters"),
-    deriveVocabs([...state.itemsById.values()]),
-    state.ui.filters,
-    onFilterChange
-  );
-  buildTagFilterUI();
+  buildFilterPanelUI(document.getElementById("filter-panel-body"), {
+    meta: state.meta,
+    vocabs: deriveVocabs([...state.itemsById.values()]),
+    colorByType: { ...state.colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
+    filters: state.ui.filters,
+    collapsed: state.ui.collapsed,
+    onChange: onFilterChange,
+    onCollapse: saveUi,
+  });
+  buildDisplayUI(document.getElementById("display-sliders"), state.ui, onFilterChange);
   renderActiveFilterLine();
 }
 
@@ -765,7 +752,7 @@ async function init() {
   wireDrawer();
   loadMissingCoords();
   document.addEventListener("sk-annotation-saved", () => {
-    buildTagFilterUI();
+    rebuildFilterUIs(); // tag vocab may have changed
     applyAll(); // tag rings / tag-visibility may have changed
   });
 
