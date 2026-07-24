@@ -136,11 +136,22 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   + `store/repositories/sold.py` + migrations `006_sold_prices.sql`/`007_sold_sweep_state.sql`
   fetch tinglyst sold prices from FINN's sold map into `sold_prices`, keyed by
   finnkode. `skannonser run enrich-sold` runs one budgeted **backlog** pass:
-  suspend-aware, coverage-aware (targets listings closed >100 days ago, stops at
-  80% coverage), fewest-prior-attempts-first with densest-clusters-first as the
+  suspend-aware (targets listings closed >100 days ago),
+  fewest-prior-attempts-first with densest-clusters-first as the
   tiebreak (migration `009_sold_attempts.sql` ledgers per-target attempts so
   never-tinglyst sales can't monopolise the budget), hard-capped at
-  `--requests` (default 4),
+  `--requests` (default 4).
+  **Termination is by attempts ceiling, not coverage** (2026-07-24): a target is
+  dropped for good once it has been attempted `[sold] max_attempts` times
+  (default 5) with no price. Because ordering is fewest-attempts-first, N
+  attempts means the whole eligible backlog has been combed N times — so the
+  sweep provably goes quiet instead of re-querying never-tinglyst listings
+  (borettslag share sales, fall-throughs) forever. This replaced an earlier
+  80 %-coverage gate, which counted only raw-`Solgt` rows (so it would have
+  starved the Inaktiv tier) and was no real guarantee — a backlog that never
+  gets tinglyst never reaches 80 %. Coverage is still *reported*, just not used
+  to gate; `--status` also shows the inaktiv tier and how many targets have been
+  given up.
   **Targets cover both `Solgt` AND still-in-grace `Inaktiv` listings** (2026-07-24):
   FINN sometimes flips a sold ad to Inaktiv rather than Solgt, so an Inaktiv
   listing may still have a tinglyst price. Inaktiv targets are a STRICT second
