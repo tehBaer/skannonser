@@ -572,3 +572,10 @@ details.subgroup > summary {
   color: #fff;
   margin-left: 6px;
 }
+
+/* Deep-linked row (map popup "Tabell" handoff): one attention flash. */
+@keyframes row-flash {
+  0% { background: #ffe9a8; }
+  100% { background: transparent; }
+}
+#listings-table tr.row-flash td { animation: row-flash 2.4s ease-out; }

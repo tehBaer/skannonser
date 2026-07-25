@@ -117,6 +117,7 @@ const state = {
   items: [], // all loaded items (eie + dnb, + sold once toggled on)
   soldLoaded: false,
   showSold: false, // tracks "Vis solgte" toggle state; sold items stay in items
+  focusFinnkode: null, // deep-linked row (map popup "Tabell" handoff): exempt from filters
   sortKey: "scraped_at", // newest first: the scanner's daily question
   sortDir: "desc",
   filterText: "",
@@ -237,6 +238,7 @@ function matchesFilter(item, text) {
 
 function visibleRows() {
   const filtered = state.items.filter((item) => {
+    if (state.focusFinnkode && String(item.finnkode) === state.focusFinnkode) return true;
     if (!state.showSold && item.closed) return false;
     if (listingExcluded(item, state.filters, state.meta)) return false;
     return matchesFilter(item, state.filterText);
@@ -347,6 +349,7 @@ function wireCellEdit(input, item, field) {
 
 function buildRow(item) {
   const tr = el("tr", item.sold ? "sold-row" : item.closed ? "inactive-row" : null);
+  tr.dataset.finnkode = item.finnkode;
 
   visibleColumns().forEach((col) => {
     const td = el("td");
@@ -560,6 +563,53 @@ function wireToolbar() {
   }
 }
 
+// Receiving end of the popup's "Tabell" deep link -- mirror of app.js's
+// handleHash. The focused row bypasses filters (a deep link onto an
+// empty-looking table reads as broken) and gets a flash so the eye lands.
+async function handleHash() {
+  const raw = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+  state.focusFinnkode = null;
+  if (!raw) {
+    render();
+    return;
+  }
+  const finnkode = raw.startsWith("finnkode=") ? raw.slice("finnkode=".length) : raw;
+  const byId = () => state.items.find((it) => String(it.finnkode) === finnkode);
+  let item = byId();
+  // Deep links to closed listings can arrive before the lazily-fetched
+  // sold bucket on a cold load -- pull it and retry (same race app.js solves).
+  if (!item && !state.soldLoaded) {
+    setStatus("Laster solgte …");
+    try {
+      state.items = state.items.concat(await fetchListings(1));
+      state.soldLoaded = true;
+      refreshVocabs();
+    } catch (_) {
+      /* fall through; not-found reported below */
+    }
+    item = byId();
+  }
+  if (!item) {
+    render();
+    setStatus("Fant ikke annonse " + finnkode);
+    return;
+  }
+  if (item.closed && !state.showSold) {
+    state.showSold = true;
+    const soldToggle = document.getElementById("table-sold");
+    if (soldToggle) soldToggle.checked = true;
+    saveSoldPref(true);
+  }
+  state.focusFinnkode = finnkode;
+  render();
+  const row = document.querySelector('tr[data-finnkode="' + finnkode + '"]');
+  if (row) {
+    row.scrollIntoView({ block: "center" });
+    row.classList.add("row-flash");
+    setTimeout(() => row.classList.remove("row-flash"), 2400);
+  }
+}
+
 async function init() {
   setStatus("Laster …");
   try {
@@ -599,6 +649,8 @@ async function init() {
     render();
   });
   render();
+  if (window.location.hash) await handleHash();
+  window.addEventListener("hashchange", handleHash);
 }
 
 init();
