@@ -43,10 +43,35 @@ LEGACY_FINN_SEARCH_URL = (
 )
 
 
+# The polygon/filter values the legacy constants carried, frozen with the URL
+# above. Pinned HERE (not read from config/domain.toml) so this fidelity test
+# checks URL *construction* against legacy and survives deliberate config
+# edits — the live polygon was first extended south of the legacy shape on
+# 2026-07-25.
+_LEGACY_POLYGON = [
+    [10.656738281250, 59.884802942124],
+    [10.536789920973, 59.797487966246],
+    [10.545723856072, 59.709734171804],
+    [10.332641601563, 59.700380312509],
+    [9.971542814941, 59.874465805403],
+    [11.260986328125, 60.440962535310],
+    [11.585234663086, 60.136034630691],
+    [10.947750935529, 59.714239974969],
+    [10.721282958984, 59.712097173323],
+    [10.715468622953, 59.849132221282],
+]
+
+
 def test_search_url_matches_legacy():
     """The new build_search_url must produce the byte-for-byte URL the legacy
-    get_finn_scrape_config() emitted (frozen literal above)."""
-    assert build_search_url(load_domain()) == LEGACY_FINN_SEARCH_URL
+    get_finn_scrape_config() emitted (frozen literal above), given the exact
+    legacy inputs (frozen polygon + filters), regardless of what the live
+    config currently says."""
+    legacy_domain = load_domain().model_copy(deep=True)
+    legacy_domain.polygon_points = [tuple(p) for p in _LEGACY_POLYGON]
+    legacy_domain.filters.url_max_price = 7500000
+    legacy_domain.filters.min_bra_i = 70
+    assert build_search_url(legacy_domain) == LEGACY_FINN_SEARCH_URL
 
 
 def test_extract_ad_urls_superset_of_legacy_on_real_page():
