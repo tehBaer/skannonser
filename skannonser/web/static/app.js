@@ -94,6 +94,7 @@ const state = {
   lastVariantMode: null, // "both" | "split" -- tracks combineSold across applyAll calls
   popup: null,
   colorByType: {},
+  tagColors: new Map(),
   groups: [],
   validGroupIds: new Set(),
   newSinceLast: 0,
