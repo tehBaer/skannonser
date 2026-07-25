@@ -169,8 +169,29 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   be written off as Trukket having never once been checked. Solgt still takes the
   rest (~87 % at the cron's 13–17/run), and if Solgt runs out of targets early
   the whole remainder flows to Inaktiv.
-  querying a tight ~120 m box centered on each target listing (with one adaptive
-  shrink if the target is crowded out of the 15-card cap). On throttle
+  **Every card a response carries is kept, not just the targets'** (2026-07-25,
+  migration `011_neighbour_sold.sql`): a ~120 m box returns up to 15 sold cards
+  and we used to discard the ones we don't track. Sold data is the one dataset
+  that's expensive to re-acquire and neighbouring sales are the best signal for
+  how a neighbourhood is priced, so they now land in the *same* `sold_prices`
+  table — at **zero extra requests**, since the response was already paid for.
+  `discovered_near_finnkode` anchors each untracked sale to the tracked listing
+  whose box surfaced it (fill-only: the first anchor wins; NULL for a target's
+  own card and for `--bbox` probes). There is no `tracked` flag — it's derived
+  with `EXISTS` against `eiendom`, so every existing consumer (sold bucket,
+  promotion, coverage, budpremie, the sheet export) joins *from* `eiendom` and
+  is blind to neighbour rows by construction. Neighbours never consume budget,
+  never mark a target matched, and never enter the attempts ledger; the sweep
+  reports them separately as `neighbours_stored`. Caveat: a neighbour's
+  `price_suggestion` is the asking price **at sale time** (possibly already
+  reduced), not first-seen asking — that lives in `eiendom.pris` and only for
+  listings we track. The map popup surfaces these as a lazily-fetched
+  **"Solgt i nabolaget"** section (`GET /api/listings/{finnkode}/nabolag`,
+  newest first, capped at 15); data accumulates from sweep responses only —
+  there's no backfill — so most listings read "ingen registrerte nabolagssalg
+  ennå" at first.
+  Each request queries a tight ~120 m box centered on one target listing (with
+  one adaptive shrink if the target is crowded out of the 15-card cap). On throttle
   (429/403/503 or a block page) it **suspends itself, persists that, and pings
   Pushover** — every later run is then a no-op until `--resume`. `--status`
   reports coverage without any request; `--bbox` probes a single tile.
