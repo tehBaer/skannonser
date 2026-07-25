@@ -668,6 +668,10 @@ async function handleHash() {
     const cb = document.getElementById(bucket === "sold" ? "toggle-sold" : "toggle-inactive");
     if (cb) cb.checked = true;
     saveUi();
+    // The filter vocabulary was derived from the previously-visible buckets;
+    // now that this deep link just widened what's on screen, it must be
+    // rebuilt or the chip row will describe a narrower set than the map shows.
+    rebuildFilterUIs();
   }
   applyAll();
   state.map.flyTo({ center: [item.lng, item.lat], zoom: 15 });

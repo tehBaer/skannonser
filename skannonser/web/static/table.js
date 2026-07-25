@@ -609,6 +609,10 @@ async function handleHash() {
     const soldToggle = document.getElementById("table-sold");
     if (soldToggle) soldToggle.checked = true;
     saveSoldPref(true);
+    // Vocab was derived from the non-closed set; this deep link just widened
+    // the visible rows to include the closed one, so the chips would
+    // describe a narrower set than what's now on screen without a rebuild.
+    refreshVocabs();
   }
   state.focusFinnkode = finnkode;
   render();
