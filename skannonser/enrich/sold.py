@@ -56,6 +56,11 @@ def parse_sold_card(doc: dict) -> Optional[dict]:
         "cadastral_sold_date": doc.get("cadastralSoldDate"),
         "price_suggestion": doc.get("priceSuggestion"),
         "address": doc.get("address"),
+        "size": doc.get("size"),
+        "property_type": doc.get("propertyType"),
+        "bedrooms": doc.get("bedrooms"),
+        "collective_debt": doc.get("collectiveDebt"),
+        "ownership_type": doc.get("ownershipType"),
     }
 
 

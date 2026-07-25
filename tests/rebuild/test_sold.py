@@ -29,6 +29,9 @@ _CARD = {
     "soldDate": "2026-05-21",
     "propertyType": "DETACHED",
     "size": 150,
+    "bedrooms": 3,
+    "collectiveDebt": 120000,
+    "ownershipType": "FREEHOLD",
 }
 
 
@@ -62,6 +65,11 @@ def test_parse_sold_card_extracts_normalized_fields():
         "cadastral_sold_date": "2026-07-02",
         "price_suggestion": 6500000,
         "address": "Hennumveien 2",
+        "size": 150,
+        "property_type": "DETACHED",
+        "bedrooms": 3,
+        "collective_debt": 120000,
+        "ownership_type": "FREEHOLD",
     }
 
 
@@ -74,6 +82,21 @@ def test_parse_sold_card_tolerates_missing_price_fields():
     assert rec["finnkode"] == "111"
     assert rec["sold_price"] is None
     assert rec["price_suggestion"] is None
+
+
+def test_parse_sold_card_captures_card_facts():
+    rec = parse_sold_card(_CARD)
+    assert rec["size"] == 150
+    assert rec["property_type"] == "DETACHED"
+    assert rec["bedrooms"] == 3
+    assert rec["collective_debt"] == 120000
+    assert rec["ownership_type"] == "FREEHOLD"
+
+
+def test_parse_sold_card_card_facts_default_none():
+    rec = parse_sold_card({"adId": 1})
+    for key in ("size", "property_type", "bedrooms", "collective_debt", "ownership_type"):
+        assert rec[key] is None
 
 
 # ---------------------------------------------------------------------------
