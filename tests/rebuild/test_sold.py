@@ -712,6 +712,29 @@ def test_sold_progress_reports_suspension(conn):
     assert sold_progress(conn)["suspended"] is True
 
 
+def test_sold_progress_new_priced_excludes_neighbour_rows(conn):
+    # A sold_prices row with no matching eiendom row (a neighbour discovered
+    # via a target's box, migration 011) must not inflate new_priced -- only
+    # tracked rows do. Regression for the finding: no join/EXISTS meant this
+    # counted every priced row in the table, neighbours included.
+    from skannonser.enrich.sold import sold_progress
+
+    _seed_aged(conn, "101", 200)  # tracked
+    conn.execute(
+        "INSERT INTO sold_prices (finnkode, sold_price, updated_at) "
+        "VALUES ('101', 5000000, datetime('now'))"
+    )
+    # Untracked neighbour: priced just now, but no eiendom row at all.
+    conn.execute(
+        "INSERT INTO sold_prices (finnkode, sold_price, updated_at, "
+        "discovered_near_finnkode) VALUES ('999', 4000000, datetime('now'), '101')"
+    )
+    conn.commit()
+
+    p = sold_progress(conn, since_hours=24, min_age_days=100)
+    assert p["new_priced"] == 1  # only the tracked row counts
+
+
 # ---------------------------------------------------------------------------
 # Per-target attempt tracking (starvation guard)
 # ---------------------------------------------------------------------------

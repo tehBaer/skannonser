@@ -269,10 +269,22 @@ def given_up_targets(conn, max_attempts: int = 5) -> int:
 def sold_progress(conn, since_hours: int = 24, min_age_days: int = 100) -> dict:
     """Progress snapshot for the daily digest: how many prices landed in the
     last ``since_hours``, whether the sweep is suspended, and overall coverage
-    of aged sold listings. Returns ``{"new_priced", "suspended", "coverage"}``."""
+    of aged sold listings. Returns ``{"new_priced", "suspended", "coverage"}``.
+
+    ``new_priced`` is scoped to tracked (``eiendom``) rows via ``EXISTS`` --
+    like every other query in this file -- so untracked neighbour rows (see
+    migration 011) never inflate it. Note this counts tracked rows *touched*
+    today, not newly-first-priced ones: a tracked listing priced months ago
+    is no longer a sweep target, so if its card resurfaces in a nearby
+    target's box it takes the neighbour branch and gets re-UPSERTed, bumping
+    ``updated_at`` and recounting here. That's accepted, not suppressed."""
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM sold_prices "
-        "WHERE sold_price IS NOT NULL AND updated_at >= datetime('now', ?)",
+        """
+        SELECT COUNT(*) AS n FROM sold_prices s
+        WHERE s.sold_price IS NOT NULL
+          AND s.updated_at >= datetime('now', ?)
+          AND EXISTS (SELECT 1 FROM eiendom e WHERE e.finnkode = s.finnkode)
+        """,
         (f"-{int(since_hours)} hours",),
     ).fetchone()
     return {
@@ -526,8 +538,9 @@ def run_sold_sweep(
 
     if attempted:
         record_attempts(conn, attempted)
-    stats = SoldPricesRepo(conn).upsert(records)
-    neighbour_stats = SoldPricesRepo(conn).upsert(list(neighbour_records.values()))
+    repo = SoldPricesRepo(conn)
+    stats = repo.upsert(records)
+    neighbour_stats = repo.upsert(list(neighbour_records.values()))
     return {
         "targets": len(targets),
         "tiles_queried": tiles_queried,

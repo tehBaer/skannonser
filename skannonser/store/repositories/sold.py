@@ -15,7 +15,10 @@ Two distinct "don't clobber" semantics live here, each with its own tuple:
 
 ``sold_date``/``price_suggestion``/``address`` and the card facts
 (``size``/``property_type``/``bedrooms``/``collective_debt``/``ownership_type``)
-are set as given (``_SET``).
+are set as given (``_SET`` generates plain ``col = ?``, not a ``COALESCE``).
+This is NOT fill-only: ``parse_sold_card`` always emits every key (``None``
+when the source doc lacks it), so a later card that's missing e.g. ``size``
+overwrites -- wipes -- a previously stored value rather than leaving it be.
 """
 
 import sqlite3
