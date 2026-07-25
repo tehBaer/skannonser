@@ -109,7 +109,7 @@ test("a tag keeps its color when a later-sorting tag arrives", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test tests/web/`
+Run: `node --test tests/web/*.test.mjs`
 Expected: FAIL — `Cannot find module .../skannonser/web/static/tagcolors.js`
 
 - [ ] **Step 3: Write the implementation**
@@ -167,7 +167,7 @@ export function colorForTag(tag, colors) {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test tests/web/`
+Run: `node --test tests/web/*.test.mjs`
 Expected: `# pass 5`, `# fail 0`
 
 - [ ] **Step 5: Commit**
@@ -957,7 +957,7 @@ git commit -m "feat(table): receive map deep links with filter-exempt focused ro
 
 - [ ] **Step 1: Unit + Python suites**
 
-Run: `node --test tests/web/` → `# fail 0`.
+Run: `node --test tests/web/*.test.mjs` → `# fail 0`.
 Run: `.venv/bin/pytest -q` → all pass (backend untouched; any failure here means a task strayed out of scope — stop and fix).
 
 - [ ] **Step 2: Spec acceptance walk-through** (dev server from Task 2's setup) — run the spec's Testing list end-to-end:
