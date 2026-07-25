@@ -527,5 +527,9 @@ details.subgroup > summary {
 .sk-nabolag { padding: 6px 10px 2px; border-top: 1px solid rgba(0, 0, 0, 0.08); }
 .sk-nabolag-head { margin: 0 0 4px; font-size: 12px; font-weight: 700; }
 .sk-nabolag-empty { margin: 0 0 4px; font-size: 12px; }
-.sk-nabolag-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin: 2px 0; }
-.sk-nabolag-row .muted { white-space: nowrap; }
+/* Address over metrics, not side-by-side: the popup is capped at 300px, and a
+   side-by-side row wrapped Norwegian street names mid-address ("Naboveien" /
+   "7") the moment a sale carried kr + kr/m2 + date. Stacking keeps every sale
+   two tidy lines whether or not it has a size. */
+.sk-nabolag-row { font-size: 12px; margin: 0 0 5px; }
+.sk-nabolag-row .muted { display: block; }
