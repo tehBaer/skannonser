@@ -1147,3 +1147,114 @@ def test_solgt_sub_cap_clamps_to_overall_budget_at_zero(conn):
 
     assert stats["tiles_queried"] == 0
     assert _attempts(conn) == {}  # no attempts recorded at all
+
+
+# ---------------------------------------------------------------------------
+# Sweep keeps every card (2026-07-25 spec): a box's non-target cards are
+# neighbouring sales we already paid the request for -- store them anchored
+# to the tracked listing whose box surfaced them, at zero extra requests.
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_stores_neighbour_cards_with_anchor(conn):
+    # One target ("111", tracked+seeded with coords); its box returns the
+    # target's own card plus two neighbour cards we don't track.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    docs = [
+        {"adId": 111, "cadastralSoldPrice": 5000000},
+        {"adId": 777, "cadastralSoldPrice": 4200000, "size": 80, "address": "Naboveien 7"},
+        {"adId": 888, "cadastralSoldPrice": 6100000},
+    ]
+    calls = []
+
+    def fetch(url, **kw):
+        calls.append(url)
+        return FakeResp({"docs": docs})
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=fetch,
+        targets=[
+            {"finnkode": "111", "lat": 59.9, "lng": 10.7, "status": "solgt", "attempts": 0}
+        ],
+    )
+    assert len(calls) == 1  # ZERO extra requests: one box, period
+    assert stats["matched"] == 1  # only the tracked target
+    assert stats["neighbours_stored"] == 2
+    own = conn.execute(
+        "SELECT discovered_near_finnkode FROM sold_prices WHERE finnkode='111'"
+    ).fetchone()
+    assert own["discovered_near_finnkode"] is None  # never self-anchored
+    nb = conn.execute(
+        "SELECT discovered_near_finnkode, size FROM sold_prices WHERE finnkode='777'"
+    ).fetchone()
+    assert nb["discovered_near_finnkode"] == "111"
+    assert nb["size"] == 80
+    # neighbours never enter the attempts ledger
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM sold_price_attempts WHERE finnkode IN ('777','888')"
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_neighbour_card_never_marks_a_target_matched(conn):
+    # Target "222" is known but its card is NOT in the response; a neighbour
+    # card is. The target must still count as unmatched (attempted, not matched).
+    from skannonser.enrich.sold import run_sold_sweep
+
+    docs = [{"adId": 777, "cadastralSoldPrice": 4200000}]
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=lambda url, **k: FakeResp({"docs": docs}),
+        targets=[
+            {"finnkode": "222", "lat": 59.9, "lng": 10.7, "status": "solgt", "attempts": 0}
+        ],
+    )
+    assert stats["matched"] == 0
+    assert stats["neighbours_stored"] == 1
+
+
+def test_neighbour_seen_in_two_boxes_keeps_first_anchor(conn):
+    # Two targets, two boxes; the same neighbour card (adId 777) appears in
+    # both responses. One stored row, anchored to the FIRST box's target.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    docs_by_target = {
+        "111": [
+            {"adId": 111, "cadastralSoldPrice": 5000000},
+            {"adId": 777, "cadastralSoldPrice": 4200000},
+        ],
+        "222": [
+            {"adId": 222, "cadastralSoldPrice": 5500000},
+            {"adId": 777, "cadastralSoldPrice": 4200000},
+        ],
+    }
+    calls = []
+
+    def fetch(url, **kw):
+        calls.append(url)
+        finnkode = "111" if len(calls) == 1 else "222"
+        return FakeResp({"docs": docs_by_target[finnkode]})
+
+    first_target_finnkode = "111"
+    run_sold_sweep(
+        conn,
+        fetch=fetch,
+        targets=[
+            {"finnkode": "111", "lat": 59.9, "lng": 10.7, "status": "solgt", "attempts": 0},
+            {"finnkode": "222", "lat": 59.95, "lng": 10.75, "status": "solgt", "attempts": 0},
+        ],
+    )
+    assert len(calls) == 2
+    assert (
+        conn.execute("SELECT COUNT(*) FROM sold_prices WHERE finnkode='777'").fetchone()[0]
+        == 1
+    )
+    row = conn.execute(
+        "SELECT discovered_near_finnkode FROM sold_prices WHERE finnkode='777'"
+    ).fetchone()
+    assert row["discovered_near_finnkode"] == first_target_finnkode

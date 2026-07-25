@@ -399,7 +399,11 @@ def run_sold_sweep(
     Every target the sweep actually centers a box on is charged one attempt
     via :func:`record_attempts`. Lets :class:`Throttled` propagate. Returns
     ``{"targets", "tiles_queried", "cards_seen", "matched", "stored",
-    "budget_exhausted"}``.
+    "neighbours_stored", "budget_exhausted"}`` -- ``neighbours_stored`` counts
+    non-target cards kept from the same responses, anchored via
+    ``discovered_near_finnkode`` to the tracked listing whose box surfaced
+    them (2026-07-25 spec: zero extra requests, we already paid for the
+    response).
     """
     from skannonser.store.repositories.sold import SoldPricesRepo
 
@@ -430,17 +434,31 @@ def run_sold_sweep(
 
     matched: set[str] = set()
     records: list[dict] = []
+    neighbour_records: dict[str, dict] = {}
     attempted: list[str] = []
     tiles_queried = cards_seen = 0
     first = True
 
-    def collect(docs):
+    def collect(docs, near_finnkode):
         for doc in docs:
             rec = parse_sold_card(doc)
-            if rec is None or rec["finnkode"] not in known or rec["finnkode"] in matched:
+            if rec is None:
                 continue
-            matched.add(rec["finnkode"])
-            records.append(rec)
+            fk = rec["finnkode"]
+            if fk in known:
+                if fk in matched:
+                    continue
+                matched.add(fk)
+                records.append(rec)
+                continue
+            # Neighbour sale we don't track: keep it -- we already paid the
+            # request for this response (2026-07-25 spec, zero-extra-requests
+            # invariant). Anchor it to the tracked listing whose box surfaced
+            # it ("sales near X"); setdefault keeps the first in-run anchor
+            # and the repo's fill-only column keeps the first across runs.
+            # Neighbours never touch matched/attempts/stats for targets.
+            rec["discovered_near_finnkode"] = near_finnkode
+            neighbour_records.setdefault(fk, rec)
 
     def run_phase(phase_targets: list[dict], cap: Optional[int]) -> tuple[int, bool]:
         """Spend up to ``cap`` requests (``None`` = unlimited) on
@@ -472,7 +490,7 @@ def run_sold_sweep(
                 tiles_queried += 1
                 used += 1
                 cards_seen += len(docs)
-                collect(docs)
+                collect(docs, t["finnkode"])
 
                 if t["finnkode"] in matched or len(docs) < _RESULT_CAP:
                     break  # found it, or the box wasn't crowded so tightening won't help
@@ -509,12 +527,14 @@ def run_sold_sweep(
     if attempted:
         record_attempts(conn, attempted)
     stats = SoldPricesRepo(conn).upsert(records)
+    neighbour_stats = SoldPricesRepo(conn).upsert(list(neighbour_records.values()))
     return {
         "targets": len(targets),
         "tiles_queried": tiles_queried,
         "cards_seen": cards_seen,
         "matched": len(matched),
         "stored": stats["inserted"] + stats["updated"],
+        "neighbours_stored": neighbour_stats["inserted"] + neighbour_stats["updated"],
         "budget_exhausted": budget_exhausted,
     }
 
