@@ -1218,3 +1218,84 @@ def test_put_annotation_on_dnb_id_surfaces_in_listings_and_detail(db_path, clien
     assert detail["source"] == "dnb"
     assert detail["kommentar"] == "DNB note"
     assert detail["tag"] == "D"
+
+
+# ---------------------------------------------------------------------------
+# /api/listings/{finnkode}/nabolag -- anchored neighbour sales (Task 4,
+# 2026-07-25 neighbour-sold-prices spec)
+# ---------------------------------------------------------------------------
+
+def _ins_neighbour_sold(
+    conn,
+    finnkode,
+    *,
+    discovered_near_finnkode,
+    sold_price=6_000_000,
+    sold_date="2026-05-01",
+    price_suggestion=5_900_000,
+    size=None,
+    address="Nabogata 1",
+    property_type="Leilighet",
+    bedrooms=3,
+):
+    conn.execute(
+        """
+        INSERT INTO sold_prices (
+            finnkode, address, sold_price, sold_date, price_suggestion,
+            size, property_type, bedrooms, discovered_near_finnkode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            finnkode, address, sold_price, sold_date, price_suggestion,
+            size, property_type, bedrooms, discovered_near_finnkode,
+        ),
+    )
+    conn.commit()
+
+
+def test_nabolag_lists_anchored_sales(client, db_path):
+    conn = _conn(db_path)
+    # 901: anchored to '111', tracked (also present in eiendom), has size ->
+    # price_per_m2 computable. Older sold_date so it sorts second.
+    _ins_neighbour_sold(
+        conn, "901", discovered_near_finnkode="111",
+        sold_price=5_000_000, size=100, sold_date="2026-05-01",
+    )
+    _ins_eiendom(conn, "901")
+    # 902: anchored to '111', never tracked (no eiendom row), size NULL ->
+    # price_per_m2 must be None, not a crash. Newer sold_date so it sorts first.
+    _ins_neighbour_sold(
+        conn, "902", discovered_near_finnkode="111",
+        sold_price=6_000_000, size=None, sold_date="2026-06-01",
+    )
+    # Anchored to a different target -- must not leak into '111's list.
+    _ins_neighbour_sold(conn, "850", discovered_near_finnkode="222")
+    # No anchor at all (target's own card, or a --bbox probe) -- excluded.
+    _ins_neighbour_sold(conn, "860", discovered_near_finnkode=None)
+    conn.close()
+
+    data = client.get("/api/listings/111/nabolag").json()
+    assert [s["finnkode"] for s in data["sales"]] == ["902", "901"]  # newest sold_date first
+    by_fk = {s["finnkode"]: s for s in data["sales"]}
+    assert by_fk["901"]["tracked"] is True    # 901 seeded in eiendom
+    assert by_fk["902"]["tracked"] is False
+    assert by_fk["901"]["price_per_m2"] == 50000   # 5_000_000 / 100
+    assert by_fk["902"]["price_per_m2"] is None    # size NULL -> NULL, no crash
+
+
+def test_nabolag_unknown_id_is_empty_not_404(client, db_path):
+    resp = client.get("/api/listings/999999/nabolag")
+    assert resp.status_code == 200
+    assert resp.json() == {"sales": []}
+
+
+def test_nabolag_caps_at_15(client, db_path):
+    conn = _conn(db_path)
+    for i in range(20):
+        _ins_neighbour_sold(
+            conn, f"n{i}", discovered_near_finnkode="111",
+            sold_date=f"2026-01-{i + 1:02d}",
+        )
+    conn.close()
+
+    assert len(client.get("/api/listings/111/nabolag").json()["sales"]) == 15

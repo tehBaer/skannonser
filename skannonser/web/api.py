@@ -580,6 +580,52 @@ def get_listing_detail(
     raise HTTPException(status_code=404, detail=f"listing {finnkode!r} not found")
 
 
+@router.get("/listings/{finnkode}/nabolag")
+def get_nabolag(
+    finnkode: str, conn: sqlite3.Connection = Depends(ro_conn)
+) -> dict:
+    """Sold sales discovered in this listing's sweep boxes (~120 m) --
+    incl. sales we never tracked (2026-07-25 neighbour-sold-prices spec).
+    `tracked` is derived via EXISTS, never stored. `price_suggestion` is the
+    asking price AT SALE TIME (possibly reduced) -- not first asking. Empty
+    list (not 404) for ids without anchored sales: absence of neighbours is
+    a normal state, not an error."""
+    _validate_finnkode(finnkode)
+    rows = conn.execute(
+        """
+        SELECT s.finnkode, s.address, s.sold_price, s.sold_date,
+               s.price_suggestion, s.size, s.property_type, s.bedrooms,
+               EXISTS(SELECT 1 FROM eiendom e WHERE e.finnkode = s.finnkode)
+                   AS tracked
+        FROM sold_prices s
+        WHERE s.discovered_near_finnkode = ?
+        ORDER BY COALESCE(s.sold_date, '') DESC, s.finnkode
+        LIMIT 15
+        """,
+        (finnkode,),
+    ).fetchall()
+    sales = []
+    for r in rows:
+        price_per_m2 = None
+        if r["sold_price"] and r["size"]:
+            price_per_m2 = round(r["sold_price"] / r["size"])
+        sales.append(
+            {
+                "finnkode": r["finnkode"],
+                "address": r["address"],
+                "sold_price": r["sold_price"],
+                "sold_date": r["sold_date"],
+                "price_suggestion": r["price_suggestion"],
+                "size": r["size"],
+                "property_type": r["property_type"],
+                "bedrooms": r["bedrooms"],
+                "price_per_m2": price_per_m2,
+                "tracked": bool(r["tracked"]),
+            }
+        )
+    return {"sales": sales}
+
+
 @router.get("/meta")
 def get_meta(request: Request, conn: sqlite3.Connection = Depends(ro_conn)) -> dict:
     domain = _domain(request)
