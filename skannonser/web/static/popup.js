@@ -236,6 +236,11 @@ export function buildPopupContent(item, destinations, tagColors) {
     gmap.rel = "noopener";
     links.appendChild(gmap);
   }
+  const tbl = el("a", null, "Tabell");
+  // Same-tab on purpose: Kart -> Tabell is in-app navigation, unlike the
+  // external Finn/Maps links.
+  tbl.href = "/table#finnkode=" + encodeURIComponent(item.finnkode);
+  links.appendChild(tbl);
   if (links.childNodes.length) body.appendChild(links);
 
   root.appendChild(body);
