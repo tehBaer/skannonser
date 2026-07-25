@@ -35,8 +35,14 @@ endpoints. Everything is `skannonser/web/static/*` only.
 
 ## 1. Tag colors — shared foundation (`tagcolors.js`, new)
 
-- `colorForTag(tag) -> "#rrggbb"`: normalize (trim, lowercase), hash
-  (djb2 or similar), index into a fixed ~10-color palette. Empty/null tag
+- `assignTagColors(tagKeys) -> Map<normalizedTag, color>`: normalize
+  (trim, lowercase), hash (djb2) into a fixed 10-color palette, resolving
+  collisions by probing to the next free slot with tags processed in
+  sorted order. A pure function of the current tag SET: distinct colors
+  are guaranteed while ≤ 10 tags exist, and a tag keeps its hash slot
+  unless an earlier-sorted tag claims it. (Amended from pure per-tag
+  hashing: the user's actual tags "maybe" and "definitivt" collide under
+  djb2 mod 10.) `colorForTag(tag, colors)` is the lookup; empty/null tag
   → `null` (no color).
 - Palette is hue-offset from `TYPE_COLOR_PALETTE` in map.js so a tag ring
   is never confusable with its own boligtype dot color. Colors must keep
