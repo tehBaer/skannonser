@@ -150,7 +150,7 @@ function ensureSquareIcon(map, color, strokeColor) {
   const safe = (c) => c.replace(/[^a-z0-9]/gi, "");
   const name = "dnb-sq-" + safe(color) + "-" + safe(stroke);
   if (map.hasImage(name)) return name;
-  const size = 18;
+  const size = SQUARE_PX;
   const cvs = document.createElement("canvas");
   cvs.width = size;
   cvs.height = size;
@@ -171,7 +171,7 @@ function ensureSquareIcon(map, color, strokeColor) {
 function ensureXIcon(map) {
   const name = "inactive-x";
   if (map.hasImage(name)) return name;
-  const size = 16;
+  const size = X_PX;
   const cvs = document.createElement("canvas");
   cvs.width = size;
   cvs.height = size;
@@ -195,6 +195,20 @@ function ensureXIcon(map) {
   map.addImage(name, { width: size, height: size, data: data.data });
   return name;
 }
+
+// One source of truth for marker geometry. The DNB square and the inactive X
+// are canvas rasters that do NOT follow circle-radius, and the tag ring is its
+// own circle layer -- so all of them must be derived from one number or they
+// drift apart (the ring's old 12 was hand-tuned against a dot radius of 7).
+// Raster icons are cached by name, so these must stay module constants: making
+// them dynamic without putting the size in the cache key would serve stale art.
+export const DOT_R = 9;
+const CLOSED_R = DOT_R - 1.5;
+const RING_R = DOT_R + 6;
+// Exported (alongside DOT_R) so tests can verify the square raster stays
+// larger than the dot's diameter without duplicating the 2.55 factor here.
+export const SQUARE_PX = Math.round(DOT_R * 2.55);
+const X_PX = Math.round(DOT_R * 2);
 
 // Border convention: ACTIVE listings get a black border, SOLD keep a white
 // border (both are coloured by boligtype).
@@ -310,7 +324,7 @@ export function addListingGroups(map, groups, onListingClick) {
       source: g.id,
       filter: ["all", NOT_CLUSTER, ["==", ["get", "hasTag"], true]],
       paint: {
-        "circle-radius": 12,
+        "circle-radius": RING_R,
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-width": 3,
         "circle-stroke-color": ["get", "tagColor"],
@@ -328,7 +342,7 @@ export function addListingGroups(map, groups, onListingClick) {
       filter: ["all", NOT_CLUSTER, IS_CLOSED],
       paint: {
         "circle-color": g.color, // sold AND inactive: boligtype colour (inactive adds an X on top)
-        "circle-radius": 6,
+        "circle-radius": CLOSED_R,
         "circle-stroke-width": 1.5,
         "circle-stroke-color": SOLD_BORDER, // sold = white border
         "circle-opacity": OP,
@@ -359,7 +373,7 @@ export function addListingGroups(map, groups, onListingClick) {
       filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "eie"]],
       paint: {
         "circle-color": g.color,
-        "circle-radius": 7,
+        "circle-radius": DOT_R,
         "circle-stroke-width": 1.5,
         "circle-stroke-color": ACTIVE_BORDER, // active = dark border
         "circle-opacity": OP,
