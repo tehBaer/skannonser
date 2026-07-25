@@ -24,3 +24,7 @@ backups/
 # Nightly thumbnail cache (Phase 5 Task 5, skannonser/enrich/thumbs.py) --
 # locally downloaded/regenerable, never committed.
 data/thumbs/
+
+# Parallel-session worktrees (see CLAUDE.md). Each is a full checkout of this
+# repo; committing one would nest the repo inside itself.
+.claude/worktrees/
