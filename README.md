@@ -154,13 +154,21 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   given up.
   **Targets cover both `Solgt` AND still-in-grace `Inaktiv` listings** (2026-07-24):
   FINN sometimes flips a sold ad to Inaktiv rather than Solgt, so an Inaktiv
-  listing may still have a tinglyst price. Inaktiv targets are a STRICT second
-  tier — every Solgt target is attempted before any Inaktiv one (they're far
-  likelier to yield a price) — and they drop out of the target set entirely
-  once older than `[sold] trukket_grace_days` (default 180, `config/domain.toml`),
-  at which point they're treated as withdrawn and we stop spending requests on
-  them. Combined with the >100-day floor, an Inaktiv listing is swept in the
-  ~100–180-day window after it closed (a price cannot be tinglyst before that).
+  listing may still have a tinglyst price. Inaktiv targets are a second tier —
+  Solgt is attempted first (far likelier to yield a price) — and they drop out
+  of the target set entirely once older than `[sold] trukket_grace_days`
+  (default 180, `config/domain.toml`), at which point they're treated as
+  withdrawn and we stop spending requests on them. Combined with the >100-day
+  floor, an Inaktiv listing is swept in the ~100–180-day window after it closed
+  (a price cannot be tinglyst before that).
+  **The tier priority is soft, not strict** — `[sold] inaktiv_reserve_requests`
+  (default 2) reserves that many requests per run for Inaktiv. Strict priority
+  was measured to starve the tier to *zero*: with ~1022 eligible Solgt targets
+  the first Inaktiv target sits at position ~1023, so at any realistic budget it
+  would never be reached before ageing out of its 80-day window — listings would
+  be written off as Trukket having never once been checked. Solgt still takes the
+  rest (~87 % at the cron's 13–17/run), and if Solgt runs out of targets early
+  the whole remainder flows to Inaktiv.
   querying a tight ~120 m box centered on each target listing (with one adaptive
   shrink if the target is crowded out of the 15-card cap). On throttle
   (429/403/503 or a block page) it **suspends itself, persists that, and pings
