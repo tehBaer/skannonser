@@ -13,6 +13,9 @@ import {
   BYGGEAAR_CEIL,
   TOTAL_KVM_MAX,
   MAANEDSKOST_MAX,
+  PRIS_KVM_MAX,
+  SOLD_PRICE_MAX,
+  PREMIUM_MAX,
   priceBoundOf,
 } from "./filterstate.js";
 import { rangeRow, checkboxGroup, searchableMultiSelect, openPopover, closePopover } from "./filters.js";
@@ -26,6 +29,12 @@ const fmtKr = (bound) => (v) => (v >= bound ? "Av" : NOK.format(v) + " kr");
 // "vocab:<key>" reads ctx.vocabs (deriveVocabs output).
 export const COLUMN_FILTERS = {
   pris: { kind: "slider-max", stateKey: "priceMax", bound: (ctx) => priceBoundOf(ctx.meta), step: 50000, fmt: "kr" },
+  pris_kvm: { kind: "slider-max", stateKey: "prisKvmMax", bound: () => PRIS_KVM_MAX, step: 1000, fmt: "kr" },
+  sold_price: { kind: "slider-max", stateKey: "soldPriceMax", bound: () => SOLD_PRICE_MAX, step: 100000, fmt: "kr" },
+  premium: {
+    kind: "slider-max", stateKey: "premiumMax", bound: () => PREMIUM_MAX, step: 1,
+    fmtFn: (bound) => (v) => (v >= bound ? "Av" : "≤ +" + v + " %"),
+  },
   totalpris: { kind: "slider-max", stateKey: "totalprisMax", bound: () => TOTALPRIS_MAX, step: 100000, fmt: "kr" },
   pris_kvm_totalpris: { kind: "slider-max", stateKey: "totalKvmMax", bound: () => TOTAL_KVM_MAX, step: 1000, fmt: "kr" },
   felleskost_mnd: { kind: "slider-max", stateKey: "felleskostMax", bound: () => FELLESKOST_MAX, step: 250, fmt: "kr" },
@@ -88,7 +97,7 @@ function buildBody(pop, desc, ctx) {
         max: bound,
         step: desc.step,
         value: f[desc.stateKey],
-        fmt: fmtKr(bound),
+        fmt: desc.fmtFn ? desc.fmtFn(bound) : fmtKr(bound),
         onInput: (v) => {
           f[desc.stateKey] = v;
           ctx.onChange();

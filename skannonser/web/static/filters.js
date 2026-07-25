@@ -19,9 +19,13 @@ import {
   BYGGEAAR_CEIL,
   TOTAL_KVM_MAX,
   MAANEDSKOST_MAX,
+  PRIS_KVM_MAX,
+  SOLD_PRICE_MAX,
+  PREMIUM_MAX,
   priceBoundOf,
 } from "./filterstate.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
+import { premiumPct } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -81,6 +85,20 @@ export function listingExcluded(item, filters, meta) {
   if (underMin(item.byggeaar, f.byggeaarMin, BYGGEAAR_FLOOR)) return true;
   if (overMax(item.pris_kvm_totalpris, f.totalKvmMax, TOTAL_KVM_MAX)) return true;
   if (overMax(item.maanedskost, f.maanedskostMax, MAANEDSKOST_MAX)) return true;
+  if (overMax(item.pris_kvm, f.prisKvmMax, PRIS_KVM_MAX)) return true;
+  // Sold-outcome filters apply ONLY to sold items -- actives structurally
+  // lack these fields, and must never be swept out by includeUnknown=false.
+  if (item.sold) {
+    if (overMax(item.sold_price, f.soldPriceMax, SOLD_PRICE_MAX)) return true;
+    if ((f.premiumMax ?? PREMIUM_MAX) < PREMIUM_MAX) {
+      const pct = premiumPct(item);
+      if (pct == null) {
+        if (unknownFails) return true;
+      } else if (pct > f.premiumMax) {
+        return true;
+      }
+    }
+  }
 
   // Hidden sets with explicit "" buckets.
   if (hiddenSetExcludes(f.boligtypeHidden, item.boligtype || "")) return true;
