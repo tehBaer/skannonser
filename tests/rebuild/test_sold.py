@@ -1047,3 +1047,26 @@ def test_inaktiv_reserve_charges_no_attempt_to_solgt_skipped_by_subcap(conn):
         assert ledger[f"s{i}"][0] == 1
     for i in range(2):
         assert ledger[f"i{i}"][0] == 1
+
+
+def test_solgt_sub_cap_clamps_to_overall_budget_at_zero(conn):
+    # Bug fix: with max_requests=0 and both tiers eligible, the old subcap
+    # logic max(1, 0 - 2) = 1 would allocate 1 request to solgt despite the
+    # overall budget being 0. The fix min(max(1, ...), max_requests) clamps it
+    # to 0, enforcing the invariant: solgt_used + inaktiv_used never exceeds
+    # max_requests, even when max_requests <= 0.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    solgt = _spread("s", 3, "solgt")
+    inaktiv = _spread("i", 3, "inaktiv", lat0=61.0, lng0=12.0)
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=_no_match_fetch,
+        targets=solgt + inaktiv,
+        max_requests=0,
+        inaktiv_reserve=2,
+    )
+
+    assert stats["tiles_queried"] == 0
+    assert _attempts(conn) == {}  # no attempts recorded at all

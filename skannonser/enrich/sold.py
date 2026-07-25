@@ -474,13 +474,14 @@ def run_sold_sweep(
 
     # Solgt gets the reserved-off cap (or the full budget if Inaktiv is empty
     # -- never waste the reserve on an empty tier); max(1, ...) guarantees
-    # Solgt is never fully starved even when max_requests <= inaktiv_reserve.
+    # Solgt is never fully starved even when max_requests <= inaktiv_reserve,
+    # but min(..., max_requests) ensures the sub-cap never exceeds the overall budget.
     if max_requests is None:
         solgt_cap = None
     elif not has_inaktiv:
         solgt_cap = max_requests
     else:
-        solgt_cap = max(1, max_requests - inaktiv_reserve)
+        solgt_cap = min(max(1, max_requests - inaktiv_reserve), max_requests)
 
     solgt_used, solgt_exhausted = run_phase(solgt_targets, solgt_cap)
 
