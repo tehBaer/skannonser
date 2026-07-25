@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addListingGroups, buildGroups } from "../../skannonser/web/static/map.js";
+import { addListingGroups, buildGroups, setSoldColorMode } from "../../skannonser/web/static/map.js";
 
 // Minimal stand-in for a MapLibre map: records the order layers are added.
 function fakeMap() {
@@ -48,4 +48,43 @@ test("the inactive X is added after the closed dot it marks", () => {
   const x = map.added.findIndex((id) => id.endsWith("-inactive-x"));
   const sold = map.added.findIndex((id) => id.endsWith("-sold"));
   assert.ok(sold < x && x !== -1, "X must draw over its dot");
+});
+
+test("closed dots are hollow: no fill, a thick boligtype-coloured ring", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const specs = [];
+  const map = fakeMap();
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  const sold = specs.find((s) => s.id.endsWith("-sold"));
+  assert.equal(sold.paint["circle-opacity"], 0, "no fill");
+  assert.equal(sold.paint["circle-stroke-color"], "#0f4c81", "ring carries the boligtype colour");
+  assert.ok(sold.paint["circle-stroke-width"] >= 3, "ring must be thick enough to read");
+});
+
+test("budpremie mode recolours the ring, not the fill, and spares inactive dots", () => {
+  // buildGroups always appends an "__unknown__" fallback type and splits each
+  // type into active/sold/both variants (see buildGroups' own doc comment) --
+  // neither is what this test is about, so narrow to the one Enebolig group
+  // that actually carries hasSold, to isolate setSoldColorMode's per-group
+  // stroke-colour behaviour from that unrelated fan-out.
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" }).filter(
+    (g) => g.type === "Enebolig" && g.hasSold && !g.hasActive
+  );
+  const writes = [];
+  const map = fakeMap();
+  map.getLayer = () => ({});
+  map.setPaintProperty = (id, prop, value) => writes.push({ id, prop, value });
+
+  setSoldColorMode(map, groups, true);
+  assert.ok(writes.length > 0, "at least one closed layer is recoloured");
+  assert.ok(writes.every((w) => w.prop === "circle-stroke-color"),
+    "hollow dots carry their colour on the stroke");
+  assert.ok(JSON.stringify(writes[0].value).includes("#0f4c81"),
+    "inactive dots keep the boligtype colour even in budpremie mode");
+
+  writes.length = 0;
+  setSoldColorMode(map, groups, false);
+  assert.deepEqual(writes.map((w) => w.value), ["#0f4c81"]);
 });

@@ -210,10 +210,10 @@ const RING_R = DOT_R + 6;
 export const SQUARE_PX = Math.round(DOT_R * 2.55);
 const X_PX = Math.round(DOT_R * 2);
 
-// Border convention: ACTIVE listings get a black border, SOLD keep a white
-// border (both are coloured by boligtype).
+// Border convention: ACTIVE listings are solid boligtype-coloured dots with a
+// dark border. CLOSED listings are hollow rings in the same colour (see the
+// -sold layer paint).
 const ACTIVE_BORDER = "#111111";
-const SOLD_BORDER = "#ffffff";
 
 const IS_CLOSED = ["==", ["get", "closed"], true];
 const NOT_CLOSED = ["==", ["get", "closed"], false];
@@ -239,9 +239,10 @@ export const PREMIUM_LEGEND = [
   { color: "#b9c4be", label: "Ingen tinglyst pris ennå" },
 ];
 
-// Flip every "-sold" layer between boligtype colour and the budpremie scale.
-// The premium scale only applies to genuine sales; inactive/trukket dots (no
-// sale, never a premium) keep their boligtype colour in both modes.
+// Flip every closed layer between boligtype colour and the budpremie scale.
+// Closed dots are hollow, so the colour lives on the stroke. The premium scale
+// applies only to genuine sales; inactive/trukket dots never had a premium and
+// keep their boligtype colour in both modes.
 export function setSoldColorMode(map, groups, premiumOn) {
   groups.forEach((g) => {
     if (!g.hasSold) return;
@@ -249,16 +250,17 @@ export function setSoldColorMode(map, groups, premiumOn) {
     if (!map.getLayer(layerId)) return;
     map.setPaintProperty(
       layerId,
-      "circle-color",
+      "circle-stroke-color",
       premiumOn ? ["case", ["==", ["get", "sold"], true], PREMIUM_COLOR, g.color] : g.color
     );
   });
 }
 
 // Adds one clustered source per group, with unclustered GL layers. Both active
-// and sold are coloured by their boligtype (g.color); active gets a dark border,
-// sold a white border. Layers are gated by g.hasActive/g.hasSold so a "both"
-// source renders active AND sold, while active/sold variants render just one.
+// and sold are coloured by their boligtype (g.color); active is a filled dot
+// with a dark border, sold is a hollow ring in the same colour. Layers are
+// gated by g.hasActive/g.hasSold so a "both" source renders active AND sold,
+// while active/sold variants render just one.
 export function addListingGroups(map, groups, onListingClick) {
   const clickLayers = [];
 
@@ -288,7 +290,10 @@ export function addListingGroups(map, groups, onListingClick) {
     // op_sum (avg member opacity). GL paint expressions read clusterProperties
     // reliably and GL opacity actually renders -- unlike DOM-marker opacity,
     // which MapLibre overwrites. The DOM marker on top carries only the count.
-    const clusterBorder = g.hasSold && !g.hasActive ? SOLD_BORDER : ACTIVE_BORDER;
+    // Clusters aggregate many features into one bubble, so hollow-vs-filled
+    // (a per-dot distinction) doesn't apply here -- every cluster bubble gets
+    // the same dark border regardless of what's inside it.
+    const clusterBorder = ACTIVE_BORDER;
     const clusterOpacity = [
       "max",
       0.15, // floor so a fully-dimmed cluster stays faintly visible
@@ -341,11 +346,16 @@ export function addListingGroups(map, groups, onListingClick) {
       source: g.id,
       filter: ["all", NOT_CLUSTER, IS_CLOSED],
       paint: {
-        "circle-color": g.color, // sold AND inactive: boligtype colour (inactive adds an X on top)
+        // Hollow on purpose. A lighter tint of the same hue measured 2.94:1
+        // against the active dot and read as "same thing, faded" -- a dimmed
+        // orange even landed on the colour of an ACTIVE tomannsbolig. Filled
+        // vs hollow is a shape difference, so it survives the nedtoning
+        // slider and cannot be confused with another boligtype.
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-opacity": 0,
         "circle-radius": CLOSED_R,
-        "circle-stroke-width": 1.5,
-        "circle-stroke-color": SOLD_BORDER, // sold = white border
-        "circle-opacity": OP,
+        "circle-stroke-width": 3,
+        "circle-stroke-color": g.color,
         "circle-stroke-opacity": OP,
       },
     });
