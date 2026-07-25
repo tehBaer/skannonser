@@ -185,11 +185,19 @@ for the CLI itself in dev, but the deployed services run in Docker (`docker-comp
   reports them separately as `neighbours_stored`. Caveat: a neighbour's
   `price_suggestion` is the asking price **at sale time** (possibly already
   reduced), not first-seen asking — that lives in `eiendom.pris` and only for
-  listings we track. The map popup surfaces these as a lazily-fetched
-  **"Solgt i nabolaget"** section (`GET /api/listings/{finnkode}/nabolag`,
-  newest first, capped at 15); data accumulates from sweep responses only —
-  there's no backfill — so most listings read "ingen registrerte nabolagssalg
-  ennå" at first.
+  listings we track. One side effect worth knowing: an Inaktiv listing that's
+  aged past the grace window (displayed "Trukket") can still acquire a price
+  via neighbour discovery — even though it can never itself be a sweep target
+  — and `_derived_status` then promotes it straight to "Solgt", moving it
+  between map buckets with no sweep request ever centered on it. The map
+  popup surfaces these as a lazily-fetched **"Solgt i nabolaget"** section
+  (`GET /api/listings/{finnkode}/nabolag`, newest first, capped at 15); data
+  accumulates from sweep responses only — there's no backfill — so most
+  listings read "ingen registrerte nabolagssalg ennå" at first. The section
+  only ever renders for **closed** listings (Solgt/Inaktiv/Trukket) — an
+  active listing's `discovered_near_finnkode` is empty by construction, since
+  only closed listings can anchor a sweep box, so the popup skips the request
+  entirely for active listings.
   Each request queries a tight ~120 m box centered on one target listing (with
   one adaptive shrink if the target is crowded out of the 15-card cap). On throttle
   (429/403/503 or a block page) it **suspends itself, persists that, and pings
