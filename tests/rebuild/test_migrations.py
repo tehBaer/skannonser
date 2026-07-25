@@ -15,7 +15,7 @@ ALL_MIGRATIONS = [
     "001_adopt_live_schema", "002_notify_tables", "003_api_usage",
     "004_dnb_travel", "005_annotations", "006_sold_prices",
     "007_sold_sweep_state", "008_postnummer_pad", "009_sold_attempts",
-    "010_listing_details", "011_neighbour_sold",
+    "010_listing_details", "011_neighbour_sold", "012_neighbour_sold_index",
 ]
 
 
@@ -251,6 +251,15 @@ def test_migration_011_adds_columns_to_populated_sold_prices_table(tmp_path):
         assert row["collective_debt"] is None
         assert row["ownership_type"] is None
         assert row["discovered_near_finnkode"] is None
+
+
+def test_migration_012_indexes_discovered_near_finnkode(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    ran = migrations.migrate(conn)
+    assert "012_neighbour_sold_index" in ran
+    indexes = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sold_prices'")}
+    assert "idx_sold_prices_discovered_near" in indexes
 
 
 def test_statements_keeps_trigger_block_intact():
