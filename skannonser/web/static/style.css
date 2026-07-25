@@ -536,4 +536,19 @@ details.subgroup > summary {
    two tidy lines whether or not it has a size. */
 .sk-nabolag-row { font-size: 12px; margin: 0 0 5px; }
 .sk-nabolag-row .muted { display: block; }
+
+/* --- tag quick-chips (2026-07-25 UI polish round 2) --- */
+.tag-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.tag-chip {
+  border: 1px solid var(--tag-color);
+  background: var(--tag-color);
+  color: #fff;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tag-chip.off { background: transparent; color: var(--tag-color); opacity: 0.55; }
 .sk-nabolag-more { margin: 0 0 4px; font-size: 12px; }

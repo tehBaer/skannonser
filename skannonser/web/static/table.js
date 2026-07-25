@@ -7,7 +7,8 @@
 
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
-import { listingExcluded, deriveVocabs } from "./filters.js";
+import { listingExcluded, deriveVocabs, tagChipRow } from "./filters.js";
+import { assignTagColors } from "./tagcolors.js";
 import {
   loadFilters,
   saveFilters,
@@ -109,6 +110,7 @@ function onFilterChange() {
 
 function refreshVocabs() {
   state.vocabs = deriveVocabs(state.items);
+  state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
 }
 
 function fmtPris(value) {
@@ -405,6 +407,16 @@ function buildRow(item) {
 
 function render() {
   renderHead();
+  const chipMount = document.getElementById("table-tag-chips");
+  if (chipMount) {
+    chipMount.innerHTML = "";
+    tagChipRow(chipMount, {
+      options: state.vocabs.tags,
+      hidden: state.filters.tagHidden,
+      tagColors: state.tagColors,
+      onChange: onFilterChange,
+    });
+  }
   const body = document.getElementById("table-body");
   body.innerHTML = "";
   const rows = visibleRows();
