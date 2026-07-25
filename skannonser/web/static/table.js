@@ -7,7 +7,7 @@
 
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
-import { listingExcluded, deriveVocabs, tagChipRow } from "./filters.js";
+import { listingExcluded, deriveVocabs, tagChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   loadFilters,
@@ -82,6 +82,37 @@ const COLUMNS = [
   { key: "tag", label: "Tag", sortable: true },
 ];
 
+// Column picker (2026-07-25 spec §7): first-run default hides the noise
+// columns (Pris/Felleskost are semi-redundant with Totalpris/Mnd-kost).
+// Adresse and Kart are load-bearing (identity + map handoff) -- not hideable.
+const DEFAULT_HIDDEN_COLUMNS = ["postnummer", "pris", "felleskost_mnd", "soverom", "etasje"];
+const ALWAYS_VISIBLE_COLUMNS = new Set(["adresse", "kart"]);
+
+function loadHiddenColumns() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const stored = raw ? JSON.parse(raw).hiddenColumns : null;
+    return new Set(Array.isArray(stored) ? stored : DEFAULT_HIDDEN_COLUMNS);
+  } catch (_) {
+    return new Set(DEFAULT_HIDDEN_COLUMNS);
+  }
+}
+
+function saveHiddenColumns() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const blob = raw ? JSON.parse(raw) : {};
+    blob.hiddenColumns = [...state.hiddenColumns];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+  } catch (_) {
+    /* storage may be unavailable; non-fatal */
+  }
+}
+
+function visibleColumns() {
+  return COLUMNS.filter((c) => !state.hiddenColumns.has(c.key));
+}
+
 const state = {
   items: [], // all loaded items (eie + dnb, + sold once toggled on)
   soldLoaded: false,
@@ -92,6 +123,7 @@ const state = {
   meta: null,
   filters: null,
   vocabs: null,
+  hiddenColumns: loadHiddenColumns(),
 };
 
 function filterCtx() {
@@ -223,7 +255,7 @@ function el(tag, cls, text) {
 function renderHead() {
   const row = document.getElementById("table-head-row");
   row.innerHTML = "";
-  COLUMNS.forEach((col) => {
+  visibleColumns().forEach((col) => {
     const th = el("th", null, col.label);
     if (col.sortable) {
       th.classList.add("sortable");
@@ -316,7 +348,7 @@ function wireCellEdit(input, item, field) {
 function buildRow(item) {
   const tr = el("tr", item.sold ? "sold-row" : item.closed ? "inactive-row" : null);
 
-  COLUMNS.forEach((col) => {
+  visibleColumns().forEach((col) => {
     const td = el("td");
     switch (col.key) {
       case "adresse": {
@@ -478,6 +510,33 @@ function wireToolbar() {
     facBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       openFacilitiesPopover(facBtn, filterCtx());
+    });
+  }
+
+  const colsBtn = document.getElementById("table-columns-btn");
+  if (colsBtn) {
+    colsBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openPopover(colsBtn, (pop) => {
+        const wrap = el("div", "filter-row checkbox-group");
+        wrap.appendChild(el("div", "filter-head", "Vis kolonner"));
+        COLUMNS.filter((c) => !ALWAYS_VISIBLE_COLUMNS.has(c.key)).forEach((col) => {
+          const row = el("label", "toggle");
+          const cb = el("input");
+          cb.type = "checkbox";
+          cb.checked = !state.hiddenColumns.has(col.key);
+          cb.addEventListener("change", () => {
+            if (cb.checked) state.hiddenColumns.delete(col.key);
+            else state.hiddenColumns.add(col.key);
+            saveHiddenColumns();
+            render();
+          });
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode(col.label));
+          wrap.appendChild(row);
+        });
+        pop.appendChild(wrap);
+      });
     });
   }
 
