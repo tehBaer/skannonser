@@ -522,3 +522,10 @@ details.subgroup > summary {
   color: #fff;
 }
 .inactive-row td { color: var(--muted, #8a938c); }
+
+/* --- Solgt i nabolaget (2026-07-25) --- */
+.sk-nabolag { padding: 6px 10px 2px; border-top: 1px solid rgba(0, 0, 0, 0.08); }
+.sk-nabolag-head { margin: 0 0 4px; font-size: 12px; font-weight: 700; }
+.sk-nabolag-empty { margin: 0 0 4px; font-size: 12px; }
+.sk-nabolag-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin: 2px 0; }
+.sk-nabolag-row .muted { white-space: nowrap; }

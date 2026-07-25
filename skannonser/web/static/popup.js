@@ -47,6 +47,47 @@ function addRow(dl, label, value) {
 }
 
 
+// "Solgt i nabolaget": sales the sold-price sweep discovered in this
+// listing's ~120 m query boxes -- incl. sales we never tracked. Lazy: the
+// fetch fires when the popup is built and fills in when it lands. Data
+// accumulates from sweep responses only (no backfill exists), so this reads
+// "ingen … ennå" for most listings at first.
+function buildNabolagSection(item) {
+  const wrap = el("div", "sk-nabolag");
+  if (item.source === "dnb") return wrap; // DNB ids never anchor sweep boxes
+  fetch("/api/listings/" + encodeURIComponent(item.finnkode) + "/nabolag")
+    .then((resp) => (resp.ok ? resp.json() : { sales: [] }))
+    .then(({ sales }) => {
+      const head = el("p", "sk-nabolag-head", "Solgt i nabolaget" + (sales.length ? " (" + sales.length + ")" : ""));
+      wrap.appendChild(head);
+      if (!sales.length) {
+        wrap.appendChild(el("p", "muted sk-nabolag-empty", "ingen registrerte nabolagssalg ennå"));
+        return;
+      }
+      sales.slice(0, 5).forEach((s) => {
+        const row = el("div", "sk-nabolag-row");
+        if (s.tracked) {
+          const a = el("a", null, s.address || s.finnkode);
+          a.href = "/#finnkode=" + encodeURIComponent(s.finnkode);
+          row.appendChild(a);
+        } else {
+          row.appendChild(el("span", null, s.address || "(ukjent adresse)"));
+        }
+        const parts = [];
+        if (s.sold_price) parts.push(NOK.format(s.sold_price) + " kr");
+        if (s.price_per_m2) parts.push(NOK.format(s.price_per_m2) + "/m²");
+        const date = fmtDate(s.sold_date);
+        if (date) parts.push(date);
+        row.appendChild(el("span", "muted", parts.join(" · ")));
+        wrap.appendChild(row);
+      });
+    })
+    .catch(() => {
+      /* popup stays useful without the section; no error noise */
+    });
+  return wrap;
+}
+
 // destinations: [{key,label}] from /api/meta (for the travel-minute rows).
 export function buildPopupContent(item, destinations) {
   const root = el("div", "sk-popup");
@@ -158,6 +199,7 @@ export function buildPopupContent(item, destinations) {
   if (links.childNodes.length) body.appendChild(links);
 
   root.appendChild(body);
+  root.appendChild(buildNabolagSection(item));
   root.appendChild(buildEditor(item));
   return root;
 }
