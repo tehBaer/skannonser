@@ -194,6 +194,16 @@ def test_repo_upsert_updates_sold_price_on_non_null_correction(conn):
     ).fetchone()
     assert row["sold_price"] == 6600000
 
+    # The same fill-only semantics apply to cadastral_sold_date: a corrected
+    # (non-null) date must also land on re-fetch.
+    corrected2 = dict(_CARD, cadastralSoldDate="2026-07-05")
+    repo.upsert([parse_sold_card(corrected2)])
+
+    row = conn.execute(
+        "SELECT cadastral_sold_date FROM sold_prices WHERE finnkode = '463400207'"
+    ).fetchone()
+    assert row["cadastral_sold_date"] == "2026-07-05"
+
 
 def test_repo_persists_card_facts_and_anchor(conn):
     repo = SoldPricesRepo(conn)

@@ -130,6 +130,17 @@ def test_migration_004_adds_dnb_travel_columns(tmp_path):
     assert {"pendl_rush_brj", "pendl_rush_mvv"} <= cols
 
 
+def test_migration_011_adds_neighbour_sold_columns(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    ran = migrations.migrate(conn)
+    assert "011_neighbour_sold" in ran
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(sold_prices)")}
+    assert {
+        "size", "property_type", "bedrooms", "collective_debt",
+        "ownership_type", "discovered_near_finnkode"
+    } <= cols
+
+
 def test_migration_005_creates_annotations_table(tmp_path):
     conn = connection.connect(tmp_path / "fresh.db")
     ran = migrations.migrate(conn)
@@ -178,6 +189,68 @@ def test_migration_008_pads_legacy_stripped_postnummer(tmp_path):
     }
     dnb_pc = conn.execute("SELECT postnummer FROM dnbeiendom").fetchone()["postnummer"]
     assert dnb_pc == "0172"
+
+
+def test_migration_011_adds_columns_to_populated_sold_prices_table(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    # Run migrations up to 010 only (excluding 011).
+    ran = migrations.migrate(conn)
+    assert "011_neighbour_sold" in ran
+    # Remove 011 from the record to simulate a pre-011 state.
+    conn.execute("DELETE FROM schema_migrations WHERE id = '011_neighbour_sold'")
+    # Simulate dropping the columns that 011 added by recreating the table
+    # with just the pre-011 columns. Use a temporary table approach.
+    conn.executescript("""
+        CREATE TABLE sold_prices_pre011 (
+            finnkode TEXT PRIMARY KEY,
+            sold_price INTEGER,
+            sold_date TEXT,
+            cadastral_sold_date TEXT,
+            price_suggestion INTEGER,
+            address TEXT,
+            source TEXT NOT NULL DEFAULT 'finn_map',
+            fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO sold_prices_pre011
+            SELECT finnkode, sold_price, sold_date, cadastral_sold_date,
+                   price_suggestion, address, source, fetched_at, updated_at
+            FROM sold_prices;
+        DROP TABLE sold_prices;
+        ALTER TABLE sold_prices_pre011 RENAME TO sold_prices;
+    """)
+    # Seed pre-011 rows into the now-simplified sold_prices table.
+    conn.executemany(
+        "INSERT INTO sold_prices (finnkode, sold_price, cadastral_sold_date) VALUES (?, ?, ?)",
+        [
+            ("123456789", 5000000, "2026-01-15"),
+            ("987654321", 4500000, "2026-02-20"),
+        ],
+    )
+    conn.commit()
+
+    assert migrations.migrate(conn) == ["011_neighbour_sold"]
+
+    # Pre-existing rows survive with their original values intact
+    rows = {
+        r["finnkode"]: (r["sold_price"], r["cadastral_sold_date"])
+        for r in conn.execute(
+            "SELECT finnkode, sold_price, cadastral_sold_date FROM sold_prices"
+        )
+    }
+    assert rows == {
+        "123456789": (5000000, "2026-01-15"),
+        "987654321": (4500000, "2026-02-20"),
+    }
+
+    # New columns are present and NULL for existing rows
+    for row in conn.execute("SELECT * FROM sold_prices"):
+        assert row["size"] is None
+        assert row["property_type"] is None
+        assert row["bedrooms"] is None
+        assert row["collective_debt"] is None
+        assert row["ownership_type"] is None
+        assert row["discovered_near_finnkode"] is None
 
 
 def test_statements_keeps_trigger_block_intact():
