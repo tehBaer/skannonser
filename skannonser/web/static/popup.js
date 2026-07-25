@@ -53,8 +53,8 @@ function addRow(dl, label, value) {
 // accumulates from sweep responses only (no backfill exists), so this reads
 // "ingen … ennå" for most listings at first.
 function buildNabolagSection(item) {
+  if (item.source === "dnb") return null; // DNB ids never anchor sweep boxes
   const wrap = el("div", "sk-nabolag");
-  if (item.source === "dnb") return wrap; // DNB ids never anchor sweep boxes
   fetch("/api/listings/" + encodeURIComponent(item.finnkode) + "/nabolag")
     .then((resp) => (resp.ok ? resp.json() : { sales: [] }))
     .then(({ sales }) => {
@@ -199,7 +199,8 @@ export function buildPopupContent(item, destinations) {
   if (links.childNodes.length) body.appendChild(links);
 
   root.appendChild(body);
-  root.appendChild(buildNabolagSection(item));
+  const nabolagSection = buildNabolagSection(item);
+  if (nabolagSection) root.appendChild(nabolagSection);
   root.appendChild(buildEditor(item));
   return root;
 }
