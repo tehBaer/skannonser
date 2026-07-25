@@ -247,6 +247,13 @@ export function setSoldColorMode(map, groups, premiumOn) {
 // source renders active AND sold, while active/sold variants render just one.
 export function addListingGroups(map, groups, onListingClick) {
   const clickLayers = [];
+
+  // Layers are added in five passes rather than one per group, because add
+  // order IS z-order in MapLibre. Per-group ordering put every later boligtype
+  // over every earlier one, and closed dots over active ones -- with 4.5x more
+  // closed than active listings in production, that buried exactly the dots
+  // that matter. Passes: sources -> clusters -> rings -> closed -> active.
+
   groups.forEach((g) => {
     map.addSource(g.id, {
       type: "geojson",
@@ -260,7 +267,9 @@ export function addListingGroups(map, groups, onListingClick) {
         op_sum: ["+", ["get", "op"]],
       },
     });
+  });
 
+  groups.forEach((g) => {
     // GL cluster bubble: colour + border + OPACITY driven by the aggregated
     // op_sum (avg member opacity). GL paint expressions read clusterProperties
     // reliably and GL opacity actually renders -- unlike DOM-marker opacity,
@@ -288,7 +297,9 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-stroke-opacity": clusterOpacity,
       },
     });
+  });
 
+  groups.forEach((g) => {
     // Tagged-listing ring: a hollow circle slightly larger than the dot,
     // drawn BENEATH the dot layers (added first) so it reads as a halo.
     // Stroke colour is the TAG's own colour (tagcolors.js) -- features
@@ -306,67 +317,73 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-stroke-opacity": ["min", 0.9, OP],
       },
     });
-
-    if (g.hasActive) {
-      map.addLayer({
-        id: g.id + "-eie",
-        type: "circle",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "eie"]],
-        paint: {
-          "circle-color": g.color,
-          "circle-radius": 7,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": ACTIVE_BORDER, // active = dark border
-          "circle-opacity": OP,
-          "circle-stroke-opacity": OP,
-        },
-      });
-      map.addLayer({
-        id: g.id + "-dnb",
-        type: "symbol",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "dnb"]],
-        layout: {
-          "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
-          "icon-size": 1,
-          "icon-allow-overlap": true,
-        },
-        paint: { "icon-opacity": OP },
-      });
-      clickLayers.push(g.id + "-eie", g.id + "-dnb");
-    }
-    if (g.hasSold) {
-      map.addLayer({
-        id: g.id + "-sold",
-        type: "circle",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, IS_CLOSED],
-        paint: {
-          "circle-color": g.color, // sold AND inactive: boligtype colour (inactive adds an X on top)
-          "circle-radius": 6,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": SOLD_BORDER, // sold = white border
-          "circle-opacity": OP,
-          "circle-stroke-opacity": OP,
-        },
-      });
-      map.addLayer({
-        id: g.id + "-inactive-x",
-        type: "symbol",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, IS_CLOSED, ["!=", ["get", "sold"], true]],
-        layout: {
-          "icon-image": ensureXIcon(map),
-          "icon-size": 0.75,
-          "icon-allow-overlap": true,
-        },
-        paint: { "icon-opacity": OP },
-      });
-      clickLayers.push(g.id + "-sold");
-    }
   });
 
+  groups.forEach((g) => {
+    if (!g.hasSold) return;
+    map.addLayer({
+      id: g.id + "-sold",
+      type: "circle",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, IS_CLOSED],
+      paint: {
+        "circle-color": g.color, // sold AND inactive: boligtype colour (inactive adds an X on top)
+        "circle-radius": 6,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": SOLD_BORDER, // sold = white border
+        "circle-opacity": OP,
+        "circle-stroke-opacity": OP,
+      },
+    });
+    map.addLayer({
+      id: g.id + "-inactive-x",
+      type: "symbol",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, IS_CLOSED, ["!=", ["get", "sold"], true]],
+      layout: {
+        "icon-image": ensureXIcon(map),
+        "icon-size": 0.75,
+        "icon-allow-overlap": true,
+      },
+      paint: { "icon-opacity": OP },
+    });
+    clickLayers.push(g.id + "-sold");
+  });
+
+  groups.forEach((g) => {
+    if (!g.hasActive) return;
+    map.addLayer({
+      id: g.id + "-eie",
+      type: "circle",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "eie"]],
+      paint: {
+        "circle-color": g.color,
+        "circle-radius": 7,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": ACTIVE_BORDER, // active = dark border
+        "circle-opacity": OP,
+        "circle-stroke-opacity": OP,
+      },
+    });
+    map.addLayer({
+      id: g.id + "-dnb",
+      type: "symbol",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "dnb"]],
+      layout: {
+        "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
+        "icon-size": 1,
+        "icon-allow-overlap": true,
+      },
+      paint: { "icon-opacity": OP },
+    });
+    clickLayers.push(g.id + "-eie", g.id + "-dnb");
+  });
+
+  // UNCHANGED: the existing trailing block that wires click / mouseenter /
+  // mouseleave over clickLayers stays exactly as it is, at the end of the
+  // function. addListingGroups returns nothing -- do not add a return.
   clickLayers.forEach((layerId) => {
     map.on("click", layerId, (e) => {
       const f = e.features && e.features[0];
