@@ -107,6 +107,10 @@ function buildNabolagSection(item) {
           el("p", "muted sk-nabolag-more", "viser " + shown.length + " av " + sales.length)
         );
       }
+      // The pre-rendered empty state covers the common case, but a listing
+      // that DOES have neighbours grows by up to five rows after the pan has
+      // already measured. Tell the map to re-pan; app.js owns the how.
+      wrap.dispatchEvent(new CustomEvent("sk-popup-resized", { bubbles: true }));
     })
     .catch(() => {
       /* popup stays useful without the section; no error noise */

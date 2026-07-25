@@ -342,6 +342,9 @@ function openPopup(finnkode, coordinates) {
   const item = state.itemsById.get(finnkode);
   if (!item) return;
   const content = buildPopupContent(item, state.destinations);
+  // Sections that fill in asynchronously (Solgt i nabolaget) grow the popup
+  // after the pan below has measured it -- re-pan when they say so.
+  content.addEventListener("sk-popup-resized", () => panPopupIntoView());
   if (!state.popup) state.popup = new maplibregl.Popup({ maxWidth: "300px" });
   state.popup
     .setLngLat(coordinates || [item.lng, item.lat])
