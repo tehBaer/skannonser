@@ -181,6 +181,20 @@ def test_repo_upsert_is_fill_only_for_sold_price(conn):
     assert row["sold_price"] == 6450000
 
 
+def test_repo_upsert_updates_sold_price_on_non_null_correction(conn):
+    repo = SoldPricesRepo(conn)
+    repo.upsert([parse_sold_card(_CARD)])
+    # FINN issuing a corrected (non-null) price must still land -- unlike the
+    # discovery anchor, sold_price is fill-only, not first-wins-permanently.
+    corrected = dict(_CARD, cadastralSoldPrice=6600000)
+    repo.upsert([parse_sold_card(corrected)])
+
+    row = conn.execute(
+        "SELECT sold_price FROM sold_prices WHERE finnkode = '463400207'"
+    ).fetchone()
+    assert row["sold_price"] == 6600000
+
+
 def test_repo_persists_card_facts_and_anchor(conn):
     repo = SoldPricesRepo(conn)
     repo.upsert([{
