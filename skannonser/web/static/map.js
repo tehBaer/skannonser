@@ -290,10 +290,15 @@ export function addListingGroups(map, groups, onListingClick) {
     // op_sum (avg member opacity). GL paint expressions read clusterProperties
     // reliably and GL opacity actually renders -- unlike DOM-marker opacity,
     // which MapLibre overwrites. The DOM marker on top carries only the count.
-    // Clusters aggregate many features into one bubble, so hollow-vs-filled
-    // (a per-dot distinction) doesn't apply here -- every cluster bubble gets
-    // the same dark border regardless of what's inside it.
-    const clusterBorder = ACTIVE_BORDER;
+    // A cluster mixes many features, but a group is fanned out into
+    // active/sold/both variants (buildGroups), so a "sold" cluster source
+    // NEVER contains an active listing -- closed-only-ness is a property of
+    // the whole bubble, not a per-feature mix. So the same hollow-vs-filled
+    // convention as the dots applies: closed-only clusters get a transparent
+    // fill and a thick boligtype-coloured ring instead of a solid fill, so
+    // "filled = live, hollow = gone" reads at every zoom level. "Both"
+    // clusters stay filled -- they do contain active listings.
+    const closedOnly = g.hasSold && !g.hasActive;
     const clusterOpacity = [
       "max",
       0.15, // floor so a fully-dimmed cluster stays faintly visible
@@ -305,14 +310,18 @@ export function addListingGroups(map, groups, onListingClick) {
       source: g.id,
       filter: ["has", "point_count"],
       paint: {
-        "circle-color": g.color,
+        "circle-color": closedOnly ? "rgba(0,0,0,0)" : g.color,
         "circle-radius": [
           "interpolate", ["linear"], ["get", "point_count"],
           2, 14, 25, 19, 100, 25, 500, 30,
         ],
-        "circle-stroke-width": 2,
-        "circle-stroke-color": clusterBorder,
-        "circle-opacity": clusterOpacity,
+        // Cluster bubbles are much bigger than the 9px dots, so the dots' 3px
+        // ring would look thin/lost against a 14-30px radius bubble; 5px
+        // keeps the hollow ring legible at the smallest cluster size while
+        // still leaving a visible gap for the DOM count label to sit on.
+        "circle-stroke-width": closedOnly ? 5 : 2,
+        "circle-stroke-color": closedOnly ? g.color : ACTIVE_BORDER,
+        "circle-opacity": closedOnly ? 0 : clusterOpacity,
         "circle-stroke-opacity": clusterOpacity,
       },
     });

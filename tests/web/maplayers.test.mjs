@@ -88,3 +88,32 @@ test("budpremie mode recolours the ring, not the fill, and spares inactive dots"
   setSoldColorMode(map, groups, false);
   assert.deepEqual(writes.map((w) => w.value), ["#0f4c81"]);
 });
+
+test("closed-only cluster bubbles are hollow, mixed clusters stay filled", () => {
+  // buildGroups fans each boligtype into active/sold/both variants -- pick
+  // the sold-only Enebolig group (hasSold && !hasActive) for the hollow
+  // assertion, and the "both" variant (hasActive && hasSold) for the filled
+  // one, since that's the only variant genuinely containing active listings.
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const soldOnly = groups.find((g) => g.type === "Enebolig" && g.hasSold && !g.hasActive);
+  const both = groups.find((g) => g.type === "Enebolig" && g.hasActive && g.hasSold);
+  assert.ok(soldOnly && both, "buildGroups must produce both a sold-only and a both variant");
+
+  const specs = [];
+  const map = fakeMap();
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  const soldCluster = specs.find((s) => s.id === soldOnly.id + "-cluster");
+  const bothCluster = specs.find((s) => s.id === both.id + "-cluster");
+
+  assert.equal(soldCluster.paint["circle-opacity"], 0, "closed-only cluster has no fill");
+  assert.equal(soldCluster.paint["circle-stroke-color"], "#0f4c81",
+    "closed-only cluster ring carries the boligtype colour");
+  assert.ok(soldCluster.paint["circle-stroke-width"] > 2,
+    "closed-only cluster ring must be thicker than the default cluster border");
+
+  assert.notEqual(bothCluster.paint["circle-opacity"], 0, "mixed cluster keeps its fill");
+  assert.equal(bothCluster.paint["circle-stroke-color"], "#111111",
+    "mixed cluster keeps the dark border, not the hollow ring");
+});
