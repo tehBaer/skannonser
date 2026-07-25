@@ -348,7 +348,7 @@ function renderSourceLegend() {
 function openPopup(finnkode, coordinates) {
   const item = state.itemsById.get(finnkode);
   if (!item) return;
-  const content = buildPopupContent(item, state.destinations);
+  const content = buildPopupContent(item, state.destinations, state.tagColors);
   // Sections that fill in asynchronously (Solgt i nabolaget) grow the popup
   // after the pan below has measured it -- re-pan when they say so.
   content.addEventListener("sk-popup-resized", () => panPopupIntoView());

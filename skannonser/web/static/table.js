@@ -8,7 +8,7 @@
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, tagChipRow } from "./filters.js";
-import { assignTagColors } from "./tagcolors.js";
+import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   loadFilters,
   saveFilters,
@@ -386,6 +386,14 @@ function buildRow(item) {
         input.className = "cell-edit";
         wireCellEdit(input, item, col.key);
         td.appendChild(input);
+        if (col.key === "tag") {
+          // Saved-tag accent; a save triggers render() so this repaints.
+          const color = colorForTag(item.tag, state.tagColors || new Map());
+          if (color) {
+            td.style.boxShadow = "inset 3px 0 0 " + color;
+            td.style.background = color + "14"; // ~8% alpha tint
+          }
+        }
         break;
       }
       case "kart": {

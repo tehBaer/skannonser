@@ -552,3 +552,14 @@ details.subgroup > summary {
 }
 .tag-chip.off { background: transparent; color: var(--tag-color); opacity: 0.55; }
 .sk-nabolag-more { margin: 0 0 4px; font-size: 12px; }
+
+/* --- tag color accents: table cell + popup chip (Task 5, round 2) --- */
+.sk-popup .tag-chip-mini {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+  color: #fff;
+  margin-left: 6px;
+}
