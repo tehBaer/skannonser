@@ -250,8 +250,17 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 .sk-popup dt { color: var(--muted); }
 .sk-popup dd { margin: 0; text-align: right; }
 .sk-popup .links { display: flex; gap: 10px; margin: 8px 0; }
-.sk-popup .links a { color: var(--accent); text-decoration: none; }
-.sk-popup .links a:hover { text-decoration: underline; }
+.sk-popup .links a {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 12px;
+}
+.sk-popup .links a:hover { background: #0f5a44; }
 .sk-popup .source-tag {
   display: inline-block;
   font-size: 11px;
@@ -536,4 +545,37 @@ details.subgroup > summary {
    two tidy lines whether or not it has a size. */
 .sk-nabolag-row { font-size: 12px; margin: 0 0 5px; }
 .sk-nabolag-row .muted { display: block; }
+
+/* --- tag quick-chips (2026-07-25 UI polish round 2) --- */
+.tag-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.tag-chip {
+  border: 1px solid var(--tag-color);
+  background: var(--tag-color);
+  color: #fff;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tag-chip.off { background: transparent; color: var(--tag-color); opacity: 0.55; }
 .sk-nabolag-more { margin: 0 0 4px; font-size: 12px; }
+
+/* --- tag color accents: table cell + popup chip (Task 5, round 2) --- */
+.sk-popup .tag-chip-mini {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+  color: #fff;
+  margin-left: 6px;
+}
+
+/* Deep-linked row (map popup "Tabell" handoff): one attention flash. */
+@keyframes row-flash {
+  0% { background: #ffe9a8; }
+  100% { background: transparent; }
+}
+#listings-table tr.row-flash td { animation: row-flash 2.4s ease-out; }

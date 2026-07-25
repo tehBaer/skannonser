@@ -7,7 +7,8 @@
 
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
-import { listingExcluded, deriveVocabs } from "./filters.js";
+import { listingExcluded, deriveVocabs, tagChipRow, openPopover } from "./filters.js";
+import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   loadFilters,
   saveFilters,
@@ -23,9 +24,10 @@ import {
 } from "./tablefilters.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
-const STORAGE_KEY = "skannonser.ui.v1"; // shared with app.js -- only the
-// `sold` field is read/written here so the two pages agree on that one
-// toggle without either page needing to know the other's full UI-state shape.
+const STORAGE_KEY = "skannonser.ui.v1"; // shared with app.js -- this page
+// reads/writes `sold` and `hiddenColumns` in that blob (filters live there
+// too, via filterstate.js); neither page needs to know the other's full
+// UI-state shape, just its own fields within the shared blob.
 
 // Columns whose values are compared numerically (nulls always sort last,
 // regardless of sort direction -- see `compareItems`). Every other column
@@ -81,16 +83,51 @@ const COLUMNS = [
   { key: "tag", label: "Tag", sortable: true },
 ];
 
+// Column picker (2026-07-25 spec §7): first-run default hides the noise
+// columns (Pris/Felleskost are semi-redundant with Totalpris/Mnd-kost).
+// Adresse and Kart are load-bearing (identity + map handoff) -- not hideable.
+const DEFAULT_HIDDEN_COLUMNS = ["postnummer", "pris", "felleskost_mnd", "soverom", "etasje"];
+const ALWAYS_VISIBLE_COLUMNS = new Set(["adresse", "kart"]);
+
+function loadHiddenColumns() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const stored = raw ? JSON.parse(raw).hiddenColumns : null;
+    return new Set(Array.isArray(stored) ? stored : DEFAULT_HIDDEN_COLUMNS);
+  } catch (_) {
+    return new Set(DEFAULT_HIDDEN_COLUMNS);
+  }
+}
+
+function saveHiddenColumns() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const blob = raw ? JSON.parse(raw) : {};
+    blob.hiddenColumns = [...state.hiddenColumns];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
+  } catch (_) {
+    /* storage may be unavailable; non-fatal */
+  }
+}
+
+function visibleColumns() {
+  return COLUMNS.filter((c) => !state.hiddenColumns.has(c.key));
+}
+
 const state = {
   items: [], // all loaded items (eie + dnb, + sold once toggled on)
   soldLoaded: false,
   showSold: false, // tracks "Vis solgte" toggle state; sold items stay in items
+  focusFinnkode: null, // deep-linked row (map popup "Tabell" handoff): exempt from filters
   sortKey: "scraped_at", // newest first: the scanner's daily question
   sortDir: "desc",
   filterText: "",
   meta: null,
   filters: null,
   vocabs: null,
+  hiddenColumns: loadHiddenColumns(),
+  tagColors: new Map(), // assigned for real in refreshVocabs; declared here
+  // (matching app.js's state shape) so the field is self-documenting.
 };
 
 function filterCtx() {
@@ -109,6 +146,7 @@ function onFilterChange() {
 
 function refreshVocabs() {
   state.vocabs = deriveVocabs(state.items);
+  state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
 }
 
 function fmtPris(value) {
@@ -203,6 +241,7 @@ function matchesFilter(item, text) {
 
 function visibleRows() {
   const filtered = state.items.filter((item) => {
+    if (state.focusFinnkode && String(item.finnkode) === state.focusFinnkode) return true;
     if (!state.showSold && item.closed) return false;
     if (listingExcluded(item, state.filters, state.meta)) return false;
     return matchesFilter(item, state.filterText);
@@ -221,7 +260,7 @@ function el(tag, cls, text) {
 function renderHead() {
   const row = document.getElementById("table-head-row");
   row.innerHTML = "";
-  COLUMNS.forEach((col) => {
+  visibleColumns().forEach((col) => {
     const th = el("th", null, col.label);
     if (col.sortable) {
       th.classList.add("sortable");
@@ -313,8 +352,9 @@ function wireCellEdit(input, item, field) {
 
 function buildRow(item) {
   const tr = el("tr", item.sold ? "sold-row" : item.closed ? "inactive-row" : null);
+  tr.dataset.finnkode = item.finnkode;
 
-  COLUMNS.forEach((col) => {
+  visibleColumns().forEach((col) => {
     const td = el("td");
     switch (col.key) {
       case "adresse": {
@@ -384,6 +424,14 @@ function buildRow(item) {
         input.className = "cell-edit";
         wireCellEdit(input, item, col.key);
         td.appendChild(input);
+        if (col.key === "tag") {
+          // Saved-tag accent; a save triggers render() so this repaints.
+          const color = colorForTag(item.tag, state.tagColors || new Map());
+          if (color) {
+            td.style.boxShadow = "inset 3px 0 0 " + color;
+            td.style.background = color + "14"; // ~8% alpha tint
+          }
+        }
         break;
       }
       case "kart": {
@@ -405,6 +453,16 @@ function buildRow(item) {
 
 function render() {
   renderHead();
+  const chipMount = document.getElementById("table-tag-chips");
+  if (chipMount) {
+    chipMount.innerHTML = "";
+    tagChipRow(chipMount, {
+      options: state.vocabs.tags,
+      hidden: state.filters.tagHidden,
+      tagColors: state.tagColors,
+      onChange: onFilterChange,
+    });
+  }
   const body = document.getElementById("table-body");
   body.innerHTML = "";
   const rows = visibleRows();
@@ -461,6 +519,33 @@ function wireToolbar() {
     });
   }
 
+  const colsBtn = document.getElementById("table-columns-btn");
+  if (colsBtn) {
+    colsBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openPopover(colsBtn, (pop) => {
+        const wrap = el("div", "filter-row checkbox-group");
+        wrap.appendChild(el("div", "filter-head", "Vis kolonner"));
+        COLUMNS.filter((c) => !ALWAYS_VISIBLE_COLUMNS.has(c.key)).forEach((col) => {
+          const row = el("label", "toggle");
+          const cb = el("input");
+          cb.type = "checkbox";
+          cb.checked = !state.hiddenColumns.has(col.key);
+          cb.addEventListener("change", () => {
+            if (cb.checked) state.hiddenColumns.delete(col.key);
+            else state.hiddenColumns.add(col.key);
+            saveHiddenColumns();
+            render();
+          });
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode(col.label));
+          wrap.appendChild(row);
+        });
+        pop.appendChild(wrap);
+      });
+    });
+  }
+
   const unk = document.getElementById("table-include-unknown");
   if (unk) {
     unk.checked = state.filters.includeUnknown !== false;
@@ -478,6 +563,53 @@ function wireToolbar() {
       closePopover();
       onFilterChange();
     });
+  }
+}
+
+// Receiving end of the popup's "Tabell" deep link -- mirror of app.js's
+// handleHash. The focused row bypasses filters (a deep link onto an
+// empty-looking table reads as broken) and gets a flash so the eye lands.
+async function handleHash() {
+  const raw = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+  state.focusFinnkode = null;
+  if (!raw) {
+    render();
+    return;
+  }
+  const finnkode = raw.startsWith("finnkode=") ? raw.slice("finnkode=".length) : raw;
+  const byId = () => state.items.find((it) => String(it.finnkode) === finnkode);
+  let item = byId();
+  // Deep links to closed listings can arrive before the lazily-fetched
+  // sold bucket on a cold load -- pull it and retry (same race app.js solves).
+  if (!item && !state.soldLoaded) {
+    setStatus("Laster solgte …");
+    try {
+      state.items = state.items.concat(await fetchListings(1));
+      state.soldLoaded = true;
+      refreshVocabs();
+    } catch (_) {
+      /* fall through; not-found reported below */
+    }
+    item = byId();
+  }
+  if (!item) {
+    render();
+    setStatus("Fant ikke annonse " + finnkode);
+    return;
+  }
+  if (item.closed && !state.showSold) {
+    state.showSold = true;
+    const soldToggle = document.getElementById("table-sold");
+    if (soldToggle) soldToggle.checked = true;
+    saveSoldPref(true);
+  }
+  state.focusFinnkode = finnkode;
+  render();
+  const row = document.querySelector('tr[data-finnkode="' + finnkode + '"]');
+  if (row) {
+    row.scrollIntoView({ block: "center" });
+    row.classList.add("row-flash");
+    setTimeout(() => row.classList.remove("row-flash"), 2400);
   }
 }
 
@@ -520,6 +652,8 @@ async function init() {
     render();
   });
   render();
+  if (window.location.hash) await handleHash();
+  window.addEventListener("hashchange", handleHash);
 }
 
 init();

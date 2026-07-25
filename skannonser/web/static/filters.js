@@ -19,8 +19,13 @@ import {
   BYGGEAAR_CEIL,
   TOTAL_KVM_MAX,
   MAANEDSKOST_MAX,
+  PRIS_KVM_MAX,
+  SOLD_PRICE_MAX,
+  PREMIUM_MAX,
   priceBoundOf,
 } from "./filterstate.js";
+import { assignTagColors, colorForTag } from "./tagcolors.js";
+import { premiumPct } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -80,6 +85,20 @@ export function listingExcluded(item, filters, meta) {
   if (underMin(item.byggeaar, f.byggeaarMin, BYGGEAAR_FLOOR)) return true;
   if (overMax(item.pris_kvm_totalpris, f.totalKvmMax, TOTAL_KVM_MAX)) return true;
   if (overMax(item.maanedskost, f.maanedskostMax, MAANEDSKOST_MAX)) return true;
+  if (overMax(item.pris_kvm, f.prisKvmMax, PRIS_KVM_MAX)) return true;
+  // Sold-outcome filters apply ONLY to sold items -- actives structurally
+  // lack these fields, and must never be swept out by includeUnknown=false.
+  if (item.sold) {
+    if (overMax(item.sold_price, f.soldPriceMax, SOLD_PRICE_MAX)) return true;
+    if ((f.premiumMax ?? PREMIUM_MAX) < PREMIUM_MAX) {
+      const pct = premiumPct(item);
+      if (pct == null) {
+        if (unknownFails) return true;
+      } else if (pct > f.premiumMax) {
+        return true;
+      }
+    }
+  }
 
   // Hidden sets with explicit "" buckets.
   if (hiddenSetExcludes(f.boligtypeHidden, item.boligtype || "")) return true;
@@ -358,7 +377,7 @@ document.addEventListener("keydown", (ev) => {
 // summary ("Alle" when nothing is hidden, chips of the visible values when
 // ≤3 remain, else "N av M"); clicking opens the shared popover with the
 // familiar checkbox rows (checked = visible). Storage semantics unchanged.
-export function selectField(parent, { label, options, hidden, swatches, searchable, onChange }) {
+export function selectField(parent, { label, options, hidden, swatches, onChange }) {
   const field = document.createElement("button");
   field.type = "button";
   field.className = "select-field";
@@ -398,31 +417,6 @@ export function selectField(parent, { label, options, hidden, swatches, searchab
   };
 
   const buildBody = (pop) => {
-    if (searchable) {
-      const search = document.createElement("input");
-      search.type = "text";
-      search.placeholder = "Søk …";
-      search.className = "multi-search";
-      pop.appendChild(search);
-      const listWrap = document.createElement("div");
-      listWrap.className = "multi-list";
-      pop.appendChild(listWrap);
-      const render = () => {
-        const q = search.value.trim().toLowerCase();
-        listWrap.innerHTML = "";
-        checkboxGroup(listWrap, {
-          options: options.filter((o) => !q || o.label.toLowerCase().includes(q)),
-          hidden,
-          onChange: () => {
-            paint();
-            onChange();
-          },
-        });
-      };
-      search.addEventListener("input", render);
-      render();
-      return;
-    }
     checkboxGroup(pop, {
       options,
       hidden,
@@ -442,9 +436,36 @@ export function selectField(parent, { label, options, hidden, swatches, searchab
   return field;
 }
 
-// The whole "Filtre" panel body: five select-fields, three collapsible
-// slider sub-groups (collapse state persisted via ui.collapsed through
-// onCollapse), and the unknown-value policy toggle. Replaces the old
+// Colored tag quick-chips over the shared tagHidden set (2026-07-25 spec
+// §3). Same storage semantics as the checkbox group: chip visible = key
+// absent from `hidden`. options = vocabs.tags; the "" bucket renders as its
+// "(uten tag)" label with a neutral color.
+export function tagChipRow(parent, { options, hidden, tagColors, onChange }) {
+  const wrap = document.createElement("div");
+  wrap.className = "tag-chip-row";
+  options.forEach((opt) => {
+    const color = colorForTag(opt.key, tagColors) || "#6f7e76";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tag-chip" + (hidden[opt.key] ? " off" : "");
+    btn.style.setProperty("--tag-color", color);
+    btn.textContent = opt.count != null ? `${opt.label} (${opt.count})` : opt.label;
+    btn.addEventListener("click", () => {
+      if (hidden[opt.key]) delete hidden[opt.key];
+      else hidden[opt.key] = true;
+      btn.classList.toggle("off", Boolean(hidden[opt.key]));
+      onChange();
+    });
+    wrap.appendChild(btn);
+  });
+  parent.appendChild(wrap);
+  return wrap;
+}
+
+// The whole "Filtre" panel body: four select-fields, the tag chip row,
+// three collapsible slider sub-groups (collapse state persisted via
+// ui.collapsed through onCollapse), and the unknown-value policy toggle.
+// Replaces the old
 // metric-filter / boligtype-filter / more-filters builder trio --
 // facilities/postnummer/nabolag deliberately have NO sidebar UI (2026-07-24
 // sidebar-tabs spec §2): they are edited from the table popovers and
@@ -490,11 +511,13 @@ export function buildFilterPanelUI(
     hidden: filters.tilgjengelighetHidden,
     onChange,
   });
-  selectField(fields, {
-    label: "Tags",
+  // Tags render as always-visible colored chips, not a select-field: at tag
+  // cardinality the chips ARE the better summary, and they double as the
+  // one-click filter (2026-07-25 spec §3).
+  tagChipRow(fields, {
     options: vocabs.tags,
     hidden: filters.tagHidden,
-    searchable: true,
+    tagColors: assignTagColors(vocabs.tags.map((o) => o.key)),
     onChange,
   });
   container.appendChild(fields);

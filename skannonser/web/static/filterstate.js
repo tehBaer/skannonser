@@ -16,6 +16,9 @@ export const BYGGEAAR_FLOOR = 1900;
 export const BYGGEAAR_CEIL = 2030;
 export const TOTAL_KVM_MAX = 120_000;
 export const MAANEDSKOST_MAX = 20_000;
+export const PRIS_KVM_MAX = 150_000;
+export const SOLD_PRICE_MAX = 10_000_000;
+export const PREMIUM_MAX = 30; // percent over prisantydning
 
 export function priceBoundOf(meta) {
   return Number((meta.filters && meta.filters.sheets_max_price) || 7500000);
@@ -37,6 +40,9 @@ export function defaultFilters(meta) {
     byggeaarMin: BYGGEAAR_FLOOR,
     totalKvmMax: TOTAL_KVM_MAX,
     maanedskostMax: MAANEDSKOST_MAX,
+    prisKvmMax: PRIS_KVM_MAX,
+    soldPriceMax: SOLD_PRICE_MAX,
+    premiumMax: PREMIUM_MAX,
     // hidden sets: {} = off; value key present => that value is excluded.
     boligtypeHidden: {},
     tagHidden: {},
@@ -153,6 +159,9 @@ export function activeFilterEntries(filters, meta) {
   maxSlider("felleskostMax", "Maks felleskost", FELLESKOST_MAX, kr);
   maxSlider("maanedskostMax", "Maks mnd-kost", MAANEDSKOST_MAX, kr);
   maxSlider("totalKvmMax", "Maks total/kvm", TOTAL_KVM_MAX, kr);
+  maxSlider("prisKvmMax", "Maks pris/kvm", PRIS_KVM_MAX, kr);
+  maxSlider("soldPriceMax", "Maks solgt-pris", SOLD_PRICE_MAX, kr);
+  maxSlider("premiumMax", "Maks budpremie", PREMIUM_MAX, (v) => "≤ +" + v + " %");
   minSlider("braIMin", "Min BRA-i", 0, (v) => "≥ " + v + " m²");
   minSlider("soveromMin", "Min soverom", 0, (v) => "≥ " + v);
   minSlider("byggeaarMin", "Min byggeår", BYGGEAAR_FLOOR, (v) => "≥ " + v);

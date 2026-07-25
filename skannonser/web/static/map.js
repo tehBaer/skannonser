@@ -165,24 +165,44 @@ function ensureSquareIcon(map, color, strokeColor) {
   return name;
 }
 
+// One shared X icon for closed-without-a-sale dots (Inaktiv/Trukket): white
+// stroke over a dark outline so it reads on ANY boligtype color. Color-
+// neutral, so a single registered image serves every group.
+function ensureXIcon(map) {
+  const name = "inactive-x";
+  if (map.hasImage(name)) return name;
+  const size = 16;
+  const cvs = document.createElement("canvas");
+  cvs.width = size;
+  cvs.height = size;
+  const ctx = cvs.getContext("2d");
+  ctx.lineCap = "round";
+  const drawX = () => {
+    ctx.beginPath();
+    ctx.moveTo(3, 3);
+    ctx.lineTo(size - 3, size - 3);
+    ctx.moveTo(size - 3, 3);
+    ctx.lineTo(3, size - 3);
+    ctx.stroke();
+  };
+  ctx.strokeStyle = "rgba(0,0,0,0.85)";
+  ctx.lineWidth = 5;
+  drawX();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2.5;
+  drawX();
+  const data = ctx.getImageData(0, 0, size, size);
+  map.addImage(name, { width: size, height: size, data: data.data });
+  return name;
+}
+
 // Border convention: ACTIVE listings get a black border, SOLD keep a white
 // border (both are coloured by boligtype).
 const ACTIVE_BORDER = "#111111";
 const SOLD_BORDER = "#ffffff";
 
-// Closed-without-a-sale (derived Inaktiv/Trukket) dots: one neutral grey,
-// not boligtype-coloured -- visually quiet, distinct from genuine Solgt.
-const INACTIVE_COLOR = "#9aa39c";
-// Normal-mode colour for a closed layer: genuine sold keeps the group's
-// boligtype colour, inactive/trukket goes grey.
-const closedColorExpr = (color) => ["case", ["==", ["get", "sold"], true], color, INACTIVE_COLOR];
-
 const IS_CLOSED = ["==", ["get", "closed"], true];
 const NOT_CLOSED = ["==", ["get", "closed"], false];
-
-// Ring drawn beneath any listing that carries a tag -- the "this one is
-// annotated" marker, independent of boligtype colour.
-const TAG_RING_COLOR = "#7c3aed";
 
 // Sold-dot colour in "budpremie" mode: tinglyst sold price vs prisantydning,
 // bucketed. `premium` is a percent number precomputed on the feature
@@ -206,6 +226,8 @@ export const PREMIUM_LEGEND = [
 ];
 
 // Flip every "-sold" layer between boligtype colour and the budpremie scale.
+// The premium scale only applies to genuine sales; inactive/trukket dots (no
+// sale, never a premium) keep their boligtype colour in both modes.
 export function setSoldColorMode(map, groups, premiumOn) {
   groups.forEach((g) => {
     if (!g.hasSold) return;
@@ -214,7 +236,7 @@ export function setSoldColorMode(map, groups, premiumOn) {
     map.setPaintProperty(
       layerId,
       "circle-color",
-      premiumOn ? PREMIUM_COLOR : closedColorExpr(g.color)
+      premiumOn ? ["case", ["==", ["get", "sold"], true], PREMIUM_COLOR, g.color] : g.color
     );
   });
 }
@@ -269,6 +291,8 @@ export function addListingGroups(map, groups, onListingClick) {
 
     // Tagged-listing ring: a hollow circle slightly larger than the dot,
     // drawn BENEATH the dot layers (added first) so it reads as a halo.
+    // Stroke colour is the TAG's own colour (tagcolors.js) -- features
+    // matching the hasTag filter always carry a tagColor property.
     map.addLayer({
       id: g.id + "-tagring",
       type: "circle",
@@ -278,7 +302,7 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-radius": 12,
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-width": 3,
-        "circle-stroke-color": TAG_RING_COLOR,
+        "circle-stroke-color": ["get", "tagColor"],
         "circle-stroke-opacity": ["min", 0.9, OP],
       },
     });
@@ -319,13 +343,25 @@ export function addListingGroups(map, groups, onListingClick) {
         source: g.id,
         filter: ["all", NOT_CLUSTER, IS_CLOSED],
         paint: {
-          "circle-color": closedColorExpr(g.color), // sold: boligtype colour; inactive/trukket: grey
+          "circle-color": g.color, // sold AND inactive: boligtype colour (inactive adds an X on top)
           "circle-radius": 6,
           "circle-stroke-width": 1.5,
           "circle-stroke-color": SOLD_BORDER, // sold = white border
           "circle-opacity": OP,
           "circle-stroke-opacity": OP,
         },
+      });
+      map.addLayer({
+        id: g.id + "-inactive-x",
+        type: "symbol",
+        source: g.id,
+        filter: ["all", NOT_CLUSTER, IS_CLOSED, ["!=", ["get", "sold"], true]],
+        layout: {
+          "icon-image": ensureXIcon(map),
+          "icon-size": 0.75,
+          "icon-allow-overlap": true,
+        },
+        paint: { "icon-opacity": OP },
       });
       clickLayers.push(g.id + "-sold");
     }

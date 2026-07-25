@@ -17,6 +17,7 @@ import {
   PREMIUM_LEGEND,
   DEFAULT_UNKNOWN_TYPE_COLOR,
 } from "./map.js";
+import { assignTagColors, colorForTag } from "./tagcolors.js";
 import { buildPopupContent } from "./popup.js";
 import { isNew, parseScrapedAt, premiumPct } from "./listingmeta.js";
 import {
@@ -93,6 +94,7 @@ const state = {
   lastVariantMode: null, // "both" | "split" -- tracks combineSold across applyAll calls
   popup: null,
   colorByType: {},
+  tagColors: new Map(),
   groups: [],
   validGroupIds: new Set(),
   newSinceLast: 0,
@@ -179,10 +181,6 @@ function isDimmed(item, ctx) {
   return false;
 }
 
-function tagKeyOf(item) {
-  return item.tag ? String(item.tag).trim() : "";
-}
-
 function itemToFeature(item, op) {
   const properties = {
     finnkode: item.finnkode,
@@ -192,7 +190,11 @@ function itemToFeature(item, op) {
     boligtype: item.boligtype || "",
     op, // 1, or the dimmed residual opacity (see filters.residualOpacity)
   };
-  if (tagKeyOf(item)) properties.hasTag = true; // drives the tag-ring layer
+  const tagColor = colorForTag(item.tag, state.tagColors || new Map());
+  if (tagColor) {
+    properties.hasTag = true; // drives the tag-ring layer
+    properties.tagColor = tagColor; // the ring's stroke color
+  }
   if (item.sold) {
     const pct = premiumPct(item);
     if (pct != null) properties.premium = Math.round(pct * 10) / 10;
@@ -207,6 +209,11 @@ function itemToFeature(item, op) {
 // Bucket the visible listings into one FeatureCollection per group source
 // (sold group + per-boligtype groups), so each source clusters independently.
 function featureCollectionsByGroup() {
+  // Rebuilt every recompute: cheap (one hash per distinct tag) and always
+  // in sync with the current tag set -- popup chips read this same map.
+  state.tagColors = assignTagColors(
+    [...state.itemsById.values()].map((i) => i.tag)
+  );
   const ctx = {
     stations: state.meta.stations || [],
     visibleLines: visibleLineSet(state.ui),
@@ -326,22 +333,35 @@ function renderSourceLegend() {
     node.appendChild(row);
   });
 
-  // Muted dots (derived Inaktiv/Trukket) use a flat grey fill, not the
-  // boligtype colour + border scheme above -- give them their own row.
+  // Inactive/withdrawn dots keep their boligtype colour + a white X overlay
+  // (see ensureXIcon / the "-inactive-x" layers in map.js) rather than a
+  // flat grey fill -- give them their own row with a swatch that mirrors it.
   const mutedRow = document.createElement("div");
   mutedRow.className = "legend-row";
   const mutedSw = document.createElement("span");
   mutedSw.className = "legend-swatch";
-  mutedSw.style.background = "#9aa39c";
+  mutedSw.style.background = DEFAULT_UNKNOWN_TYPE_COLOR;
+  mutedSw.style.position = "relative";
+  const xGlyph = document.createElement("span");
+  xGlyph.textContent = "✕";
+  xGlyph.style.position = "absolute";
+  xGlyph.style.inset = "0";
+  xGlyph.style.display = "flex";
+  xGlyph.style.alignItems = "center";
+  xGlyph.style.justifyContent = "center";
+  xGlyph.style.color = "#ffffff";
+  xGlyph.style.fontSize = "9px";
+  xGlyph.style.lineHeight = "1";
+  mutedSw.appendChild(xGlyph);
   mutedRow.appendChild(mutedSw);
-  mutedRow.appendChild(document.createTextNode("Inaktiv/Trukket (grå)"));
+  mutedRow.appendChild(document.createTextNode("Inaktiv/Trukket (X)"));
   node.appendChild(mutedRow);
 }
 
 function openPopup(finnkode, coordinates) {
   const item = state.itemsById.get(finnkode);
   if (!item) return;
-  const content = buildPopupContent(item, state.destinations);
+  const content = buildPopupContent(item, state.destinations, state.tagColors);
   // Sections that fill in asynchronously (Solgt i nabolaget) grow the popup
   // after the pan below has measured it -- re-pan when they say so.
   content.addEventListener("sk-popup-resized", () => panPopupIntoView());

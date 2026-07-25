@@ -1,6 +1,6 @@
 // Popup DOM builder + inline kommentar/tag editor (Phase 5 Task 6).
 //
-// buildPopupContent(item, destinations) returns a DOM node for
+// buildPopupContent(item, destinations, tagColors) returns a DOM node for
 // MapLibre's Popup.setDOMContent(). The node carries a self-contained
 // annotation editor that PUTs /api/annotations/{finnkode} on save (via the
 // shared ./annotations.js helper -- table.js's inline cells use the same
@@ -9,6 +9,7 @@
 
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
+import { colorForTag } from "./tagcolors.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -119,7 +120,9 @@ function buildNabolagSection(item) {
 }
 
 // destinations: [{key,label}] from /api/meta (for the travel-minute rows).
-export function buildPopupContent(item, destinations) {
+// tagColors: Map from tagcolors.js's assignTagColors, kept in sync with the
+// table/map's palette so the popup chip matches the ring/cell accent.
+export function buildPopupContent(item, destinations, tagColors) {
   const root = el("div", "sk-popup");
 
   // Thumbnail (hidden on load error -- no broken-image icon).
@@ -149,6 +152,13 @@ export function buildPopupContent(item, destinations) {
         : "Finn";
   addr.appendChild(tag);
   if (isNew(item)) addr.appendChild(el("span", "ny-badge", "Ny"));
+
+  const tagColor = colorForTag(item.tag, tagColors || new Map());
+  if (tagColor) {
+    const chip = el("span", "tag-chip-mini", String(item.tag).trim());
+    chip.style.background = tagColor;
+    addr.appendChild(chip);
+  }
   body.appendChild(addr);
 
   const prisText = fmtPris(item.pris);
@@ -226,6 +236,11 @@ export function buildPopupContent(item, destinations) {
     gmap.rel = "noopener";
     links.appendChild(gmap);
   }
+  const tbl = el("a", null, "Tabell");
+  // Same-tab on purpose: Kart -> Tabell is in-app navigation, unlike the
+  // external Finn/Maps links.
+  tbl.href = "/table#finnkode=" + encodeURIComponent(item.finnkode);
+  links.appendChild(tbl);
   if (links.childNodes.length) body.appendChild(links);
 
   root.appendChild(body);
