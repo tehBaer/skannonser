@@ -376,8 +376,11 @@ def run_sold_sweep(
     eligible for the 80-day window between the 100-day age floor and the
     180-day Trukket grace cutoff, so it ages out having never been checked
     once. ``inaktiv_reserve`` (``V``) fixes this: Solgt may spend at most
-    ``solgt_cap = max(1, max_requests - V)`` requests -- never fully starved,
-    even at ``max_requests == 1`` -- and Inaktiv then gets everything left of
+    ``solgt_cap = min(max(1, max_requests - V), max_requests)`` requests --
+    never fully starved, even at ``max_requests == 1``, while the outer
+    ``min`` keeps the floor from exceeding a zero/negative budget (a
+    ``--requests 0`` run must make no requests at all) -- and Inaktiv then
+    gets everything left of
     the overall ``max_requests``, not just ``V`` (if Solgt finishes under its
     cap because it ran out of targets, Inaktiv gets the whole remainder). If
     there are no eligible Inaktiv targets at all, Solgt gets the full budget
