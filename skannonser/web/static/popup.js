@@ -52,19 +52,38 @@ function addRow(dl, label, value) {
 // fetch fires when the popup is built and fills in when it lands. Data
 // accumulates from sweep responses only (no backfill exists), so this reads
 // "ingen … ennå" for most listings at first.
+//
+// The header + empty-state placeholder are built and appended SYNCHRONOUSLY
+// (before the fetch even starts), not on resolve. openPopup calls
+// setDOMContent then panPopupIntoView(), which measures and pans within a
+// single requestAnimationFrame -- well before the network fetch can
+// resolve. If the section started as a bare empty div and only grew once the
+// fetch landed, the pan would measure a shorter popup than the one the user
+// ends up with, pushing the annotation editor below the viewport (the exact
+// failure panPopupIntoView exists to prevent -- see its comment in app.js).
+// Pre-rendering the empty-state line gives the pan the right height for the
+// common case (no backfill means most listings have no neighbours yet); on
+// resolve we either swap in the real rows or leave the placeholder as-is.
 function buildNabolagSection(item) {
   if (item.source === "dnb") return null; // DNB ids never anchor sweep boxes
+  if (!item.closed) return null; // only closed (Solgt/Inaktiv/Trukket) listings
+  // can ever be a sweep target (select_sold_targets), so an active listing's
+  // discovered_near_finnkode is empty by construction, forever -- skip the
+  // request and empty-state DOM entirely rather than promise a fill that
+  // never comes.
   const wrap = el("div", "sk-nabolag");
+  const head = el("p", "sk-nabolag-head", "Solgt i nabolaget");
+  const empty = el("p", "muted sk-nabolag-empty", "ingen registrerte nabolagssalg ennå");
+  wrap.appendChild(head);
+  wrap.appendChild(empty);
   fetch("/api/listings/" + encodeURIComponent(item.finnkode) + "/nabolag")
     .then((resp) => (resp.ok ? resp.json() : { sales: [] }))
     .then(({ sales }) => {
-      const head = el("p", "sk-nabolag-head", "Solgt i nabolaget" + (sales.length ? " (" + sales.length + ")" : ""));
-      wrap.appendChild(head);
-      if (!sales.length) {
-        wrap.appendChild(el("p", "muted sk-nabolag-empty", "ingen registrerte nabolagssalg ennå"));
-        return;
-      }
-      sales.slice(0, 5).forEach((s) => {
+      if (!sales.length) return; // placeholder already reads correctly
+      head.textContent = "Solgt i nabolaget (" + sales.length + ")";
+      wrap.removeChild(empty);
+      const shown = sales.slice(0, 5);
+      shown.forEach((s) => {
         const row = el("div", "sk-nabolag-row");
         if (s.tracked) {
           const a = el("a", null, s.address || s.finnkode);
@@ -81,6 +100,13 @@ function buildNabolagSection(item) {
         row.appendChild(el("span", "muted", parts.join(" · ")));
         wrap.appendChild(row);
       });
+      // The API caps at 15; we only render 5 -- say so when there's more,
+      // since the header count (sales.length) is neither.
+      if (sales.length > shown.length) {
+        wrap.appendChild(
+          el("p", "muted sk-nabolag-more", "viser " + shown.length + " av " + sales.length)
+        );
+      }
     })
     .catch(() => {
       /* popup stays useful without the section; no error noise */

@@ -524,7 +524,10 @@ details.subgroup > summary {
 .inactive-row td { color: var(--muted, #8a938c); }
 
 /* --- Solgt i nabolaget (2026-07-25) --- */
-.sk-nabolag { padding: 6px 10px 2px; border-top: 1px solid rgba(0, 0, 0, 0.08); }
+/* Padding/border match the popup's own stacked sections (.sk-popup .body,
+   .sk-editor): 14px horizontal so the three line up, and var(--border) so
+   they re-theme together instead of a hardcoded rgba. */
+.sk-nabolag { padding: 6px 14px 2px; border-top: 1px solid var(--border); }
 .sk-nabolag-head { margin: 0 0 4px; font-size: 12px; font-weight: 700; }
 .sk-nabolag-empty { margin: 0 0 4px; font-size: 12px; }
 /* Address over metrics, not side-by-side: the popup is capped at 300px, and a
@@ -533,3 +536,4 @@ details.subgroup > summary {
    two tidy lines whether or not it has a size. */
 .sk-nabolag-row { font-size: 12px; margin: 0 0 5px; }
 .sk-nabolag-row .muted { display: block; }
+.sk-nabolag-more { margin: 0 0 4px; font-size: 12px; }
