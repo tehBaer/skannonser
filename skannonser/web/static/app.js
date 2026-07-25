@@ -333,15 +333,28 @@ function renderSourceLegend() {
     node.appendChild(row);
   });
 
-  // Muted dots (derived Inaktiv/Trukket) use a flat grey fill, not the
-  // boligtype colour + border scheme above -- give them their own row.
+  // Inactive/withdrawn dots keep their boligtype colour + a white X overlay
+  // (see ensureXIcon / the "-inactive-x" layers in map.js) rather than a
+  // flat grey fill -- give them their own row with a swatch that mirrors it.
   const mutedRow = document.createElement("div");
   mutedRow.className = "legend-row";
   const mutedSw = document.createElement("span");
   mutedSw.className = "legend-swatch";
-  mutedSw.style.background = "#9aa39c";
+  mutedSw.style.background = DEFAULT_UNKNOWN_TYPE_COLOR;
+  mutedSw.style.position = "relative";
+  const xGlyph = document.createElement("span");
+  xGlyph.textContent = "✕";
+  xGlyph.style.position = "absolute";
+  xGlyph.style.inset = "0";
+  xGlyph.style.display = "flex";
+  xGlyph.style.alignItems = "center";
+  xGlyph.style.justifyContent = "center";
+  xGlyph.style.color = "#ffffff";
+  xGlyph.style.fontSize = "9px";
+  xGlyph.style.lineHeight = "1";
+  mutedSw.appendChild(xGlyph);
   mutedRow.appendChild(mutedSw);
-  mutedRow.appendChild(document.createTextNode("Inaktiv/Trukket (grå)"));
+  mutedRow.appendChild(document.createTextNode("Inaktiv/Trukket (X)"));
   node.appendChild(mutedRow);
 }
 

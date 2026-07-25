@@ -24,9 +24,10 @@ import {
 } from "./tablefilters.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
-const STORAGE_KEY = "skannonser.ui.v1"; // shared with app.js -- only the
-// `sold` field is read/written here so the two pages agree on that one
-// toggle without either page needing to know the other's full UI-state shape.
+const STORAGE_KEY = "skannonser.ui.v1"; // shared with app.js -- this page
+// reads/writes `sold` and `hiddenColumns` in that blob (filters live there
+// too, via filterstate.js); neither page needs to know the other's full
+// UI-state shape, just its own fields within the shared blob.
 
 // Columns whose values are compared numerically (nulls always sort last,
 // regardless of sort direction -- see `compareItems`). Every other column
@@ -125,6 +126,8 @@ const state = {
   filters: null,
   vocabs: null,
   hiddenColumns: loadHiddenColumns(),
+  tagColors: new Map(), // assigned for real in refreshVocabs; declared here
+  // (matching app.js's state shape) so the field is self-documenting.
 };
 
 function filterCtx() {

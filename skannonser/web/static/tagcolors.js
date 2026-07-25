@@ -7,8 +7,9 @@
 // an earlier-sorted tag claims it. (Pure per-tag hashing was rejected:
 // "maybe" and "definitivt" collide under djb2 mod 10.)
 
-// Hue-offset from map.js's TYPE_COLOR_PALETTE (boligtype dots) so a tag
-// ring is never confusable with its own dot color; all carry white text.
+// Chosen to be visually distinct from map.js's TYPE_COLOR_PALETTE (boligtype
+// dots) so a tag ring is never confusable with its own dot color; all carry
+// white text.
 export const TAG_PALETTE = [
   "#c2185b", "#7b1fa2", "#303f9f", "#0277bd", "#00695c",
   "#558b2f", "#ff8f00", "#d84315", "#5d4037", "#455a64",
