@@ -145,7 +145,12 @@ function onFilterChange() {
 }
 
 function refreshVocabs() {
-  state.vocabs = deriveVocabs(state.items);
+  // Same rule as the map (app.js vocabItems): the vocabulary describes the
+  // rows the user can see. `state.items` only ever grows, so without this the
+  // tag chips keep values that only closed rows carried after "Vis solgte" is
+  // switched back off.
+  const visible = state.showSold ? state.items : state.items.filter((it) => !it.closed);
+  state.vocabs = deriveVocabs(visible);
   state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
 }
 
@@ -508,6 +513,8 @@ function wireToolbar() {
         soldToggle.disabled = false;
       }
     }
+    // The off path changes the vocabulary boundary just as much as the on path.
+    refreshVocabs();
     render();
   });
 
