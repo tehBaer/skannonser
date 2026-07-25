@@ -15,7 +15,7 @@ ALL_MIGRATIONS = [
     "001_adopt_live_schema", "002_notify_tables", "003_api_usage",
     "004_dnb_travel", "005_annotations", "006_sold_prices",
     "007_sold_sweep_state", "008_postnummer_pad", "009_sold_attempts",
-    "010_listing_details",
+    "010_listing_details", "011_neighbour_sold",
 ]
 
 

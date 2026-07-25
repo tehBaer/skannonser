@@ -1,16 +1,30 @@
 """``sold_prices`` repository: upsert/read of FINN sold-price records.
 
-Fill-only on ``sold_price``/``cadastral_sold_date`` (``COALESCE(?, existing)``,
-matching :class:`~skannonser.store.repositories.processed.ProcessedRepo`'s
-coordinate/travel columns): a later re-fetch that lacks the price -- e.g. a
-sweep that runs before a sale is tinglyst -- must never clobber a value already
-stored. ``sold_date``/``price_suggestion``/``address`` are set as given.
+Fill-only on ``sold_price``/``cadastral_sold_date``/``discovered_near_finnkode``
+(``COALESCE(existing, ?)``): once a value is stored it is permanent -- neither
+a later re-fetch that lacks the price (e.g. a sweep that runs before a sale is
+tinglyst) nor a later sweep with a *different* non-null value may clobber it.
+For ``discovered_near_finnkode`` this is the point: the first tracked listing
+whose box discovered a neighbour card is the anchor, and it must not flip to a
+different target just because a later sweep rediscovers the same card nearer
+someone else. ``sold_date``/``price_suggestion``/``address`` and the card facts
+(``size``/``property_type``/``bedrooms``/``collective_debt``/``ownership_type``)
+are set as given.
 """
 
 import sqlite3
 
-_FILL_ONLY = ("sold_price", "cadastral_sold_date")
-_SET = ("sold_date", "price_suggestion", "address")
+_FILL_ONLY = ("sold_price", "cadastral_sold_date", "discovered_near_finnkode")
+_SET = (
+    "sold_date",
+    "price_suggestion",
+    "address",
+    "size",
+    "property_type",
+    "bedrooms",
+    "collective_debt",
+    "ownership_type",
+)
 _ALL = ("finnkode",) + _FILL_ONLY + _SET
 
 
@@ -20,8 +34,8 @@ class SoldPricesRepo:
 
     def upsert(self, records: list[dict]) -> dict:
         """Insert new sold-price rows, or update existing ones (fill-only for
-        the price/registration-date; set for the rest). Returns
-        ``{"inserted", "updated"}``."""
+        the price/registration-date/discovery-anchor; set for the rest).
+        Returns ``{"inserted", "updated"}``."""
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -46,7 +60,7 @@ class SoldPricesRepo:
                     )
                     inserted += 1
                 else:
-                    fill = ", ".join(f"{c} = COALESCE(?, {c})" for c in _FILL_ONLY)
+                    fill = ", ".join(f"{c} = COALESCE({c}, ?)" for c in _FILL_ONLY)
                     setc = ", ".join(f"{c} = ?" for c in _SET)
                     params = (
                         [rec.get(c) for c in _FILL_ONLY]

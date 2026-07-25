@@ -181,6 +181,36 @@ def test_repo_upsert_is_fill_only_for_sold_price(conn):
     assert row["sold_price"] == 6450000
 
 
+def test_repo_persists_card_facts_and_anchor(conn):
+    repo = SoldPricesRepo(conn)
+    repo.upsert([{
+        "finnkode": "900", "sold_price": 5000000, "sold_date": "2026-03-01",
+        "price_suggestion": 4800000, "address": "Naboveien 1",
+        "size": 90, "property_type": "FLAT", "bedrooms": 2,
+        "collective_debt": 250000, "ownership_type": "PART_OWNERSHIP",
+        "discovered_near_finnkode": "111",
+    }])
+    row = conn.execute("SELECT * FROM sold_prices WHERE finnkode='900'").fetchone()
+    assert row["size"] == 90
+    assert row["property_type"] == "FLAT"
+    assert row["bedrooms"] == 2
+    assert row["collective_debt"] == 250000
+    assert row["ownership_type"] == "PART_OWNERSHIP"
+    assert row["discovered_near_finnkode"] == "111"
+
+
+def test_anchor_is_fill_only_but_facts_update(conn):
+    repo = SoldPricesRepo(conn)
+    repo.upsert([{"finnkode": "900", "discovered_near_finnkode": "111", "size": 90}])
+    # Re-seen near a DIFFERENT target with a corrected size:
+    repo.upsert([{"finnkode": "900", "discovered_near_finnkode": "222", "size": 92}])
+    row = conn.execute(
+        "SELECT discovered_near_finnkode, size FROM sold_prices WHERE finnkode='900'"
+    ).fetchone()
+    assert row["discovered_near_finnkode"] == "111"  # first anchor wins
+    assert row["size"] == 92                          # facts are set-as-given
+
+
 # ---------------------------------------------------------------------------
 # orchestrator
 # ---------------------------------------------------------------------------
