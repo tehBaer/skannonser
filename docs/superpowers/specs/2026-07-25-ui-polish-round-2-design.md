@@ -1,7 +1,7 @@
 # UI polish round 2 — tags, inactive markers, table ergonomics — design
 
 **Date:** 2026-07-25
-**Status:** Approved (design), not yet implemented
+**Status:** Implemented 2026-07-25
 
 ## Goal
 
