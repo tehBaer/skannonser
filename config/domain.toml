@@ -96,3 +96,10 @@ trukket_grace_days = 180
 # termination guarantee. Deliberately reverses migration 009's "never dropped"
 # stance; the default is generous so tinglysing lag still gets many chances.
 max_attempts = 5
+
+# Requests reserved per run for the Inaktiv tier. Strict Solgt-first ordering
+# otherwise starves it completely: with ~1022 eligible Solgt targets the first
+# Inaktiv target sits at position ~1023, so at any realistic budget it would
+# never be reached before ageing out of its 100-180 day eligibility window.
+# Solgt still gets the rest of the budget (~87% at the cron's 13-17/run).
+inaktiv_reserve_requests = 2

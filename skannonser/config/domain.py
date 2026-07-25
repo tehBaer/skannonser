@@ -95,6 +95,14 @@ class Sold(BaseModel):
     # default so tinglysing lag still gets many chances (see config/domain.toml).
     max_attempts: int = 5
 
+    # Requests reserved per run for the Inaktiv tier (2026-07-25 follow-up).
+    # Strict Solgt-first ordering otherwise starves it completely: with
+    # ~1022 eligible Solgt targets vs 178 Inaktiv, the first Inaktiv target
+    # sits at position ~1023, so at any realistic budget it's never reached
+    # before ageing out of its 100-180 day eligibility window (see
+    # config/domain.toml and :func:`run_sold_sweep`).
+    inaktiv_reserve_requests: int = 2
+
 
 class DomainConfig(BaseModel):
     filters: Filters

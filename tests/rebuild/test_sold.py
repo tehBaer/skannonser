@@ -334,13 +334,14 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
     calls = []
 
     def fake_backlog(conn, notify=None, max_requests=4, force=False, delay=None,
-                      grace_days=-1, max_attempts=-1):
+                      grace_days=-1, max_attempts=-1, inaktiv_reserve=-1):
         calls.append({
             "max_requests": max_requests,
             "notify": notify,
             "delay": delay,
             "grace_days": grace_days,
             "max_attempts": max_attempts,
+            "inaktiv_reserve": inaktiv_reserve,
         })
         return {"suspended": False, "coverage": {"priced": 0, "total": 0, "fraction": 0.0}}
 
@@ -354,6 +355,7 @@ def test_cli_enrich_sold_default_runs_budgeted_backlog(tmp_path, monkeypatch):
     assert calls[0]["max_requests"] == 4
     assert calls[0]["grace_days"] == 180  # config [sold] trukket_grace_days threaded through
     assert calls[0]["max_attempts"] == 5  # config [sold] max_attempts threaded through
+    assert calls[0]["inaktiv_reserve"] == 2  # config [sold] inaktiv_reserve_requests threaded through
     assert callable(calls[0]["notify"])   # Pushover sink wired
     assert callable(calls[0]["delay"])    # paced
 
@@ -888,3 +890,160 @@ def test_given_up_targets_counts_priceless_at_or_above_ceiling(conn):
         record_attempts(conn, ["102"])
 
     assert given_up_targets(conn, max_attempts=5) == 1
+
+
+# ---------------------------------------------------------------------------
+# Inaktiv reserve: strict Solgt-first ordering starves the Inaktiv tier
+# completely at any realistic budget (1022 solgt vs 178 inaktiv live). These
+# targets are handed to run_sold_sweep directly (bypassing select_sold_targets
+# / the eiendom table entirely -- run_sold_sweep only needs finnkode/lat/lng/
+# status/attempts dicts), spaced far enough apart that no box ever catches a
+# neighbour, so every non-skipped target costs exactly one request. The fake
+# fetch never returns a card, so "matched" never fires and only the tier/cap
+# bookkeeping is under test.
+# ---------------------------------------------------------------------------
+
+
+def _no_match_fetch(url, **kwargs):
+    return FakeResp({"docs": []})
+
+
+def _spread(prefix, n, status, lat0=59.0, lng0=10.0, step=0.05):
+    """``n`` targets far enough apart (step >> the ~0.0008/0.0005 deg pad) that
+    no box ever catches a neighbour -- one request per non-skipped target."""
+    return [
+        {
+            "finnkode": f"{prefix}{i}",
+            "lat": lat0 + i * step,
+            "lng": lng0 + i * step,
+            "status": status,
+            "attempts": 0,
+        }
+        for i in range(n)
+    ]
+
+
+def test_inaktiv_reserve_carves_out_budget_from_solgt_first_ordering(conn):
+    # The regression this exists to fix: with 20 solgt targets and strict
+    # Solgt-first ordering, pre-change code would spend the ENTIRE 15-request
+    # budget on solgt, leaving inaktiv at 0 (position 1023 in the live-DB
+    # numbers this fix addresses). With the reserve, solgt is capped at
+    # max(1, 15 - 2) = 13 and the freed 2 requests go to inaktiv.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    solgt = _spread("s", 20, "solgt")
+    inaktiv = _spread("i", 3, "inaktiv", lat0=61.0, lng0=12.0)
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=_no_match_fetch,
+        targets=solgt + inaktiv,
+        max_requests=15,
+        inaktiv_reserve=2,
+    )
+
+    attempted = _attempted_finnkodes(conn)
+    solgt_attempted = [fk for fk in attempted if fk.startswith("s")]
+    inaktiv_attempted = [fk for fk in attempted if fk.startswith("i")]
+    assert len(solgt_attempted) == 13
+    assert len(inaktiv_attempted) == 2
+    assert stats["tiles_queried"] == 15
+
+
+def test_inaktiv_reserve_not_wasted_when_no_inaktiv_targets(conn):
+    # No eligible inaktiv targets at all -> solgt may use the FULL budget, not
+    # max_requests - inaktiv_reserve. The reserve is never wasted on an empty
+    # tier.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    solgt = _spread("s", 20, "solgt")
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=_no_match_fetch,
+        targets=solgt,
+        max_requests=15,
+        inaktiv_reserve=2,
+    )
+
+    attempted = _attempted_finnkodes(conn)
+    assert len(attempted) == 15          # not capped to 13
+    assert stats["tiles_queried"] == 15
+
+
+def test_inaktiv_gets_all_leftover_when_solgt_tier_runs_dry(conn):
+    # Few solgt targets (fewer than the 13-request solgt cap) + many inaktiv:
+    # once solgt exhausts its own backlog, ALL remaining budget -- not just
+    # the 2-request reserve -- flows downhill to inaktiv.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    solgt = _spread("s", 3, "solgt")
+    inaktiv = _spread("i", 20, "inaktiv", lat0=61.0, lng0=12.0)
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=_no_match_fetch,
+        targets=solgt + inaktiv,
+        max_requests=15,
+        inaktiv_reserve=2,
+    )
+
+    attempted = _attempted_finnkodes(conn)
+    solgt_attempted = [fk for fk in attempted if fk.startswith("s")]
+    inaktiv_attempted = [fk for fk in attempted if fk.startswith("i")]
+    assert len(solgt_attempted) == 3     # all of them, tier ran dry
+    assert len(inaktiv_attempted) == 12  # 15 - 3, not just the 2-request reserve
+    assert stats["tiles_queried"] == 15
+
+
+def test_inaktiv_reserve_tiny_budget_favors_solgt(conn):
+    # max_requests=1 with both tiers pending: max(1, 1 - 2) == 1, so solgt
+    # gets the single request and inaktiv gets none -- Solgt is never fully
+    # starved even when the nominal reserve would exceed the whole budget.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    solgt = _spread("s", 5, "solgt")
+    inaktiv = _spread("i", 5, "inaktiv", lat0=61.0, lng0=12.0)
+
+    stats = run_sold_sweep(
+        conn,
+        fetch=_no_match_fetch,
+        targets=solgt + inaktiv,
+        max_requests=1,
+        inaktiv_reserve=2,
+    )
+
+    attempted = _attempted_finnkodes(conn)
+    assert attempted == ["s0"]
+    assert stats["tiles_queried"] == 1
+
+
+def test_inaktiv_reserve_charges_no_attempt_to_solgt_skipped_by_subcap(conn):
+    # A solgt target skipped because the solgt sub-cap was reached must have
+    # NO row in the attempts ledger at all -- not attempts == 0, no row,
+    # since record_attempts is only called for targets a box was actually
+    # centered on.
+    from skannonser.enrich.sold import run_sold_sweep
+
+    solgt = _spread("s", 20, "solgt")
+    inaktiv = _spread("i", 3, "inaktiv", lat0=61.0, lng0=12.0)
+
+    run_sold_sweep(
+        conn,
+        fetch=_no_match_fetch,
+        targets=solgt + inaktiv,
+        max_requests=15,
+        inaktiv_reserve=2,
+    )
+
+    ledger = _attempts(conn)
+    # s13..s19 sit past the 13-request solgt cap -> skipped, never charged.
+    for i in range(13, 20):
+        assert f"s{i}" not in ledger
+    # i2 sits past the 2-request inaktiv share -> skipped, never charged.
+    assert "i2" not in ledger
+    # The ones actually attempted ARE charged exactly once.
+    for i in range(13):
+        assert ledger[f"s{i}"][0] == 1
+    for i in range(2):
+        assert ledger[f"i{i}"][0] == 1

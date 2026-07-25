@@ -365,6 +365,7 @@ def enrich_sold(
             delay=delay,
             grace_days=domain.sold.trukket_grace_days,
             max_attempts=domain.sold.max_attempts,
+            inaktiv_reserve=domain.sold.inaktiv_reserve_requests,
         )
     typer.echo(f"enrich-sold: {stats}")
 

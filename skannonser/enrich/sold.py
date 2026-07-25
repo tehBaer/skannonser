@@ -342,6 +342,7 @@ def run_sold_sweep(
     order_by_density: bool = False,
     pad_lon: float = _PAD_LON,
     pad_lat: float = _PAD_LAT,
+    inaktiv_reserve: int = 2,
 ) -> dict:
     """Query a tight box centered on each target listing, storing prices as
     they're found.
@@ -367,8 +368,28 @@ def run_sold_sweep(
     density ranking would absorb the budget on every single run forever, since a
     target stays selectable until its price actually lands (see migration 009).
 
-    Every target the sweep centers a box on is charged one attempt via
-    :func:`record_attempts`. Lets :class:`Throttled` propagate. Returns
+    **Inaktiv reserve (2026-07-25 follow-up).** Strict Solgt-first ordering
+    above starves the Inaktiv tier completely: measured against the live DB
+    (1022 eligible Solgt targets vs 178 Inaktiv), the first Inaktiv target
+    sits at position ~1023, so at any realistic budget (4-17 requests/run)
+    zero Inaktiv targets are ever reached -- and each Inaktiv listing is only
+    eligible for the 80-day window between the 100-day age floor and the
+    180-day Trukket grace cutoff, so it ages out having never been checked
+    once. ``inaktiv_reserve`` (``V``) fixes this: Solgt may spend at most
+    ``solgt_cap = max(1, max_requests - V)`` requests -- never fully starved,
+    even at ``max_requests == 1`` -- and Inaktiv then gets everything left of
+    the overall ``max_requests``, not just ``V`` (if Solgt finishes under its
+    cap because it ran out of targets, Inaktiv gets the whole remainder). If
+    there are no eligible Inaktiv targets at all, Solgt gets the full budget
+    -- the reserve is never wasted on an empty tier. Hitting the Solgt
+    sub-cap stops spending on Solgt WITHOUT ending the sweep or setting
+    ``budget_exhausted`` (that stays reserved for the OVERALL ``max_requests``
+    being hit) -- it just moves on to Inaktiv targets. A target skipped
+    because its tier's budget ran out costs no request and is not charged an
+    attempt.
+
+    Every target the sweep actually centers a box on is charged one attempt
+    via :func:`record_attempts`. Lets :class:`Throttled` propagate. Returns
     ``{"targets", "tiles_queried", "cards_seen", "matched", "stored",
     "budget_exhausted"}``.
     """
@@ -395,11 +416,14 @@ def run_sold_sweep(
     else:
         order = sorted(targets, key=tier)  # stable sort keeps given order within tiers
 
+    solgt_targets = [t for t in order if tier(t) == 0]
+    inaktiv_targets = [t for t in order if tier(t) == 1]
+    has_inaktiv = bool(inaktiv_targets)
+
     matched: set[str] = set()
     records: list[dict] = []
     attempted: list[str] = []
     tiles_queried = cards_seen = 0
-    budget_exhausted = False
     first = True
 
     def collect(docs):
@@ -410,32 +434,68 @@ def run_sold_sweep(
             matched.add(rec["finnkode"])
             records.append(rec)
 
-    for t in order:
-        if t["finnkode"] in matched:
-            continue  # already caught by a neighbour's box -- no request needed
-        # Attempt the target's box, then once at half size if it came back capped
-        # with the target still missing (nearer sales likely hid it).
-        for scale in (1.0, 0.5):
-            if max_requests is not None and tiles_queried >= max_requests:
-                budget_exhausted = True
+    def run_phase(phase_targets: list[dict], cap: Optional[int]) -> tuple[int, bool]:
+        """Spend up to ``cap`` requests (``None`` = unlimited) on
+        ``phase_targets``. Returns ``(requests_used, phase_exhausted)`` --
+        ``phase_exhausted`` is True iff the phase stopped because ``cap`` was
+        hit while targets in this phase still awaited a box (a target skipped
+        this way costs no request and is never appended to ``attempted``)."""
+        nonlocal tiles_queried, cards_seen, first
+        used = 0
+        exhausted = False
+        for t in phase_targets:
+            if t["finnkode"] in matched:
+                continue  # already caught by a neighbour's box -- no request needed
+            # Attempt the target's box, then once at half size if it came back
+            # capped with the target still missing (nearer sales likely hid it).
+            for scale in (1.0, 0.5):
+                if cap is not None and used >= cap:
+                    exhausted = True
+                    break
+                if delay is not None and not first:
+                    delay()
+                first = False
+
+                if scale == 1.0:
+                    attempted.append(t["finnkode"])  # one charge per target, not per request
+                docs = fetch_sold_cards(
+                    target_bbox(t, pad_lon * scale, pad_lat * scale), fetch=fetch
+                )
+                tiles_queried += 1
+                used += 1
+                cards_seen += len(docs)
+                collect(docs)
+
+                if t["finnkode"] in matched or len(docs) < _RESULT_CAP:
+                    break  # found it, or the box wasn't crowded so tightening won't help
+            if exhausted:
                 break
-            if delay is not None and not first:
-                delay()
-            first = False
+        return used, exhausted
 
-            if scale == 1.0:
-                attempted.append(t["finnkode"])  # one charge per target, not per request
-            docs = fetch_sold_cards(
-                target_bbox(t, pad_lon * scale, pad_lat * scale), fetch=fetch
-            )
-            tiles_queried += 1
-            cards_seen += len(docs)
-            collect(docs)
+    # Solgt gets the reserved-off cap (or the full budget if Inaktiv is empty
+    # -- never waste the reserve on an empty tier); max(1, ...) guarantees
+    # Solgt is never fully starved even when max_requests <= inaktiv_reserve.
+    if max_requests is None:
+        solgt_cap = None
+    elif not has_inaktiv:
+        solgt_cap = max_requests
+    else:
+        solgt_cap = max(1, max_requests - inaktiv_reserve)
 
-            if t["finnkode"] in matched or len(docs) < _RESULT_CAP:
-                break  # found it, or the box wasn't crowded so tightening won't help
-        if budget_exhausted:
-            break
+    solgt_used, solgt_exhausted = run_phase(solgt_targets, solgt_cap)
+
+    # Inaktiv gets whatever's left of the OVERALL budget -- if Solgt finished
+    # under its cap (matched out or ran out of targets), that's everything,
+    # not just inaktiv_reserve ("leftover flows downhill").
+    inaktiv_cap = None if max_requests is None else max(0, max_requests - solgt_used)
+    inaktiv_used, inaktiv_exhausted = run_phase(inaktiv_targets, inaktiv_cap)
+
+    # budget_exhausted means the OVERALL max_requests was hit with work still
+    # pending -- NOT the Solgt sub-cap (that's an internal reallocation, not a
+    # sweep-ending event). The one case where hitting the Solgt cap IS hitting
+    # the overall cap is when there's no Inaktiv tier to reserve against, so
+    # solgt_cap == max_requests exactly.
+    budget_exhausted = inaktiv_exhausted or (solgt_exhausted and not has_inaktiv)
 
     if attempted:
         record_attempts(conn, attempted)
@@ -460,6 +520,7 @@ def run_sold_backlog(
     force: bool = False,
     grace_days: int = 180,
     max_attempts: int = 5,
+    inaktiv_reserve: int = 2,
 ) -> dict:
     """One careful, budgeted backlog pass -- the scheduled entry point.
 
@@ -491,6 +552,9 @@ def run_sold_backlog(
     sweep's target set (see `load_domain().sold.trukket_grace_days`).
     ``max_attempts`` is likewise passed through -- see
     `load_domain().sold.max_attempts` and :func:`given_up_targets`.
+    ``inaktiv_reserve`` is passed through to :func:`run_sold_sweep` -- see its
+    docstring and `load_domain().sold.inaktiv_reserve_requests` for why the
+    strict Solgt-first ordering above needs a reserved floor for Inaktiv.
 
     On :class:`Throttled`, the run suspends the sweep (persisted) and calls
     ``notify`` -- so pushback is recognized immediately and no further requests
@@ -514,6 +578,7 @@ def run_sold_backlog(
             targets=targets,
             max_requests=max_requests,
             order_by_density=True,
+            inaktiv_reserve=inaktiv_reserve,
         )
     except Throttled as exc:
         suspend(conn, str(exc))
