@@ -16,6 +16,7 @@ ALL_MIGRATIONS = [
     "004_dnb_travel", "005_annotations", "006_sold_prices",
     "007_sold_sweep_state", "008_postnummer_pad", "009_sold_attempts",
     "010_listing_details", "011_neighbour_sold", "012_neighbour_sold_index",
+    "013_gjovikbanen_missing_stations", "014_r31_north_of_jaren",
 ]
 
 
@@ -260,6 +261,98 @@ def test_migration_012_indexes_discovered_near_finnkode(tmp_path):
     indexes = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sold_prices'")}
     assert "idx_sold_prices_discovered_near" in indexes
+
+
+def _apply_013(conn):
+    sql = (migrations.MIGRATIONS_DIR / "013_gjovikbanen_missing_stations.sql").read_text(
+        encoding="utf-8")
+    for stmt in migrations._statements(sql):
+        conn.execute(stmt)
+    conn.commit()
+
+
+def _seed_legacy_stations(conn):
+    """The legacy-seeded neighbours 013 repairs around (see its guard)."""
+    conn.executemany(
+        "INSERT INTO stations (name, lat, lng) VALUES (?, ?, ?)",
+        [("Snippen", 60.0240121, 10.8099853),
+         ("Nittedal", 60.0583068, 10.8648814),
+         ("Varingskollen", 60.105965, 10.847299)])
+    conn.commit()
+
+
+def test_migration_013_seeds_movatn_and_aneby(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    ran = migrations.migrate(conn)
+    assert "013_gjovikbanen_missing_stations" in ran
+    # Fresh DB: no legacy stations, so the guard holds and nothing is seeded.
+    assert list(conn.execute("SELECT COUNT(*) AS n FROM stations"))[0]["n"] == 0
+
+    _seed_legacy_stations(conn)
+    _apply_013(conn)
+    rows = list(conn.execute(
+        "SELECT s.name, s.lat, s.lng, sl.line, st.destination, st.minutes "
+        "FROM stations s "
+        "JOIN station_lines sl ON sl.station_id = s.id "
+        "JOIN station_travel st ON st.station_line_id = sl.id "
+        "WHERE s.name IN ('Movatn', 'Åneby') ORDER BY s.name, sl.line"))
+    assert [(r["name"], r["line"], r["destination"], r["minutes"]) for r in rows] == [
+        ("Movatn", "R31", "Oslo S", 25),
+        ("Movatn", "RE30", "Oslo S", 25),
+        ("Åneby", "R31", "Oslo S", 34),
+        ("Åneby", "RE30", "Oslo S", 34),
+    ]
+    # Line order: Movatn sits between Snippen (60.0240) and Nittedal (60.0583),
+    # Åneby between Nittedal and Varingskollen (60.1060).
+    coords = {r["name"]: (r["lat"], r["lng"]) for r in rows}
+    assert 60.0240 < coords["Movatn"][0] < 60.0583 < coords["Åneby"][0] < 60.1060
+
+
+def test_migration_013_is_reapplyable_over_existing_rows(tmp_path):
+    """Re-running 013 against a DB that already has the rows is a no-op.
+
+    The live DB is written by the server, not by this repo; a hand-applied or
+    partially-applied 013 must not produce duplicate lines/travel rows.
+    """
+    conn = connection.connect(tmp_path / "fresh.db")
+    migrations.migrate(conn)
+    _seed_legacy_stations(conn)
+    _apply_013(conn)
+    before = list(conn.execute("SELECT COUNT(*) AS n FROM station_lines"))[0]["n"]
+    _apply_013(conn)
+    assert list(conn.execute("SELECT COUNT(*) AS n FROM station_lines"))[0]["n"] == before
+    assert list(conn.execute(
+        "SELECT COUNT(*) AS n FROM stations WHERE name = 'Movatn'"))[0]["n"] == 1
+
+
+def test_migration_014_drops_r31_north_of_jaren(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    migrations.migrate(conn)
+    conn.execute("INSERT INTO stations (name, lat, lng) VALUES ('Gjøvik', 60.79, 10.69)")
+    sid = conn.execute("SELECT id FROM stations WHERE name = 'Gjøvik'").fetchone()["id"]
+    for line in ("R31", "RE30"):
+        conn.execute("INSERT INTO station_lines (station_id, line) VALUES (?, ?)", (sid, line))
+        lid = conn.execute(
+            "SELECT id FROM station_lines WHERE station_id = ? AND line = ?", (sid, line)
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO station_travel (station_line_id, destination, minutes) "
+            "VALUES (?, 'Oslo S', 57)", (lid,))
+    conn.commit()
+
+    sql = (migrations.MIGRATIONS_DIR / "014_r31_north_of_jaren.sql").read_text(encoding="utf-8")
+    for _ in range(2):  # idempotent
+        for stmt in migrations._statements(sql):
+            conn.execute(stmt)
+        conn.commit()
+
+    rows = list(conn.execute(
+        "SELECT sl.line, st.minutes FROM station_lines sl "
+        "LEFT JOIN station_travel st ON st.station_line_id = sl.id "
+        "WHERE sl.station_id = ?", (sid,)))
+    # R31 gone with its travel row; RE30 keeps the identical minutes.
+    assert [(r["line"], r["minutes"]) for r in rows] == [("RE30", 57)]
+    assert list(conn.execute("SELECT COUNT(*) AS n FROM station_travel"))[0]["n"] == 1
 
 
 def test_statements_keeps_trigger_block_intact():
