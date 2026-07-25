@@ -158,6 +158,16 @@ function bucketOf(item) {
   return "eie";
 }
 
+// Vocabularies must describe what the user can actually SEE. Deriving them from
+// every loaded item strands values from a switched-off bucket in the filter UI
+// forever, because the item store only ever grows -- once the sold bucket is
+// fetched it stays for the session. Scope this to the LAYER toggles only:
+// deriving from "passes all filters" instead would make a tag vanish the moment
+// a price slider hid it, leaving no way to click it back.
+function vocabItems() {
+  return [...state.itemsById.values()].filter((it) => state.ui[bucketOf(it)]);
+}
+
 // Per-listing dim decision: metric filters OR commute OR hide-outside-radius.
 // `ctx` carries the once-per-recompute station context.
 function isDimmed(item, ctx) {
@@ -425,6 +435,10 @@ function wireLayerToggles() {
           input.disabled = false;
         }
       }
+      // Every bucket change moves the vocabulary boundary, in both directions.
+      // The enable path already rebuilds via ensureSoldLoaded, but eie/dnb and
+      // every disable path did not, which is how switched-off values got stuck.
+      rebuildFilterUIs();
       applyAll();
     });
   });
@@ -727,7 +741,7 @@ function onFilterChange() {
 function rebuildFilterUIs() {
   buildFilterPanelUI(document.getElementById("filter-panel-body"), {
     meta: state.meta,
-    vocabs: deriveVocabs([...state.itemsById.values()]),
+    vocabs: deriveVocabs(vocabItems()),
     colorByType: { ...state.colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
     filters: state.ui.filters,
     collapsed: state.ui.collapsed,
