@@ -180,10 +180,6 @@ const closedColorExpr = (color) => ["case", ["==", ["get", "sold"], true], color
 const IS_CLOSED = ["==", ["get", "closed"], true];
 const NOT_CLOSED = ["==", ["get", "closed"], false];
 
-// Ring drawn beneath any listing that carries a tag -- the "this one is
-// annotated" marker, independent of boligtype colour.
-const TAG_RING_COLOR = "#7c3aed";
-
 // Sold-dot colour in "budpremie" mode: tinglyst sold price vs prisantydning,
 // bucketed. `premium` is a percent number precomputed on the feature
 // (app.js); features without one (no tinglyst price yet) stay neutral.
@@ -269,6 +265,8 @@ export function addListingGroups(map, groups, onListingClick) {
 
     // Tagged-listing ring: a hollow circle slightly larger than the dot,
     // drawn BENEATH the dot layers (added first) so it reads as a halo.
+    // Stroke colour is the TAG's own colour (tagcolors.js) -- features
+    // matching the hasTag filter always carry a tagColor property.
     map.addLayer({
       id: g.id + "-tagring",
       type: "circle",
@@ -278,7 +276,7 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-radius": 12,
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-width": 3,
-        "circle-stroke-color": TAG_RING_COLOR,
+        "circle-stroke-color": ["get", "tagColor"],
         "circle-stroke-opacity": ["min", 0.9, OP],
       },
     });

@@ -17,6 +17,7 @@ import {
   PREMIUM_LEGEND,
   DEFAULT_UNKNOWN_TYPE_COLOR,
 } from "./map.js";
+import { assignTagColors, colorForTag } from "./tagcolors.js";
 import { buildPopupContent } from "./popup.js";
 import { isNew, parseScrapedAt, premiumPct } from "./listingmeta.js";
 import {
@@ -179,10 +180,6 @@ function isDimmed(item, ctx) {
   return false;
 }
 
-function tagKeyOf(item) {
-  return item.tag ? String(item.tag).trim() : "";
-}
-
 function itemToFeature(item, op) {
   const properties = {
     finnkode: item.finnkode,
@@ -192,7 +189,11 @@ function itemToFeature(item, op) {
     boligtype: item.boligtype || "",
     op, // 1, or the dimmed residual opacity (see filters.residualOpacity)
   };
-  if (tagKeyOf(item)) properties.hasTag = true; // drives the tag-ring layer
+  const tagColor = colorForTag(item.tag, state.tagColors || new Map());
+  if (tagColor) {
+    properties.hasTag = true; // drives the tag-ring layer
+    properties.tagColor = tagColor; // the ring's stroke color
+  }
   if (item.sold) {
     const pct = premiumPct(item);
     if (pct != null) properties.premium = Math.round(pct * 10) / 10;
@@ -207,6 +208,11 @@ function itemToFeature(item, op) {
 // Bucket the visible listings into one FeatureCollection per group source
 // (sold group + per-boligtype groups), so each source clusters independently.
 function featureCollectionsByGroup() {
+  // Rebuilt every recompute: cheap (one hash per distinct tag) and always
+  // in sync with the current tag set -- popup chips read this same map.
+  state.tagColors = assignTagColors(
+    [...state.itemsById.values()].map((i) => i.tag)
+  );
   const ctx = {
     stations: state.meta.stations || [],
     visibleLines: visibleLineSet(state.ui),
