@@ -15,6 +15,7 @@ import {
   activeFilterCount,
   subscribeOtherTabs,
   resetFilters,
+  pruneFilterSets,
 } from "./filterstate.js";
 import {
   isColumnFilterActive,
@@ -151,6 +152,7 @@ function refreshVocabs() {
   // switched back off.
   const visible = state.showSold ? state.items : state.items.filter((it) => !it.closed);
   state.vocabs = deriveVocabs(visible);
+  if (pruneFilterSets(state.filters, state.vocabs)) saveFilters(state.filters);
   state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
 }
 

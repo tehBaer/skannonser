@@ -33,6 +33,7 @@ import {
   activeFilterEntries,
   subscribeOtherTabs,
   resetFilters,
+  pruneFilterSets,
 } from "./filterstate.js";
 import {
   addStationLayers,
@@ -743,9 +744,11 @@ function onFilterChange() {
 // (Re)build every filter/display control that renders shared state -- init,
 // reset, cross-tab storage event, sold-load, annotation-save.
 function rebuildFilterUIs() {
+  const vocabs = deriveVocabs(vocabItems());
+  if (pruneFilterSets(state.ui.filters, vocabs)) saveUi();
   buildFilterPanelUI(document.getElementById("filter-panel-body"), {
     meta: state.meta,
-    vocabs: deriveVocabs(vocabItems()),
+    vocabs,
     colorByType: { ...state.colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
     filters: state.ui.filters,
     collapsed: state.ui.collapsed,

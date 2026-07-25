@@ -232,6 +232,46 @@ export function activeFilterCount(filters, meta) {
   return activeFilterEntries(filters, meta).length;
 }
 
+// Drop hidden/selected entries whose value no longer exists in the current
+// vocabulary. Without this, hiding a chip for a value that later leaves the
+// vocabulary (a tag only closed listings carried, say) leaves an entry that
+// filters nothing but keeps counting toward "N filtre aktive" forever -- and
+// persists to localStorage. Returns true when something was removed so the
+// caller can save. Only the deriveVocabs-backed sets are pruned; boligtype,
+// eieform and energimerke come from the server's static meta vocabulary.
+export function pruneFilterSets(filters, vocabs) {
+  if (!filters || !vocabs) return false;
+  let changed = false;
+  const keysOf = (list) => new Set((list || []).map((o) => o.key));
+
+  const pruneHidden = (setKey, allowed) => {
+    const set = filters[setKey];
+    if (!set) return;
+    Object.keys(set).forEach((k) => {
+      if (!allowed.has(k)) {
+        delete set[k];
+        changed = true;
+      }
+    });
+  };
+  const pruneSelected = (arrKey, allowed) => {
+    const arr = filters[arrKey];
+    if (!Array.isArray(arr)) return;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (!allowed.has(arr[i])) {
+        arr.splice(i, 1);
+        changed = true;
+      }
+    }
+  };
+
+  pruneHidden("tagHidden", keysOf(vocabs.tags));
+  pruneHidden("tilgjengelighetHidden", keysOf(vocabs.tilgjengelighet));
+  pruneSelected("postnummerSelected", keysOf(vocabs.postnummer));
+  pruneSelected("nabolagSelected", keysOf(vocabs.nabolag));
+  return changed;
+}
+
 // Reset IN PLACE (both pages hold live references into this object),
 // preserving only the includeUnknown policy choice.
 export function resetFilters(filters, meta) {
