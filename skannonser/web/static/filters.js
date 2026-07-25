@@ -362,16 +362,20 @@ export function openPopover(anchor, build) {
   popoverAnchor = anchor;
 }
 
-// One document-level dismiss wiring (module init).
-document.addEventListener("click", (ev) => {
-  if (!popoverEl) return;
-  if (popoverEl.contains(ev.target)) return;
-  if (popoverAnchor && popoverAnchor.contains(ev.target)) return;
-  closePopover();
-});
-document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closePopover();
-});
+// One document-level dismiss wiring (module init). Guarded because this module
+// holds the shared filter predicate and vocabulary derivation, which are unit
+// tested under node -- where there is no document.
+if (typeof document !== "undefined") {
+  document.addEventListener("click", (ev) => {
+    if (!popoverEl) return;
+    if (popoverEl.contains(ev.target)) return;
+    if (popoverAnchor && popoverAnchor.contains(ev.target)) return;
+    closePopover();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closePopover();
+  });
+}
 
 // Notion-style compact select-field over a HIDDEN-set: closed it shows a
 // summary ("Alle" when nothing is hidden, chips of the visible values when
