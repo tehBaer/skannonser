@@ -13,7 +13,7 @@ uncommitted files onto the new branch. That is not hypothetical — it happened 
 under `.claude/worktrees/`). Then run:
 
 ```bash
-./scripts/setup-worktree.sh
+./ops/setup-worktree.sh
 ```
 
 A worktree checkout omits every gitignored path, and three matter here — the

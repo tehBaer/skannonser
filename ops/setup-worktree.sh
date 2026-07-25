@@ -7,7 +7,7 @@
 # Without them `pytest` fails in ways that look like real breakage but are not.
 # Run this once from inside a new worktree:
 #
-#     ./scripts/setup-worktree.sh [--with-db]
+#     ./ops/setup-worktree.sh [--with-db]
 #
 # Idempotent: re-running only repairs whatever is missing.
 #
