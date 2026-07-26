@@ -215,6 +215,11 @@ const X_PX = Math.round(DOT_R * 2);
 // -sold layer paint).
 const ACTIVE_BORDER = "#111111";
 
+// Cluster review-halo colour. Deliberately one fixed colour rather than a tag
+// colour (clusters mix tags), and taken from the TAG palette family rather than
+// the boligtype palette so it reads as annotation, not data.
+const TAG_CLUSTER_HALO = "#c2185b";
+
 const IS_CLOSED = ["==", ["get", "closed"], true];
 const NOT_CLOSED = ["==", ["get", "closed"], false];
 
@@ -273,6 +278,17 @@ export function addListingGroups(map, groups, onListingClick) {
   // before the dots let a neighbouring group's dot cover a ring meant to
   // halo an earlier dot -- drawing rings last guarantees nothing can bury one.
 
+  // Hoisted rather than recomputed: this expression reads only op_sum and
+  // point_count, both uniform cluster properties across every group's source
+  // (buildGroups never varies their shape), so it is identical for every g.
+  // The cluster-bubble pass and the cluster-halo pass (below) both need it --
+  // duplicating the literal would let the two drift apart silently.
+  const clusterOpacity = [
+    "max",
+    0.15, // floor so a fully-dimmed cluster stays faintly visible
+    ["/", ["coalesce", ["get", "op_sum"], ["get", "point_count"]], ["get", "point_count"]],
+  ];
+
   groups.forEach((g) => {
     map.addSource(g.id, {
       type: "geojson",
@@ -284,6 +300,9 @@ export function addListingGroups(map, groups, onListingClick) {
       // faded in proportion to how many of its listings are dimmed (nedtoning).
       clusterProperties: {
         op_sum: ["+", ["get", "op"]],
+        // How many members carry a tag. With point_count this gives the
+        // reviewed FRACTION, which drives the halo's strength below.
+        tag_sum: ["+", ["case", ["==", ["get", "hasTag"], true], 1, 0]],
       },
     });
   });
@@ -302,11 +321,6 @@ export function addListingGroups(map, groups, onListingClick) {
     // "filled = live, hollow = gone" reads at every zoom level. "Both"
     // clusters stay filled -- they do contain active listings.
     const closedOnly = g.hasSold && !g.hasActive;
-    const clusterOpacity = [
-      "max",
-      0.15, // floor so a fully-dimmed cluster stays faintly visible
-      ["/", ["coalesce", ["get", "op_sum"], ["get", "point_count"]], ["get", "point_count"]],
-    ];
     map.addLayer({
       id: g.id + "-cluster",
       type: "circle",
@@ -416,6 +430,39 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-stroke-width": 3,
         "circle-stroke-color": ["get", "tagColor"],
         "circle-stroke-opacity": ["min", 0.9, OP],
+      },
+    });
+
+    // Cluster-level "how much of this have I reviewed" halo. One fixed colour,
+    // not a tag colour: a cluster mixes tags, so no single tag's colour applies.
+    // Strength scales with the reviewed fraction -- a barely-touched cluster
+    // shows a faint ring, a fully-reviewed one a strong one -- because a binary
+    // "contains a tag" mark would make 1-of-50 look like 3-of-3. Multiplied by
+    // the same cluster opacity as the bubble so nedtoning still fades it.
+    map.addLayer({
+      id: g.id + "-cluster-tagring",
+      type: "circle",
+      source: g.id,
+      filter: ["all", ["has", "point_count"], [">", ["get", "tag_sum"], 0]],
+      paint: {
+        "circle-radius": [
+          "interpolate", ["linear"], ["get", "point_count"],
+          2, 18, 25, 23, 100, 29, 500, 34,
+        ],
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-opacity": 0,
+        "circle-stroke-width": 2.5,
+        "circle-stroke-color": TAG_CLUSTER_HALO,
+        "circle-stroke-opacity": [
+          "*",
+          clusterOpacity,
+          [
+            "interpolate", ["linear"],
+            ["/", ["get", "tag_sum"], ["get", "point_count"]],
+            0, 0.3,
+            1, 1,
+          ],
+        ],
       },
     });
   });

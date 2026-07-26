@@ -126,3 +126,33 @@ test("the tag ring hugs its dot and draws above every dot layer", () => {
   assert.ok(firstRing > lastDot,
     "rings must draw above dots so a neighbouring dot cannot cover them");
 });
+
+test("clusters carry a tagged-count property and a proportional halo", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const specs = [];
+  const sources = [];
+  const map = fakeMap();
+  map.addSource = (id, cfg) => sources.push({ id, cfg });
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  assert.ok(sources.every((s) => s.cfg.clusterProperties && s.cfg.clusterProperties.tag_sum),
+    "every clustered source must aggregate a tagged count");
+
+  const halo = specs.find((s) => s.id.endsWith("-cluster-tagring"));
+  assert.ok(halo, "a cluster halo layer must exist");
+  assert.equal(halo.paint["circle-opacity"], 0, "halo is a ring, not a disc");
+  assert.ok(JSON.stringify(halo.filter).includes("point_count"),
+    "halo applies to clusters only");
+  assert.ok(JSON.stringify(halo.paint["circle-stroke-opacity"]).includes("tag_sum"),
+    "halo strength must derive from the tagged fraction, not be a constant");
+});
+
+test("the cluster halo draws above the cluster bubble", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const map = fakeMap();
+  addListingGroups(map, groups, () => {});
+  const bubble = Math.max(...map.added.flatMap((id, i) => (id.endsWith("-cluster") ? [i] : [])));
+  const halo = Math.min(...map.added.flatMap((id, i) => (id.endsWith("-cluster-tagring") ? [i] : [])));
+  assert.ok(halo > bubble, "halo must not be hidden behind its own bubble");
+});
