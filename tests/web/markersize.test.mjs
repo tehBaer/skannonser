@@ -45,6 +45,25 @@ test("marker geometry keeps its derived relationships: closed < DOT_R < ring, sq
   assert.ok(SQUARE_PX > DOT_R * 2, "the DNB square raster must stay larger than the dot's diameter");
 });
 
+test("the closed ring has the active dot's footprint and a band you can see", () => {
+  // "Sold looks dimmed and smaller" (owner, 2026-07-26) was neither opacity nor
+  // size: at 0 % sold-dim the features carry op=1, and the ring already ended
+  // on the active dot's outer edge. It was the 3px band -- a hollow hairline
+  // reads faint next to a filled disc. Both halves of that are pinned here.
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#111" });
+  const map = fakeMap();
+  addListingGroups(map, groups, () => {});
+
+  const eie = map.specs.find((s) => s.id.endsWith("-eie"));
+  const sold = map.specs.find((s) => s.id.endsWith("-sold"));
+  // GL strokes are drawn OUTSIDE circle-radius, so this sum is the outer edge.
+  const outer = (s) => s.paint["circle-radius"] + s.paint["circle-stroke-width"];
+  assert.equal(outer(sold), outer(eie),
+    `closed and active must occupy the same circle -- filled vs hollow is the only difference; got ${outer(sold)} vs ${outer(eie)}`);
+  assert.ok(sold.paint["circle-stroke-width"] >= 4,
+    `the ring band must stay thick enough to read, got ${sold.paint["circle-stroke-width"]}px`);
+});
+
 // The DOM count marker's progress arc is sized from the GL bubble, so the
 // number clusterBubbleRadius() returns and the expression the GL layer is
 // built with MUST come from the same stops. If someone edits the layer's
