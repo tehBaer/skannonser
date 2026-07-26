@@ -69,7 +69,11 @@ function defaultUi(meta) {
     // full strength the actives drown -- subdued-by-default keeps the sold
     // layer readable the moment it's toggled on. Slide to 0 for full colour.
     soldDim: 50,
-    soldPremium: false, // colour sold dots by budpremie instead of boligtype
+    // Budpremie colouring is retired for now (owner, 2026-07-26): the control is
+    // gone from the sidebar but setSoldColorMode/PREMIUM_* remain in map.js so it
+    // can be brought back. Forced false on load so a stored `true` from before the
+    // control disappeared cannot strand anyone in premium colours.
+    soldPremium: false,
     combineSold: false, // cluster sold + active together (vs separately)
     collapsed: {}, // {panelId: true} -> sidebar panel collapsed
     stations: {
@@ -130,6 +134,10 @@ function loadUi(meta) {
       // saveUi can never re-persist the old shape.
       delete ui.boligtypeHidden;
       delete ui.tagHidden;
+      // Budpremie colouring is retired (owner, 2026-07-26): the ...stored spread
+      // above would otherwise let a pre-existing `soldPremium: true` survive
+      // forever, with no control left in the sidebar to turn it back off.
+      ui.soldPremium = false;
       return ui;
     }
   } catch (_) {
@@ -844,8 +852,9 @@ async function init() {
     wireStationNamePopup(map);
     addBoundary(map, meta.polygon || []);
     state.layersReady = true;
-    if (state.ui.soldPremium) setSoldColorMode(map, state.groups, true);
-
+    // No initial setSoldColorMode(..., true) call here: budpremie colouring is
+    // retired (Task 7B) and loadUi() forces soldPremium false on every load, so
+    // this branch could never fire -- removed rather than left as dead code.
     applyAll();
 
     map.on("render", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));
