@@ -160,7 +160,22 @@ export function effectiveStationRadiusM(station) {
   return Number.isFinite(r) && r > 0 ? r : DEFAULT_STATION_RADIUS_M;
 }
 
-export function stationCircleFeatures(stations) {
+// Which of a station's lines gives it its colour. The FIRST VISIBLE one, not
+// simply the first: Sandvika serves L1 and R11, and colouring it L1-blue after
+// the user switched L1 off points at a line that is no longer on the map --
+// especially confusing now that the line chips carry these same colours. Falls
+// back to the first line when none is visible (the station is on its way out
+// of the source anyway) and to "" when it has none, which lineColor maps to
+// the UNASSIGNED colour.
+function displayLineOf(lines, visibleLines) {
+  if (visibleLines) {
+    const visible = lines.find((l) => visibleLines.has(l));
+    if (visible) return visible;
+  }
+  return lines[0] || "";
+}
+
+export function stationCircleFeatures(stations, visibleLines) {
   const features = [];
   (stations || []).forEach((station) => {
     if (station.lat == null || station.lng == null) return;
@@ -177,7 +192,7 @@ export function stationCircleFeatures(stations) {
       properties: {
         name: station.name || "Stasjon",
         lines: lines.join(","),
-        color: lineColor(lines[0] || ""),
+        color: lineColor(displayLineOf(lines, visibleLines)),
       },
     });
   });
@@ -192,7 +207,7 @@ export function stationCircleFeatures(stations) {
 // Carries `lines` (same comma-joined shape as stationCircleFeatures) so
 // wireStationNamePopup's line suffix reads identically whether the hover
 // lands on the point or the radius ring.
-export function stationPointFeatures(stations) {
+export function stationPointFeatures(stations, visibleLines) {
   const features = [];
   (stations || []).forEach((station) => {
     if (station.lat == null || station.lng == null) return;
@@ -203,7 +218,7 @@ export function stationPointFeatures(stations) {
       properties: {
         name: station.name || "Stasjon",
         lines: lines.join(","),
-        color: lineColor(lines[0] || ""),
+        color: lineColor(displayLineOf(lines, visibleLines)),
       },
     });
   });
@@ -314,8 +329,10 @@ export function addStationLayers(map) {
   });
 }
 
-// Recompute the station source (visible lines + commute-visible stations only)
-// and toggle the master "show stations" visibility.
+// Recompute the station sources (visible lines + commute-visible stations
+// only) and apply the two INDEPENDENT visibility flags: "Vis stasjoner" drives
+// the station dots, and "Vis radius" -- gated by the first, since a radius is a
+// detail of a station -- drives the radius fill and ring.
 export function updateStationLayers(map, stations, ui) {
   const src = map.getSource(STATION_SOURCE_ID);
   if (!src) return;
@@ -332,10 +349,12 @@ export function updateStationLayers(map, stations, ui) {
       : true;
     return anyVisible && stationCommuteVisible(s, opts);
   });
-  src.setData(stationCircleFeatures(kept));
+  // visibleLines is handed on so a station is coloured by a line the user can
+  // actually see, not by whichever line happens to be first in its list.
+  src.setData(stationCircleFeatures(kept, visibleLines));
 
   const pointSrc = map.getSource(STATION_POINT_SOURCE_ID);
-  if (pointSrc) pointSrc.setData(stationPointFeatures(kept));
+  if (pointSrc) pointSrc.setData(stationPointFeatures(kept, visibleLines));
 
   // The radius is a detail OF the stations, so it can only show when they do.
   const showStations = !!ui.stations.show;
@@ -358,7 +377,8 @@ export function visibleLineSet(ui) {
   return set;
 }
 
-// Bind the hover/click station-name popup to the circle layers.
+// Bind the hover/click station-name popup to every layer a station is drawn
+// with: the radius fill, the radius ring, AND the station point itself.
 export function wireStationNamePopup(map) {
   let popup = null;
   const show = (e) => {

@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stationPointFeatures, stationCircleFeatures } from "../../skannonser/web/static/stations.js";
+import {
+  stationPointFeatures,
+  stationCircleFeatures,
+  lineColor,
+} from "../../skannonser/web/static/stations.js";
 
 const stations = [
   { name: "Sandvika", lat: 59.89, lng: 10.52, lines: ["L1", "R11"] },
@@ -39,4 +43,38 @@ test("points also carry the comma-joined lines property, same as radius polygons
   const sandvika = fc.features.find((f) => f.properties.name === "Sandvika");
   assert.ok(sandvika.properties.lines.includes("L1"));
   assert.ok(sandvika.properties.lines.includes("R11"));
+});
+
+// A station takes the colour of the first line the user can still SEE. Hiding
+// L1 and keeping R11 must not leave Sandvika painted in L1's colour -- the
+// line chips carry these same colours, so it named a switched-off line.
+test("stations are coloured by their first VISIBLE line, not simply their first", () => {
+  const l1Only = stationPointFeatures(stations, new Set(["L1"]));
+  const r11Only = stationPointFeatures(stations, new Set(["R11"]));
+  const sandvikaL1 = l1Only.features.find((f) => f.properties.name === "Sandvika");
+  const sandvikaR11 = r11Only.features.find((f) => f.properties.name === "Sandvika");
+  assert.equal(sandvikaL1.properties.color, lineColor("L1"));
+  assert.equal(sandvikaR11.properties.color, lineColor("R11"));
+  assert.notEqual(sandvikaL1.properties.color, sandvikaR11.properties.color);
+});
+
+test("radius polygons follow the same visible-line colour rule as the points", () => {
+  const fc = stationCircleFeatures(stations, new Set(["R11"]));
+  const sandvika = fc.features.find((f) => f.properties.name === "Sandvika");
+  assert.equal(sandvika.properties.color, lineColor("R11"));
+});
+
+test("with no visible line left, the colour falls back to the first line", () => {
+  // Reachable in passing: updateStationLayers drops such stations from the
+  // source, but a station whose only lines are hidden must not throw or lose
+  // its colour on the way out.
+  const fc = stationPointFeatures(stations, new Set(["R99"]));
+  const sandvika = fc.features.find((f) => f.properties.name === "Sandvika");
+  assert.equal(sandvika.properties.color, lineColor("L1"));
+});
+
+test("omitting visibleLines keeps the previous first-line behaviour", () => {
+  const fc = stationPointFeatures(stations);
+  const sandvika = fc.features.find((f) => f.properties.name === "Sandvika");
+  assert.equal(sandvika.properties.color, lineColor("L1"));
 });
