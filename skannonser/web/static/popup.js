@@ -10,6 +10,7 @@
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium, travelMinutes } from "./listingmeta.js";
 import { colorForTag } from "./tagcolors.js";
+import { attachTagList } from "./tagoptions.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -265,6 +266,7 @@ function buildEditor(item) {
   const tagInput = el("input");
   tagInput.type = "text";
   tagInput.value = item.tag || "";
+  attachTagList(tagInput); // suggests the tags that already exist
   editor.appendChild(tagInput);
 
   const row = el("div", "row");

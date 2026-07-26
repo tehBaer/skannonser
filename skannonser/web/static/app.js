@@ -18,6 +18,7 @@ import {
   DEFAULT_UNKNOWN_TYPE_COLOR,
 } from "./map.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
+import { syncTagOptions } from "./tagoptions.js";
 import { buildPopupContent } from "./popup.js";
 import { isNew, parseScrapedAt, premiumPct } from "./listingmeta.js";
 import {
@@ -796,6 +797,11 @@ function onFilterChange() {
 // reset, cross-tab storage event, sold-load, annotation-save.
 function rebuildFilterUIs() {
   const vocabs = deriveVocabs(vocabItems());
+  // The popup's tag input suggests these. Refreshed here rather than at popup
+  // build time because this runs on exactly the events that can change the tag
+  // set -- init, reset, cross-tab storage, sold-load, annotation-save -- so a
+  // tag invented on one listing is offered on the next one without a reload.
+  syncTagOptions(vocabs.tags.map((o) => o.key));
   if (pruneFilterSets(state.ui.filters, vocabs, vocabIsComplete())) saveUi();
   buildFilterPanelUI(document.getElementById("filter-panel-body"), {
     meta: state.meta,

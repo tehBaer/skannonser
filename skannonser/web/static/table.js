@@ -9,6 +9,7 @@ import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium, travelMinutes } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
+import { attachTagList, syncTagOptions } from "./tagoptions.js";
 import {
   loadFilters,
   saveFilters,
@@ -165,6 +166,9 @@ function refreshVocabs() {
   const vocabComplete = state.showSold && state.soldLoaded;
   if (pruneFilterSets(state.filters, state.vocabs, vocabComplete)) saveFilters(state.filters);
   state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
+  // Same source as the colours, so a tag saved in a cell is suggestable in the
+  // next one without a reload: wireCellEdit re-derives the vocab on every save.
+  syncTagOptions(state.vocabs.tags.map((o) => o.key));
 }
 
 function fmtPris(value) {
@@ -465,6 +469,7 @@ function buildRow(item) {
         input.type = "text";
         input.value = item[col.key] || "";
         input.className = "cell-edit";
+        if (col.key === "tag") attachTagList(input); // existing tags, as a dropdown
         wireCellEdit(input, item, col.key);
         td.appendChild(input);
         if (col.key === "tag") {
