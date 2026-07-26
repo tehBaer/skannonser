@@ -43,13 +43,12 @@ export function defaultFilters(meta) {
     prisKvmMax: PRIS_KVM_MAX,
     soldPriceMax: SOLD_PRICE_MAX,
     premiumMax: PREMIUM_MAX,
-    // hidden sets: {} = off; value key present => that value is excluded.
-    boligtypeHidden: {},
-    tagHidden: {},
-    energiHidden: {},
-    eieformHidden: {},
-    tilgjengelighetHidden: {},
     // selected sets: [] = off; non-empty => ONLY these values pass.
+    boligtypeSelected: [],
+    eieformSelected: [],
+    energiSelected: [],
+    tilgjengelighetSelected: [],
+    tagSelected: [],
     postnummerSelected: [],
     nabolagSelected: [],
     // special
@@ -68,10 +67,10 @@ function readBlob() {
 }
 
 // Stored-over-default merge + one-time migrations of legacy key shapes:
-//  * root-level ui.boligtypeHidden / ui.tagHidden (pre-2026-07-24) move into
-//    filters.* (adopted only when filters.* doesn't have them yet);
-//  * the legacy single-select `filters.eieform` string becomes an
-//    eieformHidden set hiding every OTHER observed eieform.
+//  * the hidden-sets of the six value filters are dropped (see below);
+//  * the legacy single-select `filters.eieform` string becomes a one-element
+//    eieformSelected -- an exact restatement of the same intent, needing no
+//    vocabulary.
 export function loadFilters(meta) {
   const base = defaultFilters(meta);
   const blob = readBlob();
@@ -80,21 +79,26 @@ export function loadFilters(meta) {
     ...base,
     ...stored,
     travelMax: { ...base.travelMax, ...(stored.travelMax || {}) },
-    boligtypeHidden: { ...(stored.boligtypeHidden || blob.boligtypeHidden || {}) },
-    tagHidden: { ...(stored.tagHidden || blob.tagHidden || {}) },
-    energiHidden: { ...(stored.energiHidden || {}) },
-    eieformHidden: { ...(stored.eieformHidden || {}) },
-    tilgjengelighetHidden: { ...(stored.tilgjengelighetHidden || {}) },
+    boligtypeSelected: [...(stored.boligtypeSelected || [])],
+    eieformSelected: [...(stored.eieformSelected || [])],
+    energiSelected: [...(stored.energiSelected || [])],
+    tilgjengelighetSelected: [...(stored.tilgjengelighetSelected || [])],
+    tagSelected: [...(stored.tagSelected || [])],
     postnummerSelected: [...(stored.postnummerSelected || [])],
     nabolagSelected: [...(stored.nabolagSelected || [])],
     facilitiesRequired: { ...(stored.facilitiesRequired || {}) },
   };
+  // The 2026-07-26 conversion from hidden-sets to selections. Inverting a
+  // hidden set needs the COMPLETE value list to select everything else, and for
+  // tags and tilgjengelighet that list is not known until listings load --
+  // acting on a partial vocabulary is exactly what silently destroyed saved
+  // filters before. So the six converted filters reset once; nothing else in
+  // the blob is touched. Unconditional and after the merge, so a stale key
+  // cannot survive `...stored` and be written back by saveFilters.
+  ["boligtypeHidden", "eieformHidden", "energiHidden",
+   "tilgjengelighetHidden", "tagHidden"].forEach((k) => delete filters[k]);
   if (typeof stored.eieform === "string") {
-    if (stored.eieform) {
-      (meta.eieformer || []).forEach((v) => {
-        if (v !== stored.eieform) filters.eieformHidden[v] = true;
-      });
-    }
+    if (stored.eieform) filters.eieformSelected = [stored.eieform];
     delete filters.eieform;
   }
   return filters;
@@ -179,25 +183,6 @@ export function activeFilterEntries(filters, meta) {
     }
   });
 
-  const hiddenSet = (key, label) => {
-    const n = Object.keys(filters[key] || {}).length;
-    if (n) {
-      entries.push({
-        key,
-        label,
-        valueText: n + " skjult",
-        clear: (f) => {
-          Object.keys(f[key]).forEach((k) => delete f[key][k]);
-        },
-      });
-    }
-  };
-  hiddenSet("boligtypeHidden", "Boligtype");
-  hiddenSet("eieformHidden", "Eieform");
-  hiddenSet("energiHidden", "Energimerking");
-  hiddenSet("tilgjengelighetHidden", "Tilgjengelighet");
-  hiddenSet("tagHidden", "Tag");
-
   const selectedSet = (key, label) => {
     const n = (filters[key] || []).length;
     if (n) {
@@ -211,6 +196,11 @@ export function activeFilterEntries(filters, meta) {
       });
     }
   };
+  selectedSet("boligtypeSelected", "Boligtype");
+  selectedSet("eieformSelected", "Eieform");
+  selectedSet("energiSelected", "Energimerking");
+  selectedSet("tilgjengelighetSelected", "Tilgjengelighet");
+  selectedSet("tagSelected", "Tag");
   selectedSet("postnummerSelected", "Postnummer");
   selectedSet("nabolagSelected", "Nabolag");
 
@@ -232,8 +222,8 @@ export function activeFilterCount(filters, meta) {
   return activeFilterEntries(filters, meta).length;
 }
 
-// Drop hidden/selected entries whose value no longer exists in the current
-// vocabulary. Without this, hiding a chip for a value that later leaves the
+// Drop selected values that no longer exist in the current vocabulary.
+// Without this, selecting a chip for a value that later leaves the
 // vocabulary (a tag only closed listings carried, say) leaves an entry that
 // filters nothing but keeps counting toward "N filtre aktive" forever -- and
 // persists to localStorage. Returns true when something was removed so the
@@ -264,16 +254,6 @@ export function pruneFilterSets(filters, vocabs, vocabComplete = false) {
   let changed = false;
   const keysOf = (list) => new Set((list || []).map((o) => o.key));
 
-  const pruneHidden = (setKey, allowed) => {
-    const set = filters[setKey];
-    if (!set) return;
-    Object.keys(set).forEach((k) => {
-      if (!allowed.has(k)) {
-        delete set[k];
-        changed = true;
-      }
-    });
-  };
   const pruneSelected = (arrKey, allowed) => {
     const arr = filters[arrKey];
     if (!Array.isArray(arr)) return;
@@ -285,8 +265,8 @@ export function pruneFilterSets(filters, vocabs, vocabComplete = false) {
     }
   };
 
-  pruneHidden("tagHidden", keysOf(vocabs.tags));
-  pruneHidden("tilgjengelighetHidden", keysOf(vocabs.tilgjengelighet));
+  pruneSelected("tagSelected", keysOf(vocabs.tags));
+  pruneSelected("tilgjengelighetSelected", keysOf(vocabs.tilgjengelighet));
   pruneSelected("postnummerSelected", keysOf(vocabs.postnummer));
   pruneSelected("nabolagSelected", keysOf(vocabs.nabolag));
   return changed;

@@ -37,14 +37,21 @@ function numOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function hiddenSetExcludes(set, key) {
-  return Boolean(set && set[key]);
-}
-
 function selectedSetExcludes(selected, raw, unknownFails) {
   if (!selected || !selected.length) return false;
   if (raw === null || raw === undefined || raw === "") return unknownFails;
   return !selected.includes(String(raw));
+}
+
+// Selection over values the UI renders EXPLICITLY, including the "" bucket
+// ("Ukjent boligtype" / "(uten tag)" / "Ingen status"). Distinct from
+// selectedSetExcludes, which treats a missing value as *unknown* and defers to
+// `includeUnknown`: here "" is a value the user can pick like any other, so
+// routing it through the unknown policy would make the empty bucket
+// unselectable. Empty selection = filter off.
+export function selectionExcludes(selected, value) {
+  if (!selected || !selected.length) return false;
+  return !selected.includes(value);
 }
 
 // THE predicate: true when `item` fails the current filters. Map renders
@@ -100,33 +107,14 @@ export function listingExcluded(item, filters, meta) {
     }
   }
 
-  // Hidden sets with explicit "" buckets.
-  if (hiddenSetExcludes(f.boligtypeHidden, item.boligtype || "")) return true;
-  if (hiddenSetExcludes(f.tagHidden, item.tag ? String(item.tag).trim() : "")) return true;
-  if (hiddenSetExcludes(f.tilgjengelighetHidden, item.tilgjengelighet || "")) return true;
-
-  // Hidden sets where null = unknown (governed by includeUnknown once the
-  // set is non-empty).
-  const energiHidden = f.energiHidden || {};
-  if (Object.keys(energiHidden).length) {
-    const letter = item.energimerke || null;
-    if (letter == null) {
-      if (unknownFails) return true;
-    } else if (energiHidden[letter]) {
-      return true;
-    }
-  }
-  const eieformHidden = f.eieformHidden || {};
-  if (Object.keys(eieformHidden).length) {
-    const v = item.eieform || null;
-    if (v == null) {
-      if (unknownFails) return true;
-    } else if (eieformHidden[v]) {
-      return true;
-    }
-  }
+  // Selections over explicitly-rendered values, "" bucket included.
+  if (selectionExcludes(f.boligtypeSelected, item.boligtype || "")) return true;
+  if (selectionExcludes(f.tagSelected, item.tag ? String(item.tag).trim() : "")) return true;
+  if (selectionExcludes(f.tilgjengelighetSelected, item.tilgjengelighet || "")) return true;
 
   // Selected sets (empty = off; non-empty = only these pass).
+  if (selectedSetExcludes(f.energiSelected, item.energimerke, unknownFails)) return true;
+  if (selectedSetExcludes(f.eieformSelected, item.eieform, unknownFails)) return true;
   if (selectedSetExcludes(f.postnummerSelected, item.postnummer, unknownFails)) return true;
   if (selectedSetExcludes(f.nabolagSelected, item.nabolag, unknownFails)) return true;
 
