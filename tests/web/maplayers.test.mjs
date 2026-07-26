@@ -144,8 +144,18 @@ test("clusters carry a tagged-count property and a proportional halo", () => {
   assert.equal(halo.paint["circle-opacity"], 0, "halo is a ring, not a disc");
   assert.ok(JSON.stringify(halo.filter).includes("point_count"),
     "halo applies to clusters only");
-  assert.ok(JSON.stringify(halo.paint["circle-stroke-opacity"]).includes("tag_sum"),
+  assert.ok(JSON.stringify(halo.paint["circle-stroke-width"]).includes("tag_sum"),
     "halo strength must derive from the tagged fraction, not be a constant");
+
+  const widthExpr = halo.paint["circle-stroke-width"];
+  const stops = widthExpr.slice(3).filter((_, i) => i % 2 === 1);
+  assert.ok(stops.length >= 2, "width interpolation must have at least two stops");
+  for (let i = 1; i < stops.length; i++) {
+    assert.ok(stops[i] > stops[i - 1],
+      "width must strictly increase with the reviewed fraction -- a thicker ring means more reviewed");
+  }
+  assert.ok(Math.min(...stops) >= 2,
+    "even the faintest halo must be at least 2px wide so presence always reads");
 });
 
 test("the cluster halo draws above the cluster bubble", () => {

@@ -302,7 +302,11 @@ export function addListingGroups(map, groups, onListingClick) {
         op_sum: ["+", ["get", "op"]],
         // How many members carry a tag. With point_count this gives the
         // reviewed FRACTION, which drives the halo's strength below.
-        tag_sum: ["+", ["case", ["==", ["get", "hasTag"], true], 1, 0]],
+        // hasTag is only stamped on tagged features (app.js) and is ABSENT
+        // -- not false -- on the rest, so coalesce it before comparing;
+        // relying on a missing-property comparison to resolve to false is
+        // not something to depend on across expression evaluators.
+        tag_sum: ["+", ["case", ["==", ["coalesce", ["get", "hasTag"], false], true], 1, 0]],
       },
     });
   });
@@ -435,10 +439,18 @@ export function addListingGroups(map, groups, onListingClick) {
 
     // Cluster-level "how much of this have I reviewed" halo. One fixed colour,
     // not a tag colour: a cluster mixes tags, so no single tag's colour applies.
-    // Strength scales with the reviewed fraction -- a barely-touched cluster
-    // shows a faint ring, a fully-reviewed one a strong one -- because a binary
-    // "contains a tag" mark would make 1-of-50 look like 3-of-3. Multiplied by
-    // the same cluster opacity as the bubble so nedtoning still fades it.
+    // Strength scales with the reviewed fraction, but it rides on ring WIDTH,
+    // not opacity. Opacity was the first cut and it was invisible: at real
+    // data density (a handful of tagged listings among hundreds) a cluster is
+    // typically 1-of-50, which the old opacity encoding rendered at ~19-33%
+    // alpha on a 2.5px stroke -- a hairline that vanishes against a busy
+    // basemap. Width is a strong channel at small sizes, so the SAME 1-of-50
+    // case now draws a solidly visible ring; the fraction still reads as
+    // thickness for anyone comparing clusters side by side, but presence has
+    // to be unmissable before proportion matters -- that's the order the
+    // halo is meant to answer questions in. Stroke opacity still carries only
+    // clusterOpacity (no fraction multiplier) so nedtoning fades a present
+    // halo without ever making a present halo faint for its own sake.
     map.addLayer({
       id: g.id + "-cluster-tagring",
       type: "circle",
@@ -451,18 +463,14 @@ export function addListingGroups(map, groups, onListingClick) {
         ],
         "circle-color": "rgba(0,0,0,0)",
         "circle-opacity": 0,
-        "circle-stroke-width": 2.5,
-        "circle-stroke-color": TAG_CLUSTER_HALO,
-        "circle-stroke-opacity": [
-          "*",
-          clusterOpacity,
-          [
-            "interpolate", ["linear"],
-            ["/", ["get", "tag_sum"], ["get", "point_count"]],
-            0, 0.3,
-            1, 1,
-          ],
+        "circle-stroke-width": [
+          "interpolate", ["linear"],
+          ["/", ["get", "tag_sum"], ["get", "point_count"]],
+          0, 2.5,
+          1, 7,
         ],
+        "circle-stroke-color": TAG_CLUSTER_HALO,
+        "circle-stroke-opacity": clusterOpacity,
       },
     });
   });
