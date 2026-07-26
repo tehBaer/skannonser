@@ -215,11 +215,6 @@ const X_PX = Math.round(DOT_R * 2);
 // -sold layer paint).
 const ACTIVE_BORDER = "#111111";
 
-// Cluster review-halo colour. Deliberately one fixed colour rather than a tag
-// colour (clusters mix tags), and taken from the TAG palette family rather than
-// the boligtype palette so it reads as annotation, not data.
-const TAG_CLUSTER_HALO = "#c2185b";
-
 const IS_CLOSED = ["==", ["get", "closed"], true];
 const NOT_CLOSED = ["==", ["get", "closed"], false];
 
@@ -436,43 +431,6 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-stroke-opacity": ["min", 0.9, OP],
       },
     });
-
-    // Cluster-level "how much of this have I reviewed" halo. One fixed colour,
-    // not a tag colour: a cluster mixes tags, so no single tag's colour applies.
-    // Strength scales with the reviewed fraction, but it rides on ring WIDTH,
-    // not opacity. Opacity was the first cut and it was invisible: at real
-    // data density (a handful of tagged listings among hundreds) a cluster is
-    // typically 1-of-50, which the old opacity encoding rendered at ~19-33%
-    // alpha on a 2.5px stroke -- a hairline that vanishes against a busy
-    // basemap. Width is a strong channel at small sizes, so the SAME 1-of-50
-    // case now draws a solidly visible ring; the fraction still reads as
-    // thickness for anyone comparing clusters side by side, but presence has
-    // to be unmissable before proportion matters -- that's the order the
-    // halo is meant to answer questions in. Stroke opacity still carries only
-    // clusterOpacity (no fraction multiplier) so nedtoning fades a present
-    // halo without ever making a present halo faint for its own sake.
-    map.addLayer({
-      id: g.id + "-cluster-tagring",
-      type: "circle",
-      source: g.id,
-      filter: ["all", ["has", "point_count"], [">", ["get", "tag_sum"], 0]],
-      paint: {
-        "circle-radius": [
-          "interpolate", ["linear"], ["get", "point_count"],
-          2, 18, 25, 23, 100, 29, 500, 34,
-        ],
-        "circle-color": "rgba(0,0,0,0)",
-        "circle-opacity": 0,
-        "circle-stroke-width": [
-          "interpolate", ["linear"],
-          ["/", ["get", "tag_sum"], ["get", "point_count"]],
-          0, 2.5,
-          1, 7,
-        ],
-        "circle-stroke-color": TAG_CLUSTER_HALO,
-        "circle-stroke-opacity": clusterOpacity,
-      },
-    });
   });
 
   // UNCHANGED: the existing trailing block that wires click / mouseenter /
@@ -539,6 +497,15 @@ export function syncClusterMarkers(map, groups, cache) {
       div.style.width = size + "px";
       div.style.height = size + "px";
       div.textContent = f.properties.point_count_abbreviated;
+      // Reviewed-progress arc (CSS draws it; see style.css). A GL circle layer
+      // can only draw a full ring, and thickness reads poorly as a proportion --
+      // an arc is directly legible. Only set when something is tagged, so
+      // untouched clusters carry no decoration at all.
+      const reviewed = Number(f.properties.tag_sum) || 0;
+      if (reviewed > 0 && count > 0) {
+        div.dataset.reviewed = "";
+        div.style.setProperty("--reviewed", String(Math.min(1, reviewed / count)));
+      }
       const clusterId = f.properties.cluster_id;
       const coords = f.geometry.coordinates;
       div.addEventListener("click", () => {

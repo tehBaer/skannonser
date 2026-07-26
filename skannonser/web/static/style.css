@@ -579,3 +579,22 @@ details.subgroup > summary {
   100% { background: transparent; }
 }
 #listings-table tr.row-flash td { animation: row-flash 2.4s ease-out; }
+
+/* Cluster review-progress arc (2026-07-26). The count marker sits exactly over
+   the GL bubble, so a pseudo-element just outside it reads as that bubble's
+   own progress. White with a soft dark shadow so it holds up on both the pale
+   and the dark parts of the OSM basemap without competing with the boligtype
+   colours the way the earlier crimson ring did. */
+.cluster-marker.cluster-count { position: relative; }
+.cluster-marker.cluster-count[data-reviewed]::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  /* from -90deg so the arc starts at 12 o'clock, like a progress dial. */
+  background: conic-gradient(from -90deg, #ffffff calc(var(--reviewed, 0) * 360deg), rgba(0, 0, 0, 0) 0);
+  -webkit-mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}

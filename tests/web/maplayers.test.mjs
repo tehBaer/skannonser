@@ -127,42 +127,20 @@ test("the tag ring hugs its dot and draws above every dot layer", () => {
     "rings must draw above dots so a neighbouring dot cannot cover them");
 });
 
-test("clusters carry a tagged-count property and a proportional halo", () => {
+test("the tagged-count cluster property survives (the DOM arc needs it)", () => {
   const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
-  const specs = [];
   const sources = [];
   const map = fakeMap();
   map.addSource = (id, cfg) => sources.push({ id, cfg });
-  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
   addListingGroups(map, groups, () => {});
-
   assert.ok(sources.every((s) => s.cfg.clusterProperties && s.cfg.clusterProperties.tag_sum),
-    "every clustered source must aggregate a tagged count");
-
-  const halo = specs.find((s) => s.id.endsWith("-cluster-tagring"));
-  assert.ok(halo, "a cluster halo layer must exist");
-  assert.equal(halo.paint["circle-opacity"], 0, "halo is a ring, not a disc");
-  assert.ok(JSON.stringify(halo.filter).includes("point_count"),
-    "halo applies to clusters only");
-  assert.ok(JSON.stringify(halo.paint["circle-stroke-width"]).includes("tag_sum"),
-    "halo strength must derive from the tagged fraction, not be a constant");
-
-  const widthExpr = halo.paint["circle-stroke-width"];
-  const stops = widthExpr.slice(3).filter((_, i) => i % 2 === 1);
-  assert.ok(stops.length >= 2, "width interpolation must have at least two stops");
-  for (let i = 1; i < stops.length; i++) {
-    assert.ok(stops[i] > stops[i - 1],
-      "width must strictly increase with the reviewed fraction -- a thicker ring means more reviewed");
-  }
-  assert.ok(Math.min(...stops) >= 2,
-    "even the faintest halo must be at least 2px wide so presence always reads");
+    "every clustered source must still aggregate a tagged count");
 });
 
-test("the cluster halo draws above the cluster bubble", () => {
+test("no GL cluster-halo layer remains -- the arc is drawn in the DOM", () => {
   const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
   const map = fakeMap();
   addListingGroups(map, groups, () => {});
-  const bubble = Math.max(...map.added.flatMap((id, i) => (id.endsWith("-cluster") ? [i] : [])));
-  const halo = Math.min(...map.added.flatMap((id, i) => (id.endsWith("-cluster-tagring") ? [i] : [])));
-  assert.ok(halo > bubble, "halo must not be hidden behind its own bubble");
+  assert.ok(!map.added.some((id) => id.endsWith("-cluster-tagring")),
+    "the GL halo layer must be gone");
 });
