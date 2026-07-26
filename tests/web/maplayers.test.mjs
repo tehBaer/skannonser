@@ -127,6 +127,48 @@ test("the tag ring hugs its dot and draws above every dot layer", () => {
     "rings must draw above dots so a neighbouring dot cannot cover them");
 });
 
+test("the tag ring is white, outlined in black on both edges", () => {
+  const groups = buildGroups(["Enebolig", "Leilighet"], { Enebolig: "#0f4c81", Leilighet: "#b35c00" });
+  const specs = [];
+  const map = fakeMap();
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  const ring = specs.find((s) => s.id.endsWith("-tagring"));
+  const outline = specs.find((s) => s.id.endsWith("-tagring-outline"));
+  assert.ok(outline, "the tag ring must have an outline layer");
+  assert.equal(ring.paint["circle-stroke-color"], "#ffffff",
+    "the ring is white, not the tag's own colour");
+  assert.equal(outline.paint["circle-stroke-color"], "#000000");
+
+  // GL strokes are drawn outside circle-radius, so a band spans
+  // [radius, radius + width]. The black must peek out at BOTH ends -- an
+  // outline on the outer edge alone leaves the ring lost against a dark dot.
+  assert.equal(outline.paint["circle-radius"], ring.paint["circle-radius"] - 1,
+    "outline must start 1px inside the white band");
+  assert.equal(
+    outline.paint["circle-radius"] + outline.paint["circle-stroke-width"],
+    ring.paint["circle-radius"] + ring.paint["circle-stroke-width"] + 1,
+    "outline must end 1px outside the white band"
+  );
+
+  // Half a ring is worse than no ring: a black outline left visible where the
+  // white has been filtered or faded out would read as a black tag ring.
+  assert.deepEqual(outline.filter, ring.filter, "both halves must select the same dots");
+  assert.deepEqual(outline.paint["circle-stroke-opacity"], ring.paint["circle-stroke-opacity"],
+    "both halves must fade together");
+
+  // Every outline before every white ring: interleaved per group, one group's
+  // outline would paint over another group's white band.
+  const lastOutline = Math.max(...map.added.flatMap((id, i) => (id.endsWith("-tagring-outline") ? [i] : [])));
+  const firstWhite = Math.min(...map.added.flatMap((id, i) => (id.endsWith("-tagring") ? [i] : [])));
+  assert.ok(lastOutline < firstWhite, "outlines must all be added below the white rings");
+
+  const lastDot = Math.max(...map.added.flatMap((id, i) => (/-(eie|dnb|sold)$/.test(id) ? [i] : [])));
+  assert.ok(Math.min(...map.added.flatMap((id, i) => (id.includes("-tagring") ? [i] : []))) > lastDot,
+    "both halves must draw above every dot layer");
+});
+
 test("the tagged-count cluster property survives (the DOM arc needs it)", () => {
   const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
   const sources = [];

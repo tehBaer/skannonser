@@ -168,6 +168,12 @@ const NOT_CLUSTER = ["!", ["has", "point_count"]];
 // residual) on every listing feature; clusters have no `op` (coalesce -> 1).
 const OP = ["coalesce", ["get", "op"], 1];
 
+// The tag ring and its outline share a filter and an opacity so the two halves
+// of one ring can never diverge -- a black outline still drawn where the white
+// band has been filtered or faded away would read as a black ring.
+const TAGGED_DOT = ["all", NOT_CLUSTER, ["==", ["get", "hasTag"], true]];
+const RING_OPACITY = ["min", 0.9, OP];
+
 // One small bordered square canvas icon per (fill, stroke) colour pair (DNB
 // points), keyed by both, registered once.
 function ensureSquareIcon(map, color, strokeColor) {
@@ -230,6 +236,8 @@ function ensureXIcon(map) {
 export const DOT_R = 9;
 const CLOSED_R = DOT_R - 1.5;
 const RING_R = DOT_R + 2; // ring band sits just outside the dot's 1.5px border
+const RING_W = 3; // white band thickness
+const RING_OUTLINE_W = 1; // black showing past the white on each side
 // Exported (alongside DOT_R) so tests can verify the square raster stays
 // larger than the dot's diameter without duplicating the 2.55 factor here.
 export const SQUARE_PX = Math.round(DOT_R * 2.55);
@@ -435,25 +443,55 @@ export function addListingGroups(map, groups, onListingClick) {
     clickLayers.push(g.id + "-eie", g.id + "-dnb");
   });
 
+  // Tagged-listing ring: a hollow circle just outside the dot's border, drawn
+  // ABOVE every dot layer (added last) so a neighbouring dot cannot cover it --
+  // it reads as a halo on ITS dot regardless of what else is nearby. Safe to
+  // sit on top because its fill is transparent, so it never occludes the dots
+  // beneath it.
+  //
+  // White with a black outline (owner feedback, 2026-07-26), NOT the tag's own
+  // colour any more: a per-tag hue had to compete with the boligtype colour it
+  // haloed and with the basemap, and lost on both. White/black is the same
+  // treatment as the cluster progress arc, so "I have been here" reads as one
+  // visual language at every zoom. The tag -> colour mapping is unaffected
+  // elsewhere: the popup chip, the table and the filter chips all still carry
+  // it, so no information is lost, only the map ring's hue.
+  //
+  // TWO passes, outline then white, for the same reason the dots and rings are
+  // separate passes: add order is z-order, so interleaving them per group would
+  // let a neighbouring group's outline cover an earlier group's white ring.
+  //
+  // GL strokes are placed OUTSIDE circle-radius, so the white band spans
+  // [RING_R, RING_R + RING_W] and the outline, one pixel wider at each end,
+  // spans [RING_R - 1, RING_R + RING_W + 1].
   groups.forEach((g) => {
-    // Tagged-listing ring: a hollow circle just outside the dot's border,
-    // drawn ABOVE every dot layer (added last) so a neighbouring dot cannot
-    // cover it -- it reads as a halo on ITS dot regardless of what else is
-    // nearby. Safe to sit on top because its fill is transparent, so it
-    // never occludes the dots beneath it. Stroke colour is the TAG's own
-    // colour (tagcolors.js) -- features matching the hasTag filter always
-    // carry a tagColor property.
+    map.addLayer({
+      id: g.id + "-tagring-outline",
+      type: "circle",
+      source: g.id,
+      filter: TAGGED_DOT,
+      paint: {
+        "circle-radius": RING_R - RING_OUTLINE_W,
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-width": RING_W + 2 * RING_OUTLINE_W,
+        "circle-stroke-color": "#000000",
+        "circle-stroke-opacity": RING_OPACITY,
+      },
+    });
+  });
+
+  groups.forEach((g) => {
     map.addLayer({
       id: g.id + "-tagring",
       type: "circle",
       source: g.id,
-      filter: ["all", NOT_CLUSTER, ["==", ["get", "hasTag"], true]],
+      filter: TAGGED_DOT,
       paint: {
         "circle-radius": RING_R,
         "circle-color": "rgba(0,0,0,0)",
-        "circle-stroke-width": 3,
-        "circle-stroke-color": ["get", "tagColor"],
-        "circle-stroke-opacity": ["min", 0.9, OP],
+        "circle-stroke-width": RING_W,
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-opacity": RING_OPACITY,
       },
     });
   });
