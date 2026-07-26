@@ -626,3 +626,8 @@ details.subgroup > summary {
   font: inherit; font-size: 12px; color: var(--accent, #156f55);
   cursor: pointer; text-decoration: underline;
 }
+
+.chip-row-head { margin-top: 10px; }
+/* The untagged bucket is the default state, not a choice -- give it less
+   weight than the tags the user actually applied. */
+.tag-chip.untagged { font-weight: 500; opacity: 0.75; }

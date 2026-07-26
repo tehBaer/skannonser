@@ -336,19 +336,21 @@ function renderSourceLegend() {
   if (!node) return;
   node.innerHTML = "";
   // Colour = boligtype (see BOLIGTYPE above). Here we key the SHAPE (DNB square)
-  // and the BORDER (active = dark, sold = white). Swatches use a neutral fill so
-  // the border reads.
+  // and the BORDER (active = dark, sold/closed = hollow ring). Swatches use a
+  // neutral fill so the border reads, except the hollow row which mirrors the
+  // map's ringed markers.
   [
-    { label: "Aktiv (mørk kant)", border: "#111111", square: false },
-    { label: "Solgt (hvit kant)", border: "#ffffff", square: false },
-    { label: "DNB (kvadrat)", border: "#111111", square: true },
-  ].forEach(({ label, border, square }) => {
+    { label: "Aktiv (mørk kant)", border: "#111111", square: false, hollow: false },
+    { label: "Solgt/lukket (ring)", border: DEFAULT_UNKNOWN_TYPE_COLOR, square: false, hollow: true },
+    { label: "DNB (kvadrat)", border: "#111111", square: true, hollow: false },
+  ].forEach(({ label, border, square, hollow }) => {
     const row = document.createElement("div");
     row.className = "legend-row";
     const sw = document.createElement("span");
     sw.className = "legend-swatch" + (square ? " square" : "");
-    sw.style.background = DEFAULT_UNKNOWN_TYPE_COLOR;
-    sw.style.border = "2px solid " + border;
+    // Hollow mirrors the map: closed listings are a ring, not a fill.
+    sw.style.background = hollow ? "transparent" : DEFAULT_UNKNOWN_TYPE_COLOR;
+    sw.style.border = (hollow ? "3px solid " : "2px solid ") + border;
     row.appendChild(sw);
     row.appendChild(document.createTextNode(label));
     node.appendChild(row);
