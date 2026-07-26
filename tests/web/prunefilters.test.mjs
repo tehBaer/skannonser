@@ -77,3 +77,22 @@ test("omitting the completeness flag defaults to not deleting", () => {
   assert.equal(pruneFilterSets(filters, vocabs), false);
   assert.deepEqual(filters.tagSelected, ["kun-solgt"]);
 });
+
+// Selections invert the stakes of pruning. Under the old hidden-sets, dropping
+// the last stale key changed nothing visible -- the filter was already off. A
+// selection holding only vocabulary-absent values matches ZERO listings, so
+// pruning it flips the map from empty to full. That is the better of the two
+// states (a filter for a value nobody has is not worth an empty map), but it is
+// a visible jump and must not be "fixed" into something quieter by accident.
+test("clearing an all-stale selection turns the filter off, not on", () => {
+  const filters = { tagSelected: ["gone", "also-gone"] };
+  assert.equal(pruneFilterSets(filters, vocabs, true), true);
+  assert.deepEqual(filters.tagSelected, [],
+    "an empty selection means everything shows -- the filter is off, not matching nothing");
+});
+
+test("a partially-stale selection keeps its surviving values", () => {
+  const filters = { tagSelected: ["maybe", "gone"] };
+  assert.equal(pruneFilterSets(filters, vocabs, true), true);
+  assert.deepEqual(filters.tagSelected, ["maybe"]);
+});

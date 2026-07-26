@@ -56,7 +56,7 @@ test("a non-empty selection counts as an active filter and clears back to empty"
   assert.deepEqual(base.tagSelected, []);
 });
 
-test("defaultFilters ships the six selections empty and no *Hidden keys", () => {
+test("defaultFilters ships the five selections empty and no *Hidden keys", () => {
   const f = defaultFilters({ destinations: [] });
   ["boligtypeSelected", "eieformSelected", "energiSelected",
    "tilgjengelighetSelected", "tagSelected"].forEach((k) => {

@@ -92,7 +92,7 @@ export function loadFilters(meta) {
   // hidden set needs the COMPLETE value list to select everything else, and for
   // tags and tilgjengelighet that list is not known until listings load --
   // acting on a partial vocabulary is exactly what silently destroyed saved
-  // filters before. So the six converted filters reset once; nothing else in
+  // filters before. So the five converted filters reset once; nothing else in
   // the blob is touched. Unconditional and after the merge, so a stale key
   // cannot survive `...stored` and be written back by saveFilters.
   ["boligtypeHidden", "eieformHidden", "energiHidden",
@@ -105,8 +105,10 @@ export function loadFilters(meta) {
 }
 
 // Read-modify-write of ONLY the blob's `filters` key (the table page has no
-// whole-ui object of its own), stripping the migrated legacy root keys so
-// they can't shadow the new location on the next load.
+// whole-ui object of its own). The root-key deletes below are plain garbage
+// collection: loadFilters stopped reading those legacy roots in the 2026-07-26
+// conversion, so there is no shadowing left to prevent -- they are removed only
+// so the blob does not carry dead weight forever.
 export function saveFilters(filters) {
   try {
     const blob = readBlob();
