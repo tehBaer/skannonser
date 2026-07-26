@@ -369,7 +369,10 @@ export function wireStationNamePopup(map) {
     map.getCanvas().style.cursor = "";
     if (popup) { popup.remove(); popup = null; }
   };
-  [STATION_CIRCLE_LAYER, STATION_RING_LAYER].forEach((id) => {
+  // Also bind the point layer: the popup must follow the station itself, not
+  // only its radius, because "Vis radius" can be switched off independently
+  // (Task 9) while the station point stays visible.
+  [STATION_CIRCLE_LAYER, STATION_RING_LAYER, STATION_POINT_LAYER].forEach((id) => {
     map.on("mouseenter", id, show);
     map.on("mousemove", id, show);
     map.on("mouseleave", id, hide);
