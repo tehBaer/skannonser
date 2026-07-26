@@ -79,6 +79,7 @@ function defaultUi(meta) {
     collapsed: {}, // {panelId: true} -> sidebar panel collapsed
     stations: {
       show: false,
+      showRadius: true,
       hideOutside: false,
       includeTransfer: false,
       sandvikaMax: SANDVIKA_MAX, // == max -> commute filter off
@@ -565,6 +566,7 @@ function wireStationControls() {
     });
   };
   bindCheckbox("toggle-stations", "show");
+  bindCheckbox("toggle-station-radius", "showRadius");
   bindCheckbox("toggle-hide-outside", "hideOutside");
   bindCheckbox("toggle-transfer", "includeTransfer");
 

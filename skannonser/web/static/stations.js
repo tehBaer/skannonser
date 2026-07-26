@@ -42,6 +42,8 @@
 export const STATION_SOURCE_ID = "stations";
 export const STATION_CIRCLE_LAYER = "station-circles";
 export const STATION_RING_LAYER = "station-ring";
+export const STATION_POINT_SOURCE_ID = "station-points";
+export const STATION_POINT_LAYER = "station-point-dots";
 
 // getEffectiveStationRadiusM default (map.html defaultStationRadius default 1000).
 export const DEFAULT_STATION_RADIUS_M = 1000;
@@ -178,6 +180,28 @@ export function stationCircleFeatures(stations) {
   return { type: "FeatureCollection", features };
 }
 
+// The station itself, as a point. Until round 3 the only station geometry was
+// the radius polygon, so a station's position was merely implied by the centre
+// of its circle -- which is why "show stations without radii" was impossible.
+// One feature per station (not per line): the radius circles are line-filtered
+// upstream in updateStationLayers, so nothing here needs per-line duplicates.
+export function stationPointFeatures(stations) {
+  const features = [];
+  (stations || []).forEach((station) => {
+    if (station.lat == null || station.lng == null) return;
+    const lines = stationLineIds(station);
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [station.lng, station.lat] },
+      properties: {
+        name: station.name || "Stasjon",
+        color: lineColor(lines[0] || ""),
+      },
+    });
+  });
+  return { type: "FeatureCollection", features };
+}
+
 // --- commute (Sandvika) semantics ---
 
 function finiteOrNull(v) {
@@ -263,6 +287,23 @@ export function addStationLayers(map) {
     source: STATION_SOURCE_ID,
     paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.85 },
   });
+
+  map.addSource(STATION_POINT_SOURCE_ID, {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+  // Added last so station dots sit above their own radius rings.
+  map.addLayer({
+    id: STATION_POINT_LAYER,
+    type: "circle",
+    source: STATION_POINT_SOURCE_ID,
+    paint: {
+      "circle-radius": 4,
+      "circle-color": ["get", "color"],
+      "circle-stroke-width": 1.5,
+      "circle-stroke-color": "#ffffff",
+    },
+  });
 }
 
 // Recompute the station source (visible lines + commute-visible stations only)
@@ -285,10 +326,18 @@ export function updateStationLayers(map, stations, ui) {
   });
   src.setData(stationCircleFeatures(kept));
 
-  const vis = ui.stations.show ? "visible" : "none";
-  [STATION_CIRCLE_LAYER, STATION_RING_LAYER].forEach((id) => {
-    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
-  });
+  const pointSrc = map.getSource(STATION_POINT_SOURCE_ID);
+  if (pointSrc) pointSrc.setData(stationPointFeatures(kept));
+
+  // The radius is a detail OF the stations, so it can only show when they do.
+  const showStations = !!ui.stations.show;
+  const showRadius = showStations && ui.stations.showRadius !== false;
+  const setVis = (id, on) => {
+    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
+  };
+  setVis(STATION_POINT_LAYER, showStations);
+  setVis(STATION_CIRCLE_LAYER, showRadius);
+  setVis(STATION_RING_LAYER, showRadius);
 }
 
 // Set of visible normalized line ids given the persisted `lineHidden` map.
