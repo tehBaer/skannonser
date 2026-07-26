@@ -53,14 +53,9 @@
           <input type="range" id="sandvika-max" min="0" max="120" step="1">
         </div>
         <label class="toggle"><input type="checkbox" id="toggle-transfer"> Inkluder bytte (via Oslo S)</label>
-        <div class="subhead-row">
-          <h3 class="subhead">Linjer</h3>
-          <span class="line-bulk">
-            <button type="button" id="lines-all" class="linkish">Alle</button>
-            <button type="button" id="lines-none" class="linkish">Ingen</button>
-          </span>
-        </div>
-        <div id="line-toggles" class="legend muted">Laster …</div>
+        <!-- Filled by selectionChipRow, which supplies its own "Linjer" heading
+             and bulk controls. -->
+        <div id="line-toggles" class="muted">Laster …</div>
       </details>
 
       <details class="panel" id="missing-coords-panel">
