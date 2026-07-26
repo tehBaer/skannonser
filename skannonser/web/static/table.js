@@ -87,7 +87,12 @@ const COLUMNS = [
 // Column picker (2026-07-25 spec §7): first-run default hides the noise
 // columns (Pris/Felleskost are semi-redundant with Totalpris/Mnd-kost).
 // Adresse and Kart are load-bearing (identity + map handoff) -- not hideable.
-const DEFAULT_HIDDEN_COLUMNS = ["postnummer", "pris", "felleskost_mnd", "soverom", "etasje"];
+// First-run defaults. `tilgjengelighet` is empty for every active listing in
+// production (0 of 770) -- it stays in the picker for anyone who wants it, but
+// costs a column of horizontal scroll by default for nothing.
+const DEFAULT_HIDDEN_COLUMNS = [
+  "postnummer", "pris", "felleskost_mnd", "soverom", "etasje", "tilgjengelighet",
+];
 const ALWAYS_VISIBLE_COLUMNS = new Set(["adresse", "kart"]);
 
 function loadHiddenColumns() {

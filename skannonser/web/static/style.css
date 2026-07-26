@@ -391,15 +391,21 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 #listings-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 #listings-table tr.sold-row { background: #f6f6f5; color: var(--muted); }
+/* A closed row needs to read as a different category, not a slightly greyer
+   one -- same reasoning as the hollow map dots. */
 .sold-badge, .inactive-badge {
   display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 9px;
   font-size: 11px;
-  padding: 1px 6px;
-  margin-left: 6px;
-  border-radius: 4px;
-  background: #efefef;
-  color: #666;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+  background: transparent;
 }
+.sold-badge { color: #6b5a1f; }
+.inactive-badge { color: #7a4a45; }
 
 #listings-table a { color: var(--accent); text-decoration: none; }
 #listings-table a:hover { text-decoration: underline; }
@@ -526,7 +532,11 @@ details.subgroup > summary {
 .af-clear:hover { color: #b3402f; }
 
 /* --- closed-status (2026-07-24): muted badge for Inaktiv/Trukket --- */
-.source-tag.inactive, .inactive-badge {
+/* Scoped to the popup's source-tag only: .inactive-badge (the table page's
+   closed-row badge, styled outlined by Task 12) used to be listed here too,
+   but same-specificity + later-in-file meant this quietly won the cascade
+   and negated that outlined design. */
+.source-tag.inactive {
   background: #9aa39c;
   color: #fff;
 }
