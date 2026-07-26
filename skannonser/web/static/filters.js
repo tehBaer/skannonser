@@ -316,7 +316,10 @@ export function searchableMultiSelect(parent, { label, options, selected, onChan
 }
 
 // --- shared popover singleton (moved from tablefilters.js 2026-07-24) ---
-// Used by the table's header filters AND the sidebar's select-fields.
+// Used by the table's header filters and its column picker. The sidebar no
+// longer opens popovers (its select-fields became chip rows), but this stays
+// exported here because tablefilters.js and table.js must share ONE open
+// popover and one dismiss wiring.
 
 let popoverEl = null;
 let popoverAnchor = null;
@@ -363,69 +366,6 @@ if (typeof document !== "undefined") {
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") closePopover();
   });
-}
-
-// Notion-style compact select-field over a HIDDEN-set: closed it shows a
-// summary ("Alle" when nothing is hidden, chips of the visible values when
-// ≤3 remain, else "N av M"); clicking opens the shared popover with the
-// familiar checkbox rows (checked = visible). Storage semantics unchanged.
-export function selectField(parent, { label, options, hidden, swatches, onChange }) {
-  const field = document.createElement("button");
-  field.type = "button";
-  field.className = "select-field";
-  const name = document.createElement("span");
-  name.className = "select-field-label";
-  name.textContent = label;
-  const value = document.createElement("span");
-  value.className = "select-field-value";
-  field.appendChild(name);
-  field.appendChild(value);
-
-  const paint = () => {
-    value.innerHTML = "";
-    value.classList.remove("muted");
-    const visible = options.filter((o) => !hidden[o.key]);
-    if (visible.length === options.length) {
-      value.textContent = "Alle";
-      value.classList.add("muted");
-    } else if (visible.length === 0) {
-      value.textContent = "Ingen";
-    } else if (visible.length <= 3) {
-      visible.forEach((o) => {
-        const chip = document.createElement("span");
-        chip.className = "chip";
-        if (swatches && o.swatch) {
-          const dot = document.createElement("span");
-          dot.className = "chip-dot";
-          dot.style.background = o.swatch;
-          chip.appendChild(dot);
-        }
-        chip.appendChild(document.createTextNode(o.label));
-        value.appendChild(chip);
-      });
-    } else {
-      value.textContent = visible.length + " av " + options.length;
-    }
-  };
-
-  const buildBody = (pop) => {
-    checkboxGroup(pop, {
-      options,
-      hidden,
-      onChange: () => {
-        paint();
-        onChange();
-      },
-    });
-  };
-
-  field.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    openPopover(field, buildBody);
-  });
-  paint();
-  parent.appendChild(field);
-  return field;
 }
 
 // The one interaction rule: a chip toggles, EXCEPT that the first selection
@@ -527,7 +467,7 @@ export function selectionChipRow(parent, { label, options, selected, colorFor, o
   return wrap;
 }
 
-// The whole "Filtre" panel body: four select-fields, the tag chip row,
+// The whole "Filtre" panel body: five selection chip rows,
 // three collapsible slider sub-groups (collapse state persisted via
 // ui.collapsed through onCollapse), and the unknown-value policy toggle.
 // Replaces the old
@@ -544,46 +484,43 @@ export function buildFilterPanelUI(
 
   const fields = document.createElement("div");
   fields.className = "filter-fields";
-  selectField(fields, {
+  // Boligtype's "" bucket is synthesised here: meta.boligtyper is the list of
+  // KNOWN types, so without this row a listing with no type would be
+  // unselectable. The vocab-derived rows below already carry their own "".
+  selectionChipRow(fields, {
     label: "Boligtype",
     options: [
-      ...(meta.boligtyper || []).map((t) => ({
-        key: t,
-        label: t,
-        swatch: (colorByType && colorByType[t]) || "#6f7e76",
-      })),
-      { key: "", label: "Ukjent boligtype", swatch: (colorByType && colorByType[""]) || "#6f7e76" },
+      ...(meta.boligtyper || []).map((t) => ({ key: t, label: t })),
+      { key: "", label: "Ukjent boligtype" },
     ],
-    hidden: filters.boligtypeHidden,
-    swatches: true,
+    selected: filters.boligtypeSelected,
+    colorFor: (key) => (colorByType && colorByType[key]) || null,
     onChange,
   });
-  selectField(fields, {
+  selectionChipRow(fields, {
     label: "Eieform",
     options: (meta.eieformer || []).map((v) => ({ key: v, label: v })),
-    hidden: filters.eieformHidden,
+    selected: filters.eieformSelected,
     onChange,
   });
-  selectField(fields, {
+  selectionChipRow(fields, {
     label: "Energimerking",
     options: (meta.energimerker || []).map((v) => ({ key: v, label: v })),
-    hidden: filters.energiHidden,
+    selected: filters.energiSelected,
     onChange,
   });
-  selectField(fields, {
+  selectionChipRow(fields, {
     label: "Tilgjengelighet",
     options: vocabs.tilgjengelighet,
-    hidden: filters.tilgjengelighetHidden,
+    selected: filters.tilgjengelighetSelected,
     onChange,
   });
-  // Tags render as always-visible colored chips, not a select-field: at tag
-  // cardinality the chips ARE the better summary, and they double as the
-  // one-click filter (2026-07-25 spec §3).
-  tagChipRow(fields, {
+  const tagColors = assignTagColors(vocabs.tags.map((o) => o.key));
+  selectionChipRow(fields, {
     label: "Tags",
     options: vocabs.tags,
-    hidden: filters.tagHidden,
-    tagColors: assignTagColors(vocabs.tags.map((o) => o.key)),
+    selected: filters.tagSelected,
+    colorFor: (key) => colorForTag(key, tagColors),
     onChange,
   });
   container.appendChild(fields);
