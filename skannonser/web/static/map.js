@@ -36,6 +36,31 @@ const SOLD_COLOR = "#9aa5a0";
 const CLUSTER_RADIUS = 22;
 const CLUSTER_MAX_ZOOM = 10;
 
+// Cluster-bubble size, as flat [point_count, radius_px] pairs. Defined ONCE
+// because two consumers need it in two different forms and they must not
+// drift: the GL circle layer splices it into an "interpolate"/"linear"
+// expression, and clusterBubbleRadius() below evaluates it as a number so the
+// DOM count marker can size its progress arc to the bubble it decorates. The
+// arc used to be sized off the marker box (clusterSize) instead, a completely
+// different curve that agrees with this one only at the extremes -- at ~50
+// points it left the arc floating ~13px clear of its bubble.
+export const CLUSTER_RADIUS_STOPS = [2, 14, 25, 19, 100, 25, 500, 30];
+
+// Numeric evaluation of CLUSTER_RADIUS_STOPS with MapLibre's own
+// interpolate/linear semantics: linear between stops, clamped outside them.
+export function clusterBubbleRadius(count) {
+  const s = CLUSTER_RADIUS_STOPS;
+  const n = Number(count);
+  if (!Number.isFinite(n) || n <= s[0]) return s[1];
+  for (let i = 0; i + 3 < s.length; i += 2) {
+    if (n <= s[i + 2]) {
+      const t = (n - s[i]) / (s[i + 2] - s[i]);
+      return s[i + 1] + t * (s[i + 3] - s[i + 1]);
+    }
+  }
+  return s[s.length - 1];
+}
+
 const OSM_STYLE = {
   version: 8,
   sources: {
@@ -329,7 +354,7 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-color": closedOnly ? "rgba(0,0,0,0)" : g.color,
         "circle-radius": [
           "interpolate", ["linear"], ["get", "point_count"],
-          2, 14, 25, 19, 100, 25, 500, 30,
+          ...CLUSTER_RADIUS_STOPS,
         ],
         // Cluster bubbles are much bigger than the 9px dots, so the dots' 3px
         // ring would look thin/lost against a 14-30px radius bubble; 5px
@@ -450,8 +475,10 @@ export function addListingGroups(map, groups, onListingClick) {
   });
 }
 
-// Continuous cluster-bubble size (px), scaling with sqrt(count) so a 200-point
-// cluster reads clearly bigger than a 20-point one, clamped to a sane range.
+// Size (px) of the DOM count marker's BOX -- the hit target and text field
+// that sits over the bubble. This is NOT the bubble's size: the bubble is a GL
+// circle sized by CLUSTER_RADIUS_STOPS. Anything that has to line up with the
+// bubble's edge must use clusterBubbleRadius(), not this.
 export function clusterSize(count) {
   return Math.max(26, Math.min(60, Math.round(20 + 5.5 * Math.sqrt(count))));
 }
@@ -504,6 +531,11 @@ export function syncClusterMarkers(map, groups, cache) {
       const reviewed = Number(f.properties.tag_sum) || 0;
       if (reviewed > 0 && count > 0) {
         div.dataset.reviewed = "";
+        // The arc must ring the GL BUBBLE, and this marker box is not the same
+        // size as it (clusterSize vs CLUSTER_RADIUS_STOPS are different
+        // curves). Hand the bubble's own diameter to the CSS so the arc is
+        // sized off the thing it decorates rather than off its own box.
+        div.style.setProperty("--bubble-d", 2 * clusterBubbleRadius(count) + "px");
         // Floored at 6 % of the circle: a true proportion renders 1-of-300 as a
         // 1.2-degree sliver, i.e. indistinguishable from none reviewed at all,
         // which loses the primary signal ("I have been here") to protect a

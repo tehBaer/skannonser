@@ -593,16 +593,32 @@ details.subgroup > summary {
 }
 #listings-table tr.row-flash td { animation: row-flash 2.4s ease-out; }
 
-/* Cluster review-progress arc (2026-07-26). The count marker sits exactly over
-   the GL bubble, so a pseudo-element just outside it reads as that bubble's
-   own progress. White with a soft dark shadow so it holds up on both the pale
+/* Cluster review-progress arc (2026-07-26). The count marker is centred on the
+   GL bubble, so a pseudo-element ringing that bubble reads as its own
+   progress. White with a soft dark shadow so it holds up on both the pale
    and the dark parts of the OSM basemap without competing with the boligtype
    colours the way the earlier crimson ring did. */
-.cluster-marker.cluster-count { position: relative; }
+/* NEVER set `position: relative` on this selector. It is 0-2-0 and beats
+   vendor maplibre-gl.css's 0-1-0 `.maplibregl-marker { position: absolute }`,
+   which would take every cluster marker out of absolute positioning: they
+   become in-flow blocks inside the canvas container, each pushed down by the
+   stacked height of the ones before it, and `.maplibregl-map { overflow:
+   hidden }` clips the rest away. The ::after below needs no help -- the marker
+   is already a positioned ancestor. Restated explicitly so the cascade cannot
+   be lost to a future edit. */
+.cluster-marker.cluster-count { position: absolute; }
 .cluster-marker.cluster-count[data-reviewed]::after {
   content: "";
   position: absolute;
-  inset: -5px;
+  /* Sized from the GL bubble's diameter (--bubble-d, set per cluster in
+     syncClusterMarkers) plus a 10px margin, NOT from this marker's box -- the
+     two use different size curves, so an `inset` off the box detached the arc
+     from its bubble at mid counts. */
+  width: calc(var(--bubble-d, 44px) + 10px);
+  height: calc(var(--bubble-d, 44px) + 10px);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
   /* from -90deg so the arc starts at 12 o'clock, like a progress dial. */
   background: conic-gradient(from -90deg, #ffffff calc(var(--reviewed, 0) * 360deg), rgba(0, 0, 0, 0) 0);
