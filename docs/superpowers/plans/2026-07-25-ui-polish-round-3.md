@@ -1772,3 +1772,139 @@ Run: `node --test tests/web/*.test.mjs` — expected `# fail 0`. `PREMIUM_LEGEND
 git add skannonser/web/static/index.html skannonser/web/static/app.js
 git commit -m "feat(map): retire the budpremie colouring control for now"
 ```
+
+---
+
+### Task 7C: Cluster halo showing how much of a cluster is reviewed
+
+**Files:**
+- Modify: `skannonser/web/static/map.js` (`clusterProperties` on each source; a new cluster-halo layer in the final tag pass)
+- Test: `tests/web/maplayers.test.mjs` (extend)
+
+**Interfaces:**
+- Consumes: the per-feature `hasTag` boolean app.js already stamps (the `-tagring` layer filters on it); the existing `clusterProperties` mechanism, which already aggregates `op_sum`.
+- Produces: a `tag_sum` cluster property and a `{g.id}-cluster-tagring` layer. No export change.
+
+**Why:** a tag marks a listing the owner has reviewed, but the ring disappears when dots collapse into a cluster, so at overview zoom there is no sense of which areas have been worked through. A binary "contains ≥1 tagged listing" indicator was rejected: a cluster of 50 with one tag would look identical to a cluster of 3 fully reviewed. Scaling the halo with the reviewed FRACTION answers the question actually asked at that zoom — how much of this area have I been through — and costs the same single layer.
+
+Note the halo uses ONE fixed colour, not a tag colour: a cluster mixes tags, so no single tag's colour applies. Colour is deliberately secondary here — the owner's stated priority is that the marker reads as "reviewed" at all.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/web/maplayers.test.mjs`:
+
+```js
+test("clusters carry a tagged-count property and a proportional halo", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const specs = [];
+  const sources = [];
+  const map = fakeMap();
+  map.addSource = (id, cfg) => sources.push({ id, cfg });
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  assert.ok(sources.every((s) => s.cfg.clusterProperties && s.cfg.clusterProperties.tag_sum),
+    "every clustered source must aggregate a tagged count");
+
+  const halo = specs.find((s) => s.id.endsWith("-cluster-tagring"));
+  assert.ok(halo, "a cluster halo layer must exist");
+  assert.equal(halo.paint["circle-opacity"], 0, "halo is a ring, not a disc");
+  assert.ok(JSON.stringify(halo.filter).includes("point_count"),
+    "halo applies to clusters only");
+  assert.ok(JSON.stringify(halo.paint["circle-stroke-opacity"]).includes("tag_sum"),
+    "halo strength must derive from the tagged fraction, not be a constant");
+});
+
+test("the cluster halo draws above the cluster bubble", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const map = fakeMap();
+  addListingGroups(map, groups, () => {});
+  const bubble = Math.max(...map.added.flatMap((id, i) => (id.endsWith("-cluster") ? [i] : [])));
+  const halo = Math.min(...map.added.flatMap((id, i) => (id.endsWith("-cluster-tagring") ? [i] : [])));
+  assert.ok(halo > bubble, "halo must not be hidden behind its own bubble");
+});
+```
+
+- [ ] **Step 2: Run it to make sure it fails**
+
+Run: `node --test tests/web/maplayers.test.mjs`
+Expected: FAIL — no `tag_sum`, no `-cluster-tagring` layer.
+
+- [ ] **Step 3: Aggregate the tagged count**
+
+In the source config, extend `clusterProperties`:
+
+```js
+      clusterProperties: {
+        op_sum: ["+", ["get", "op"]],
+        // How many members carry a tag. With point_count this gives the
+        // reviewed FRACTION, which drives the halo's strength below.
+        tag_sum: ["+", ["case", ["==", ["get", "hasTag"], true], 1, 0]],
+      },
+```
+
+- [ ] **Step 4: Add the halo layer**
+
+Add this inside the SAME final pass that adds the `-tagring` layer (the last layer pass, so tag indicators are never covered), directly after the `-tagring` `addLayer` call:
+
+```js
+    // Cluster-level "how much of this have I reviewed" halo. One fixed colour,
+    // not a tag colour: a cluster mixes tags, so no single tag's colour applies.
+    // Strength scales with the reviewed fraction -- a barely-touched cluster
+    // shows a faint ring, a fully-reviewed one a strong one -- because a binary
+    // "contains a tag" mark would make 1-of-50 look like 3-of-3. Multiplied by
+    // the same cluster opacity as the bubble so nedtoning still fades it.
+    map.addLayer({
+      id: g.id + "-cluster-tagring",
+      type: "circle",
+      source: g.id,
+      filter: ["all", ["has", "point_count"], [">", ["get", "tag_sum"], 0]],
+      paint: {
+        "circle-radius": [
+          "interpolate", ["linear"], ["get", "point_count"],
+          2, 18, 25, 23, 100, 29, 500, 34,
+        ],
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-opacity": 0,
+        "circle-stroke-width": 2.5,
+        "circle-stroke-color": TAG_CLUSTER_HALO,
+        "circle-stroke-opacity": [
+          "*",
+          clusterOpacity,
+          [
+            "interpolate", ["linear"],
+            ["/", ["get", "tag_sum"], ["get", "point_count"]],
+            0, 0.3,
+            1, 1,
+          ],
+        ],
+      },
+    });
+```
+
+The radius stops are the cluster bubble's own stops (`2,14 25,19 100,25 500,30`) plus 4, so the halo clears the bubble at every size.
+
+`clusterOpacity` is the expression already computed in the cluster pass. It is scoped to that pass — hoist it, or recompute the identical expression in this pass and say which you did.
+
+- [ ] **Step 5: Define the halo colour**
+
+Beside `ACTIVE_BORDER`, add:
+
+```js
+// Cluster review-halo colour. Deliberately one fixed colour rather than a tag
+// colour (clusters mix tags), and taken from the TAG palette family rather than
+// the boligtype palette so it reads as annotation, not data.
+const TAG_CLUSTER_HALO = "#c2185b";
+```
+
+- [ ] **Step 6: Run the tests**
+
+Run: `node --test tests/web/*.test.mjs`
+Expected: PASS, `# fail 0`, 21 tests.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add skannonser/web/static/map.js tests/web/maplayers.test.mjs
+git commit -m "feat(map): cluster halo scaled to how much of the cluster is reviewed"
+```
