@@ -567,25 +567,44 @@ details.subgroup > summary {
    is already a positioned ancestor. Restated explicitly so the cascade cannot
    be lost to a future edit. */
 .cluster-marker.cluster-count { position: absolute; }
+/* Two concentric dials: ::before is the black outline, ::after the white arc
+   on top of it. Both are absolutely positioned, so neither becomes a flex item
+   of the marker box. */
+.cluster-marker.cluster-count[data-reviewed]::before,
 .cluster-marker.cluster-count[data-reviewed]::after {
   content: "";
   position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.cluster-marker.cluster-count[data-reviewed]::after {
   /* Sized from the GL bubble's diameter (--bubble-d, set per cluster in
      syncClusterMarkers) plus a 10px margin, NOT from this marker's box -- the
      two use different size curves, so an `inset` off the box detached the arc
      from its bubble at mid counts. */
   width: calc(var(--bubble-d, 44px) + 10px);
   height: calc(var(--bubble-d, 44px) + 10px);
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
   /* from -90deg so the arc starts at 12 o'clock, like a progress dial. */
   background: conic-gradient(from -90deg, #ffffff calc(var(--reviewed, 0) * 360deg), rgba(0, 0, 0, 0) 0);
   -webkit-mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
   mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
-  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
-  pointer-events: none;
+}
+/* Outline (2026-07-26, replaces a 1px soft drop-shadow that washed out over
+   pale basemap): the same dial redrawn in black, standing 1px proud of the
+   white on every side -- radius +1px and a 5px band instead of 3px, so it
+   shows past both the inner and the outer edge, plus 2deg of angular overhang
+   at each end so the arc's two caps are outlined too. A `filter: drop-shadow`
+   could not do this: filters apply BEFORE the mask, so the shadow was cast by
+   the unmasked wedge and the ring's inner edge never got one. */
+.cluster-marker.cluster-count[data-reviewed]::before {
+  width: calc(var(--bubble-d, 44px) + 12px);
+  height: calc(var(--bubble-d, 44px) + 12px);
+  background: conic-gradient(from -92deg, #000000 calc(var(--reviewed, 0) * 360deg + 4deg), rgba(0, 0, 0, 0) 0);
+  -webkit-mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 5px), #000 calc(100% - 5px));
+  mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 5px), #000 calc(100% - 5px));
 }
 
 .linkish {

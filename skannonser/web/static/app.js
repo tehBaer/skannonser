@@ -228,10 +228,11 @@ function itemToFeature(item, op) {
     boligtype: item.boligtype || "",
     op, // 1, or the dimmed residual opacity (see filters.residualOpacity)
   };
-  const tagColor = colorForTag(item.tag, state.tagColors || new Map());
-  if (tagColor) {
+  // The ring itself is white-on-black now, not per-tag coloured, so the ring
+  // layer needs the flag but no longer the colour. colorForTag stays the test
+  // for "is this a tag we know", which is what hasTag has always meant.
+  if (colorForTag(item.tag, state.tagColors || new Map())) {
     properties.hasTag = true; // drives the tag-ring layer
-    properties.tagColor = tagColor; // the ring's stroke color
   }
   if (item.sold) {
     const pct = premiumPct(item);
