@@ -438,6 +438,24 @@ function panPopupIntoView() {
   });
 }
 
+// Switch every layer bucket back on, checkboxes included, fetching the closed
+// listings if this is the first time they are wanted. Used by the empty-state
+// reset (F5): a "Nullstill filtre" that cannot undo a layer toggle is a dead
+// button for the user who emptied the map by unchecking Eie and DNB.
+function restoreLayerToggles() {
+  const needsClosed = !state.ui.sold || !state.ui.inactive;
+  ["eie", "dnb", "sold", "inactive"].forEach((bucket) => {
+    state.ui[bucket] = true;
+    const cb = document.getElementById("toggle-" + bucket);
+    if (cb) cb.checked = true;
+  });
+  saveUi();
+  if (needsClosed && !state.soldLoaded) {
+    // ensureSoldLoaded rebuilds the filter UIs itself once the data lands.
+    ensureSoldLoaded().then(applyAll).catch(() => {});
+  }
+}
+
 function wireLayerToggles() {
   const map = {
     eie: "toggle-eie",
@@ -883,9 +901,14 @@ async function init() {
   const emptyReset = document.getElementById("map-empty-reset");
   if (emptyReset) {
     emptyReset.addEventListener("click", () => {
-      // Mirrors the sidebar reset button above: resetFilters needs state.meta
-      // (defaultFilters reads meta.destinations) and onFilterChange keeps the
-      // "active filters" line in sync, not just the map data.
+      // Unlike the sidebar reset button above, this one ALSO switches the
+      // layer buckets back on: its message blames "lag og filtre", and the
+      // commonest way to empty the map is unchecking Eie and DNB, where a
+      // filters-only reset visibly does nothing at all.
+      restoreLayerToggles();
+      // resetFilters needs state.meta (defaultFilters reads meta.destinations)
+      // and onFilterChange keeps the "active filters" line in sync, not just
+      // the map data.
       resetFilters(state.ui.filters, state.meta);
       rebuildFilterUIs();
       onFilterChange();

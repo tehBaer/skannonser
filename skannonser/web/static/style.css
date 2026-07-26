@@ -677,3 +677,16 @@ details.subgroup > summary {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
 }
 .map-empty p { margin: 0 0 8px; font-size: 14px; }
+
+/* The table's counterpart to .map-empty: one full-width cell standing in for
+   the whole result set, so it should not read as a data row. Scoped under the
+   table id because `#listings-table td` is 1-0-1 and would otherwise keep its
+   left-aligned 6px cell padding. table.js puts the message and its button in
+   the same td, hence the gap. */
+#listings-table td.empty-row {
+  text-align: center;
+  color: var(--muted);
+  padding: 24px 12px;
+  border-bottom: none;
+}
+#listings-table td.empty-row button { margin-left: 10px; }

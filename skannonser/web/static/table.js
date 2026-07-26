@@ -200,6 +200,27 @@ function saveSoldPref(sold) {
   }
 }
 
+// Turn "Vis solgte" on, fetching the closed bucket the first time. Shared by
+// the toggle itself and the empty-state reset (F5), whose message blames "lag
+// og filtre" but whose button could only ever touch the filters.
+async function enableSold() {
+  if (state.showSold) return;
+  state.showSold = true;
+  const soldToggle = document.getElementById("table-sold");
+  if (soldToggle) soldToggle.checked = true;
+  saveSoldPref(true);
+  if (!state.soldLoaded) {
+    setStatus("Laster solgte …");
+    try {
+      state.items = state.items.concat(await fetchListings(1));
+      state.soldLoaded = true;
+    } catch (err) {
+      setStatus("Kunne ikke laste solgte: " + err.message);
+    }
+  }
+  refreshVocabs();
+}
+
 // sold=truthy fetches ONLY the sold bucket (?bucket=sold) -- the actives are
 // already loaded, so the old merged ?sold=1 shape just re-shipped them.
 async function fetchListings(sold) {
@@ -491,9 +512,14 @@ function render() {
     td.colSpan = visibleColumns().length;
     const btn = el("button", null, "Nullstill filtre");
     btn.type = "button";
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       resetFilters(state.filters, state.meta);
       saveFilters(state.filters);
+      // Also restore the one "lag" this page has. The message names layers as
+      // a possible cause of the empty table, so the button must be able to
+      // undo them too -- a filters-only reset leaves a user who emptied the
+      // table by unchecking "Vis solgte" clicking on nothing.
+      await enableSold();
       refreshVocabs();
       render();
     });
@@ -527,23 +553,19 @@ function wireToolbar() {
   soldToggle.checked = loadSoldPref();
   state.showSold = soldToggle.checked;
   soldToggle.addEventListener("change", async () => {
-    state.showSold = soldToggle.checked;
-    saveSoldPref(soldToggle.checked);
-    if (soldToggle.checked && !state.soldLoaded) {
+    if (soldToggle.checked) {
       soldToggle.disabled = true;
-      setStatus("Laster solgte …");
       try {
-        state.items = state.items.concat(await fetchListings(1));
-        state.soldLoaded = true;
-        refreshVocabs();
-      } catch (err) {
-        setStatus("Kunne ikke laste solgte: " + err.message);
+        await enableSold();
       } finally {
         soldToggle.disabled = false;
       }
+    } else {
+      state.showSold = false;
+      saveSoldPref(false);
+      // The off path changes the vocabulary boundary just as much as the on one.
+      refreshVocabs();
     }
-    // The off path changes the vocabulary boundary just as much as the on path.
-    refreshVocabs();
     render();
   });
 
