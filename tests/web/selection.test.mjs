@@ -32,6 +32,17 @@ test("the predicate routes the explicit-value filters through selection", () => 
   assert.equal(listingExcluded(leilighet, mk({ boligtypeSelected: ["Leilighet"] }), meta), false);
   assert.equal(listingExcluded(enebolig, mk({ tagSelected: [""] }), meta), false, "untagged selected");
   assert.equal(listingExcluded(leilighet, mk({ tagSelected: [""] }), meta), true);
+
+  // The one case that actually distinguishes the two helpers: with
+  // includeUnknown OFF, an untagged listing must still pass when "" is the
+  // selected value. Routing tags through the unknown-aware helper instead
+  // would return unknownFails here and make the empty bucket unselectable --
+  // the exact failure the split exists to prevent.
+  assert.equal(
+    listingExcluded(enebolig, mk({ tagSelected: [""], includeUnknown: false }), meta),
+    false,
+    "the empty bucket stays selectable when unknowns are excluded"
+  );
 });
 
 test("a non-empty selection counts as an active filter and clears back to empty", () => {
