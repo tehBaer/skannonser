@@ -204,7 +204,7 @@ function ensureXIcon(map) {
 // them dynamic without putting the size in the cache key would serve stale art.
 export const DOT_R = 9;
 const CLOSED_R = DOT_R - 1.5;
-const RING_R = DOT_R + 6;
+const RING_R = DOT_R + 2; // ring band sits just outside the dot's 1.5px border
 // Exported (alongside DOT_R) so tests can verify the square raster stays
 // larger than the dot's diameter without duplicating the 2.55 factor here.
 export const SQUARE_PX = Math.round(DOT_R * 2.55);
@@ -268,7 +268,10 @@ export function addListingGroups(map, groups, onListingClick) {
   // order IS z-order in MapLibre. Per-group ordering put every later boligtype
   // over every earlier one, and closed dots over active ones -- with 4.5x more
   // closed than active listings in production, that buried exactly the dots
-  // that matter. Passes: sources -> clusters -> rings -> closed -> active.
+  // that matter. Passes: sources -> clusters -> closed -> active -> rings.
+  // Rings are last (owner feedback, 2026-07-26): a per-group ring pass drawn
+  // before the dots let a neighbouring group's dot cover a ring meant to
+  // halo an earlier dot -- drawing rings last guarantees nothing can bury one.
 
   groups.forEach((g) => {
     map.addSource(g.id, {
@@ -323,26 +326,6 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-stroke-color": closedOnly ? g.color : ACTIVE_BORDER,
         "circle-opacity": closedOnly ? 0 : clusterOpacity,
         "circle-stroke-opacity": clusterOpacity,
-      },
-    });
-  });
-
-  groups.forEach((g) => {
-    // Tagged-listing ring: a hollow circle slightly larger than the dot,
-    // drawn BENEATH the dot layers (added first) so it reads as a halo.
-    // Stroke colour is the TAG's own colour (tagcolors.js) -- features
-    // matching the hasTag filter always carry a tagColor property.
-    map.addLayer({
-      id: g.id + "-tagring",
-      type: "circle",
-      source: g.id,
-      filter: ["all", NOT_CLUSTER, ["==", ["get", "hasTag"], true]],
-      paint: {
-        "circle-radius": RING_R,
-        "circle-color": "rgba(0,0,0,0)",
-        "circle-stroke-width": 3,
-        "circle-stroke-color": ["get", "tagColor"],
-        "circle-stroke-opacity": ["min", 0.9, OP],
       },
     });
   });
@@ -412,6 +395,29 @@ export function addListingGroups(map, groups, onListingClick) {
       paint: { "icon-opacity": OP },
     });
     clickLayers.push(g.id + "-eie", g.id + "-dnb");
+  });
+
+  groups.forEach((g) => {
+    // Tagged-listing ring: a hollow circle just outside the dot's border,
+    // drawn ABOVE every dot layer (added last) so a neighbouring dot cannot
+    // cover it -- it reads as a halo on ITS dot regardless of what else is
+    // nearby. Safe to sit on top because its fill is transparent, so it
+    // never occludes the dots beneath it. Stroke colour is the TAG's own
+    // colour (tagcolors.js) -- features matching the hasTag filter always
+    // carry a tagColor property.
+    map.addLayer({
+      id: g.id + "-tagring",
+      type: "circle",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, ["==", ["get", "hasTag"], true]],
+      paint: {
+        "circle-radius": RING_R,
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": ["get", "tagColor"],
+        "circle-stroke-opacity": ["min", 0.9, OP],
+      },
+    });
   });
 
   // UNCHANGED: the existing trailing block that wires click / mouseenter /

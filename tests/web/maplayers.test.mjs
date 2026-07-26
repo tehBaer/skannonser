@@ -30,17 +30,6 @@ test("every active dot layer is added after every closed dot layer", () => {
     `closed layers must precede active ones; got last closed ${lastClosed}, first active ${firstActive}`);
 });
 
-test("tag rings sit beneath every dot layer", () => {
-  const groups = buildGroups(["Enebolig"], { Enebolig: "#111" });
-  const map = fakeMap();
-  addListingGroups(map, groups, () => {});
-  const lastRing = Math.max(...map.added.flatMap((id, i) => (id.endsWith("-tagring") ? [i] : [])));
-  const firstDot = Math.min(
-    ...map.added.flatMap((id, i) => (/-(eie|dnb|sold)$/.test(id) ? [i] : []))
-  );
-  assert.ok(lastRing < firstDot, "rings must be added before dots so they read as haloes");
-});
-
 test("the inactive X is added after the closed dot it marks", () => {
   const groups = buildGroups(["Enebolig"], { Enebolig: "#111" });
   const map = fakeMap();
@@ -116,4 +105,24 @@ test("closed-only cluster bubbles are hollow, mixed clusters stay filled", () =>
   assert.notEqual(bothCluster.paint["circle-opacity"], 0, "mixed cluster keeps its fill");
   assert.equal(bothCluster.paint["circle-stroke-color"], "#111111",
     "mixed cluster keeps the dark border, not the hollow ring");
+});
+
+test("the tag ring hugs its dot and draws above every dot layer", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const specs = [];
+  const map = fakeMap();
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  const ring = specs.find((s) => s.id.endsWith("-tagring"));
+  const dot = specs.find((s) => s.id.endsWith("-eie"));
+  const dotOuter = dot.paint["circle-radius"] + dot.paint["circle-stroke-width"];
+  const gap = ring.paint["circle-radius"] - dotOuter;
+  assert.ok(gap >= 0 && gap <= 2.5,
+    `ring should hug the dot, got a ${gap}px gap`);
+
+  const lastDot = Math.max(...map.added.flatMap((id, i) => (/-(eie|dnb|sold)$/.test(id) ? [i] : [])));
+  const firstRing = Math.min(...map.added.flatMap((id, i) => (id.endsWith("-tagring") ? [i] : [])));
+  assert.ok(firstRing > lastDot,
+    "rings must draw above dots so a neighbouring dot cannot cover them");
 });
