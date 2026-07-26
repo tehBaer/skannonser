@@ -160,21 +160,25 @@ export function effectiveStationRadiusM(station) {
   return Number.isFinite(r) && r > 0 ? r : DEFAULT_STATION_RADIUS_M;
 }
 
-// One Polygon feature per (station, line): each line's ring in its own colour,
-// filterable by line visibility -- mirrors getExpandedStations (map.html
-// 3957-3992) drawing one Circle per (station, line).
 export function stationCircleFeatures(stations) {
   const features = [];
   (stations || []).forEach((station) => {
     if (station.lat == null || station.lng == null) return;
+    const lines = stationLineIds(station);
     const radiusM = effectiveStationRadiusM(station);
     const ring = geodesicCircle(station.lng, station.lat, radiusM);
-    stationLineIds(station).forEach((line) => {
-      features.push({
-        type: "Feature",
-        geometry: { type: "Polygon", coordinates: [ring] },
-        properties: { name: station.name || "Stasjon", line, color: lineColor(line) },
-      });
+    // ONE circle per station. Emitting one per line stacked identical polygons
+    // on the 28 multi-line stations, darkening their edges and costing geometry
+    // for no information -- line filtering already happens on the station list
+    // in updateStationLayers, before this is called.
+    features.push({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [ring] },
+      properties: {
+        name: station.name || "Stasjon",
+        lines: lines.join(","),
+        color: lineColor(lines[0] || ""),
+      },
     });
   });
   return { type: "FeatureCollection", features };
@@ -185,6 +189,9 @@ export function stationCircleFeatures(stations) {
 // of its circle -- which is why "show stations without radii" was impossible.
 // One feature per station (not per line): the radius circles are line-filtered
 // upstream in updateStationLayers, so nothing here needs per-line duplicates.
+// Carries `lines` (same comma-joined shape as stationCircleFeatures) so
+// wireStationNamePopup's line suffix reads identically whether the hover
+// lands on the point or the radius ring.
 export function stationPointFeatures(stations) {
   const features = [];
   (stations || []).forEach((station) => {
@@ -195,6 +202,7 @@ export function stationPointFeatures(stations) {
       geometry: { type: "Point", coordinates: [station.lng, station.lat] },
       properties: {
         name: station.name || "Stasjon",
+        lines: lines.join(","),
         color: lineColor(lines[0] || ""),
       },
     });
@@ -359,9 +367,13 @@ export function wireStationNamePopup(map) {
     map.getCanvas().style.cursor = "pointer";
     if (!popup) popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
     const name = f.properties.name || "Stasjon";
-    const line = f.properties.line && f.properties.line !== UNASSIGNED_LINE_LABEL
-      ? " (" + f.properties.line + ")"
-      : "";
+    // `lines` is comma-joined (stationCircleFeatures/stationPointFeatures); split
+    // and re-join with ", " so a three-line station reads as "L1, R11, R21"
+    // rather than the raw "L1,R11,R21".
+    const lineIds = (f.properties.lines || "")
+      .split(",")
+      .filter((l) => l && l !== UNASSIGNED_LINE_LABEL);
+    const line = lineIds.length ? " (" + lineIds.join(", ") + ")" : "";
     popup.setLngLat(e.lngLat).setHTML('<div class="sk-station-name"></div>').addTo(map);
     popup.getElement().querySelector(".sk-station-name").textContent = name + line;
   };
