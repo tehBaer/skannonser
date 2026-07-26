@@ -504,7 +504,12 @@ export function syncClusterMarkers(map, groups, cache) {
       const reviewed = Number(f.properties.tag_sum) || 0;
       if (reviewed > 0 && count > 0) {
         div.dataset.reviewed = "";
-        div.style.setProperty("--reviewed", String(Math.min(1, reviewed / count)));
+        // Floored at 6 % of the circle: a true proportion renders 1-of-300 as a
+        // 1.2-degree sliver, i.e. indistinguishable from none reviewed at all,
+        // which loses the primary signal ("I have been here") to protect a
+        // precision nobody reads off a 44px dial. Above the floor it is exact.
+        const fraction = Math.min(1, reviewed / count);
+        div.style.setProperty("--reviewed", String(Math.max(0.06, fraction)));
       }
       const clusterId = f.properties.cluster_id;
       const coords = f.geometry.coordinates;
