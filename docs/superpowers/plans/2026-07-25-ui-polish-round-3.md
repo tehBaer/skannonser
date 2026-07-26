@@ -1908,3 +1908,106 @@ Expected: PASS, `# fail 0`, 21 tests.
 git add skannonser/web/static/map.js tests/web/maplayers.test.mjs
 git commit -m "feat(map): cluster halo scaled to how much of the cluster is reviewed"
 ```
+
+---
+
+### Task 7D: Cluster review indicator becomes a progress arc, not a full ring
+
+**Files:**
+- Modify: `skannonser/web/static/map.js` (delete the `-cluster-tagring` GL layer and `TAG_CLUSTER_HALO`; extend `syncClusterMarkers`)
+- Modify: `skannonser/web/static/style.css` (append)
+- Test: `tests/web/maplayers.test.mjs` (replace the two Task 7C halo tests)
+
+**Interfaces:**
+- Consumes: the `tag_sum` cluster property from Task 7C (KEEP it — the DOM marker needs it), `clusterSize(count)`.
+- Produces: a `--reviewed` CSS custom property and a `data-reviewed` attribute on cluster marker elements.
+
+**Why:** owner feedback on the Task 7C halo. A full ring whose *thickness* encodes proportion is hard to read as a proportion — a progress arc is directly legible ("this much of the circle is filled in" = "this much reviewed"). A GL `circle` layer cannot draw an arc, but the cluster count marker is already a DOM element sitting exactly over the bubble, and CSS `conic-gradient` draws arcs trivially. Owner also rejected the crimson as too aggressive and asked for white or another neutral.
+
+- [ ] **Step 1: Replace the two halo tests**
+
+In `tests/web/maplayers.test.mjs`, DELETE the two Task 7C tests ("clusters carry a tagged-count property and a proportional halo" and "the cluster halo draws above the cluster bubble") and add:
+
+```js
+test("the tagged-count cluster property survives (the DOM arc needs it)", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const sources = [];
+  const map = fakeMap();
+  map.addSource = (id, cfg) => sources.push({ id, cfg });
+  addListingGroups(map, groups, () => {});
+  assert.ok(sources.every((s) => s.cfg.clusterProperties && s.cfg.clusterProperties.tag_sum),
+    "every clustered source must still aggregate a tagged count");
+});
+
+test("no GL cluster-halo layer remains — the arc is drawn in the DOM", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const map = fakeMap();
+  addListingGroups(map, groups, () => {});
+  assert.ok(!map.added.some((id) => id.endsWith("-cluster-tagring")),
+    "the GL halo layer must be gone");
+});
+```
+
+- [ ] **Step 2: Run them to confirm the second fails**
+
+Run: `node --test tests/web/maplayers.test.mjs`
+Expected: FAIL on "no GL cluster-halo layer remains" — the layer is still there.
+
+- [ ] **Step 3: Delete the GL halo**
+
+Remove the whole `map.addLayer({ id: g.id + "-cluster-tagring", ... })` block from the final tag pass, and delete the `TAG_CLUSTER_HALO` constant. Leave the `-tagring` per-dot layer and the `tag_sum` aggregation exactly as they are.
+
+Confirm: `grep -rn "TAG_CLUSTER_HALO\|cluster-tagring" skannonser/web/static/` returns nothing.
+
+- [ ] **Step 4: Feed the fraction to the DOM marker**
+
+In `syncClusterMarkers`, after `div.textContent = f.properties.point_count_abbreviated;` add:
+
+```js
+      // Reviewed-progress arc (CSS draws it; see style.css). A GL circle layer
+      // can only draw a full ring, and thickness reads poorly as a proportion --
+      // an arc is directly legible. Only set when something is tagged, so
+      // untouched clusters carry no decoration at all.
+      const reviewed = Number(f.properties.tag_sum) || 0;
+      if (reviewed > 0 && count > 0) {
+        div.dataset.reviewed = "";
+        div.style.setProperty("--reviewed", String(Math.min(1, reviewed / count)));
+      }
+```
+
+- [ ] **Step 5: Draw the arc**
+
+Append to `style.css`:
+
+```css
+/* Cluster review-progress arc (2026-07-26). The count marker sits exactly over
+   the GL bubble, so a pseudo-element just outside it reads as that bubble's
+   own progress. White with a soft dark shadow so it holds up on both the pale
+   and the dark parts of the OSM basemap without competing with the boligtype
+   colours the way the earlier crimson ring did. */
+.cluster-marker.cluster-count { position: relative; }
+.cluster-marker.cluster-count[data-reviewed]::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  /* from -90deg so the arc starts at 12 o'clock, like a progress dial. */
+  background: conic-gradient(from -90deg, #ffffff calc(var(--reviewed, 0) * 360deg), rgba(0, 0, 0, 0) 0);
+  -webkit-mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+```
+
+- [ ] **Step 6: Run the tests**
+
+Run: `node --test tests/web/*.test.mjs`
+Expected: PASS, `# fail 0`, 21 tests.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add skannonser/web/static/map.js skannonser/web/static/style.css tests/web/maplayers.test.mjs
+git commit -m "feat(map): cluster review indicator becomes a white progress arc"
+```
