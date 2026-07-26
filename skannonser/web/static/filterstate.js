@@ -239,8 +239,28 @@ export function activeFilterCount(filters, meta) {
 // persists to localStorage. Returns true when something was removed so the
 // caller can save. Only the deriveVocabs-backed sets are pruned; boligtype,
 // eieform and energimerke come from the server's static meta vocabulary.
-export function pruneFilterSets(filters, vocabs) {
-  if (!filters || !vocabs) return false;
+//
+// `vocabComplete` GATES THE DELETION, and defaults to false because a
+// speculative prune is unrecoverable. Both pages derive their vocabulary from
+// the listings currently VISIBLE, which on the load path and after any layer
+// toggle is a strict subset of the data:
+//   * the map builds its UI before the lazily-fetched closed bucket arrives,
+//     so a tag or nabolag carried only by closed listings looked "gone";
+//   * the table reads its "Vis solgte" pref after the first prune has already
+//     run against actives only;
+//   * switching every layer off narrows the vocabulary to nothing, which used
+//     to wipe the whole selection in two clicks;
+//   * and the two pages prune ONE shared blob against DIFFERENT vocabularies
+//     (the map has two closed buckets, the table one), so with both tabs open
+//     one page deleted a filter the other was actively using.
+// Callers pass true only when their vocabulary covers every listing the app
+// has -- all buckets enabled AND the closed bucket fetched -- which is the
+// same full dataset on both pages, so neither can undercut the other. When it
+// is false this is a total no-op: it does not mutate either, because the
+// caller's filters object is saved wholesale by unrelated flows and an
+// "unpersisted" deletion would ride along on the next write.
+export function pruneFilterSets(filters, vocabs, vocabComplete = false) {
+  if (!filters || !vocabs || !vocabComplete) return false;
   let changed = false;
   const keysOf = (list) => new Set((list || []).map((o) => o.key));
 

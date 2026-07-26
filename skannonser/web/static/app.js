@@ -179,6 +179,17 @@ function vocabItems() {
   return [...state.itemsById.values()].filter((it) => state.ui[bucketOf(it)]);
 }
 
+// Whether vocabItems() currently covers EVERY listing this app can hold, which
+// is the only state in which deleting a stored filter value is safe (see
+// pruneFilterSets). Any switched-off bucket, or a not-yet-fetched closed
+// bucket, means a value can be absent from the vocabulary while still very
+// much existing -- and the deletion is irreversible and shared with the table.
+function vocabIsComplete() {
+  return Boolean(
+    state.ui.eie && state.ui.dnb && state.ui.sold && state.ui.inactive && state.soldLoaded
+  );
+}
+
 // Per-listing dim decision: metric filters OR commute OR hide-outside-radius.
 // `ctx` carries the once-per-recompute station context.
 function isDimmed(item, ctx) {
@@ -787,7 +798,7 @@ function onFilterChange() {
 // reset, cross-tab storage event, sold-load, annotation-save.
 function rebuildFilterUIs() {
   const vocabs = deriveVocabs(vocabItems());
-  if (pruneFilterSets(state.ui.filters, vocabs)) saveUi();
+  if (pruneFilterSets(state.ui.filters, vocabs, vocabIsComplete())) saveUi();
   buildFilterPanelUI(document.getElementById("filter-panel-body"), {
     meta: state.meta,
     vocabs,

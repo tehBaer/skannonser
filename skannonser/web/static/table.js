@@ -157,7 +157,13 @@ function refreshVocabs() {
   // switched back off.
   const visible = state.showSold ? state.items : state.items.filter((it) => !it.closed);
   state.vocabs = deriveVocabs(visible);
-  if (pruneFilterSets(state.filters, state.vocabs)) saveFilters(state.filters);
+  // Deleting stored filter values is only safe once the vocabulary covers the
+  // WHOLE dataset -- see pruneFilterSets. With "Vis solgte" off (which is also
+  // the state during init, before wireToolbar has read the pref) closed
+  // listings are invisible or not even fetched, and the map next door may well
+  // be showing them.
+  const vocabComplete = state.showSold && state.soldLoaded;
+  if (pruneFilterSets(state.filters, state.vocabs, vocabComplete)) saveFilters(state.filters);
   state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
 }
 
