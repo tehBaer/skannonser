@@ -39,6 +39,9 @@ html, body {
 #map {
   flex: 1 1 auto;
   height: 100%;
+  /* Containing block for the absolutely-positioned empty-state message, which
+     lives inside this pane so it centres over the map rather than the window. */
+  position: relative;
 }
 
 .brand {

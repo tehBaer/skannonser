@@ -71,10 +71,15 @@
       <div id="status" class="status muted"></div>
     </aside>
     <div id="drawer-backdrop"></div>
-    <div id="map"></div>
-    <div id="map-empty" class="map-empty" hidden>
-      <p>Ingen annonser vises med gjeldende lag og filtre.</p>
-      <button type="button" id="map-empty-reset">Nullstill filtre</button>
+    <div id="map">
+      <!-- Inside #map on purpose: the message is absolutely positioned, so it
+           needs the map pane as its containing block or it centres on the whole
+           window and drifts left behind the sidebar. MapLibre appends its own
+           canvas alongside this rather than replacing the container's children. -->
+      <div id="map-empty" class="map-empty" hidden>
+        <p>Ingen annonser vises med gjeldende lag og filtre.</p>
+        <button type="button" id="map-empty-reset">Nullstill filtre</button>
+      </div>
     </div>
   </div>
 
