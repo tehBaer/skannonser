@@ -38,13 +38,12 @@
         <summary><h2>Visning</h2></summary>
         <div id="display-sliders"></div>
         <label class="toggle"><input type="checkbox" id="toggle-combine-sold"> Klyng solgte + aktive sammen</label>
-        <label class="toggle"><input type="checkbox" id="toggle-sold-premium"> Farg solgte etter budpremie</label>
-        <div id="premium-legend" class="legend" hidden></div>
       </details>
 
       <details class="panel" id="stations-panel" open>
         <summary><h2>Stasjoner</h2></summary>
-        <label class="toggle"><input type="checkbox" id="toggle-stations"> Vis stasjoner og radius</label>
+        <label class="toggle"><input type="checkbox" id="toggle-stations"> Vis stasjoner</label>
+        <label class="toggle"><input type="checkbox" id="toggle-station-radius"> Vis radius</label>
         <label class="toggle"><input type="checkbox" id="toggle-hide-outside"> Ton ned utenfor radius</label>
         <div class="filter-row">
           <div class="filter-head">
@@ -54,7 +53,13 @@
           <input type="range" id="sandvika-max" min="0" max="120" step="1">
         </div>
         <label class="toggle"><input type="checkbox" id="toggle-transfer"> Inkluder bytte (via Oslo S)</label>
-        <h3 class="subhead">Linjer</h3>
+        <div class="subhead-row">
+          <h3 class="subhead">Linjer</h3>
+          <span class="line-bulk">
+            <button type="button" id="lines-all" class="linkish">Alle</button>
+            <button type="button" id="lines-none" class="linkish">Ingen</button>
+          </span>
+        </div>
         <div id="line-toggles" class="legend muted">Laster …</div>
       </details>
 
@@ -66,7 +71,16 @@
       <div id="status" class="status muted"></div>
     </aside>
     <div id="drawer-backdrop"></div>
-    <div id="map"></div>
+    <div id="map">
+      <!-- Inside #map on purpose: the message is absolutely positioned, so it
+           needs the map pane as its containing block or it centres on the whole
+           window and drifts left behind the sidebar. MapLibre appends its own
+           canvas alongside this rather than replacing the container's children. -->
+      <div id="map-empty" class="map-empty" hidden>
+        <p>Ingen annonser vises med gjeldende lag og filtre.</p>
+        <button type="button" id="map-empty-reset">Nullstill filtre</button>
+      </div>
+    </div>
   </div>
 
   <script src="/vendor/maplibre-gl.js"></script>

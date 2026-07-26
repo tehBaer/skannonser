@@ -39,6 +39,9 @@ html, body {
 #map {
   flex: 1 1 auto;
   height: 100%;
+  /* Containing block for the absolutely-positioned empty-state message, which
+     lives inside this pane so it centres over the map rather than the window. */
+  position: relative;
 }
 
 .brand {
@@ -165,7 +168,7 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 }
 
 .legend-keys { margin-top: 10px; }
-.boligtype-toggle, .line-toggle { font-size: 13px; }
+.boligtype-toggle { font-size: 13px; }
 
 /* ---- Filter sliders -------------------------------------------------- */
 .filter-row { margin: 10px 0; }
@@ -391,15 +394,21 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 #listings-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 #listings-table tr.sold-row { background: #f6f6f5; color: var(--muted); }
+/* A closed row needs to read as a different category, not a slightly greyer
+   one -- same reasoning as the hollow map dots. */
 .sold-badge, .inactive-badge {
   display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 9px;
   font-size: 11px;
-  padding: 1px 6px;
-  margin-left: 6px;
-  border-radius: 4px;
-  background: #efefef;
-  color: #666;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+  background: transparent;
 }
+.sold-badge { color: #6b5a1f; }
+.inactive-badge { color: #7a4a45; }
 
 #listings-table a { color: var(--accent); text-decoration: none; }
 #listings-table a:hover { text-decoration: underline; }
@@ -526,7 +535,11 @@ details.subgroup > summary {
 .af-clear:hover { color: #b3402f; }
 
 /* --- closed-status (2026-07-24): muted badge for Inaktiv/Trukket --- */
-.source-tag.inactive, .inactive-badge {
+/* Scoped to the popup's source-tag only: .inactive-badge (the table page's
+   closed-row badge, styled outlined by Task 12) used to be listed here too,
+   but same-specificity + later-in-file meant this quietly won the cascade
+   and negated that outlined design. */
+.source-tag.inactive {
   background: #9aa39c;
   color: #fff;
 }
@@ -579,3 +592,104 @@ details.subgroup > summary {
   100% { background: transparent; }
 }
 #listings-table tr.row-flash td { animation: row-flash 2.4s ease-out; }
+
+/* Cluster review-progress arc (2026-07-26). The count marker is centred on the
+   GL bubble, so a pseudo-element ringing that bubble reads as its own
+   progress. White with a soft dark shadow so it holds up on both the pale
+   and the dark parts of the OSM basemap without competing with the boligtype
+   colours the way the earlier crimson ring did. */
+/* NEVER set `position: relative` on this selector. It is 0-2-0 and beats
+   vendor maplibre-gl.css's 0-1-0 `.maplibregl-marker { position: absolute }`,
+   which would take every cluster marker out of absolute positioning: they
+   become in-flow blocks inside the canvas container, each pushed down by the
+   stacked height of the ones before it, and `.maplibregl-map { overflow:
+   hidden }` clips the rest away. The ::after below needs no help -- the marker
+   is already a positioned ancestor. Restated explicitly so the cascade cannot
+   be lost to a future edit. */
+.cluster-marker.cluster-count { position: absolute; }
+.cluster-marker.cluster-count[data-reviewed]::after {
+  content: "";
+  position: absolute;
+  /* Sized from the GL bubble's diameter (--bubble-d, set per cluster in
+     syncClusterMarkers) plus a 10px margin, NOT from this marker's box -- the
+     two use different size curves, so an `inset` off the box detached the arc
+     from its bubble at mid counts. */
+  width: calc(var(--bubble-d, 44px) + 10px);
+  height: calc(var(--bubble-d, 44px) + 10px);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  /* from -90deg so the arc starts at 12 o'clock, like a progress dial. */
+  background: conic-gradient(from -90deg, #ffffff calc(var(--reviewed, 0) * 360deg), rgba(0, 0, 0, 0) 0);
+  -webkit-mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+
+/* --- line chips (2026-07-25 round 3): thirteen checkbox rows cost 423px, an
+   eighth of the sidebar, to show labels of two to four characters. The
+   container keeps its .legend class (shared with the LAG swatch list), whose
+   flex-direction: column would otherwise stack these into full-width rows
+   again -- flex-direction must be set here explicitly, not just display,
+   since the cascade resolves each property independently and only display
+   is overridden by this ID's higher specificity. --- */
+#line-toggles { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+.line-chip {
+  border: 1px solid var(--line-color);
+  background: var(--line-color);
+  color: #fff;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.line-chip.off { background: transparent; color: var(--line-color); opacity: 0.55; }
+.subhead-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.line-bulk { display: flex; gap: 8px; }
+.linkish {
+  background: none; border: none; padding: 0;
+  font: inherit; font-size: 12px; color: var(--accent, #156f55);
+  cursor: pointer; text-decoration: underline;
+}
+
+.chip-row-head { margin-top: 10px; }
+/* The untagged bucket is the default state, not a choice -- give it less
+   weight than the tags the user actually applied. */
+.tag-chip.untagged { font-weight: 500; opacity: 0.75; }
+
+/* Shown only when filters hide every listing -- a blank map otherwise looks
+   like a loading failure. */
+.map-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #d9dedb;
+  border-radius: 6px;
+  padding: 14px 18px;
+  text-align: center;
+  z-index: 3;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+}
+.map-empty p { margin: 0 0 8px; font-size: 14px; }
+
+/* The table's counterpart to .map-empty: one full-width cell standing in for
+   the whole result set, so it should not read as a data row. Scoped under the
+   table id because `#listings-table td` is 1-0-1 and would otherwise keep its
+   left-aligned 6px cell padding. table.js puts the message and its button in
+   the same td, hence the gap. */
+#listings-table td.empty-row {
+  text-align: center;
+  color: var(--muted);
+  padding: 24px 12px;
+  border-bottom: none;
+  /* The table sets nowrap for data cells; this one is a sentence, so let it
+     wrap rather than force horizontal scroll on a narrow viewport. */
+  white-space: normal;
+}
+#listings-table td.empty-row button { margin-left: 10px; }

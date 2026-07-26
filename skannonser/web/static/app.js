@@ -33,6 +33,7 @@ import {
   activeFilterEntries,
   subscribeOtherTabs,
   resetFilters,
+  pruneFilterSets,
 } from "./filterstate.js";
 import {
   addStationLayers,
@@ -45,6 +46,7 @@ import {
   anyLineVisibleStation,
   commuteDisabled,
   SANDVIKA_MAX,
+  lineColor,
 } from "./stations.js";
 
 /* global maplibregl */
@@ -68,11 +70,16 @@ function defaultUi(meta) {
     // full strength the actives drown -- subdued-by-default keeps the sold
     // layer readable the moment it's toggled on. Slide to 0 for full colour.
     soldDim: 50,
-    soldPremium: false, // colour sold dots by budpremie instead of boligtype
+    // Budpremie colouring is retired for now (owner, 2026-07-26): the control is
+    // gone from the sidebar but setSoldColorMode/PREMIUM_* remain in map.js so it
+    // can be brought back. Forced false on load so a stored `true` from before the
+    // control disappeared cannot strand anyone in premium colours.
+    soldPremium: false,
     combineSold: false, // cluster sold + active together (vs separately)
     collapsed: {}, // {panelId: true} -> sidebar panel collapsed
     stations: {
       show: false,
+      showRadius: true,
       hideOutside: false,
       includeTransfer: false,
       sandvikaMax: SANDVIKA_MAX, // == max -> commute filter off
@@ -129,6 +136,10 @@ function loadUi(meta) {
       // saveUi can never re-persist the old shape.
       delete ui.boligtypeHidden;
       delete ui.tagHidden;
+      // Budpremie colouring is retired (owner, 2026-07-26): the ...stored spread
+      // above would otherwise let a pre-existing `soldPremium: true` survive
+      // forever, with no control left in the sidebar to turn it back off.
+      ui.soldPremium = false;
       return ui;
     }
   } catch (_) {
@@ -156,6 +167,27 @@ function bucketOf(item) {
   if (item.closed) return "inactive";
   if (item.source === "dnb") return "dnb";
   return "eie";
+}
+
+// Vocabularies must describe what the user can actually SEE. Deriving them from
+// every loaded item strands values from a switched-off bucket in the filter UI
+// forever, because the item store only ever grows -- once the sold bucket is
+// fetched it stays for the session. Scope this to the LAYER toggles only:
+// deriving from "passes all filters" instead would make a tag vanish the moment
+// a price slider hid it, leaving no way to click it back.
+function vocabItems() {
+  return [...state.itemsById.values()].filter((it) => state.ui[bucketOf(it)]);
+}
+
+// Whether vocabItems() currently covers EVERY listing this app can hold, which
+// is the only state in which deleting a stored filter value is safe (see
+// pruneFilterSets). Any switched-off bucket, or a not-yet-fetched closed
+// bucket, means a value can be absent from the vocabulary while still very
+// much existing -- and the deletion is irreversible and shared with the table.
+function vocabIsComplete() {
+  return Boolean(
+    state.ui.eie && state.ui.dnb && state.ui.sold && state.ui.inactive && state.soldLoaded
+  );
 }
 
 // Per-listing dim decision: metric filters OR commute OR hide-outside-radius.
@@ -227,6 +259,7 @@ function featureCollectionsByGroup() {
   const soldPct = Math.max(0, Math.min(100, Number(state.ui.soldDim) || 0));
   const soldOpacity = 1 - soldPct / 100;
   const byGroup = {};
+  let shown = 0;
   state.groups.forEach((g) => (byGroup[g.id] = []));
   const hideExcluded = Number(state.ui.dimIntensity) >= 100;
   state.itemsById.forEach((item) => {
@@ -241,7 +274,10 @@ function featureCollectionsByGroup() {
     // filter dim; passing sold dots keep the separate "Solgt nedtoning".
     const op = excluded ? residual : item.closed ? soldOpacity : 1;
     byGroup[gid].push(itemToFeature(item, op));
+    shown++;
   });
+  // The only point that knows what survived layers + filters + hard-hide.
+  state.shownCount = shown;
   return byGroup;
 }
 
@@ -256,6 +292,9 @@ function applyAll() {
   requestAnimationFrame(() => {
     rafPending = false;
     const byGroup = featureCollectionsByGroup();
+    // A blank map reads as a loading failure, not as a filter result.
+    const emptyEl = document.getElementById("map-empty");
+    if (emptyEl) emptyEl.hidden = !(state.itemsById.size > 0 && state.shownCount === 0);
     // Clear cached cluster markers BEFORE setData -- see clearClusterCache's
     // doc comment in map.js. Reused cluster_ids after a data change would
     // otherwise leave stale bubbles (wrong count/position) on screen.
@@ -315,19 +354,21 @@ function renderSourceLegend() {
   if (!node) return;
   node.innerHTML = "";
   // Colour = boligtype (see BOLIGTYPE above). Here we key the SHAPE (DNB square)
-  // and the BORDER (active = dark, sold = white). Swatches use a neutral fill so
-  // the border reads.
+  // and the BORDER (active = dark, sold/closed = hollow ring). Swatches use a
+  // neutral fill so the border reads, except the hollow row which mirrors the
+  // map's ringed markers.
   [
-    { label: "Aktiv (mørk kant)", border: "#111111", square: false },
-    { label: "Solgt (hvit kant)", border: "#ffffff", square: false },
-    { label: "DNB (kvadrat)", border: "#111111", square: true },
-  ].forEach(({ label, border, square }) => {
+    { label: "Aktiv (mørk kant)", border: "#111111", square: false, hollow: false },
+    { label: "Solgt/lukket (ring)", border: DEFAULT_UNKNOWN_TYPE_COLOR, square: false, hollow: true },
+    { label: "DNB (kvadrat)", border: "#111111", square: true, hollow: false },
+  ].forEach(({ label, border, square, hollow }) => {
     const row = document.createElement("div");
     row.className = "legend-row";
     const sw = document.createElement("span");
     sw.className = "legend-swatch" + (square ? " square" : "");
-    sw.style.background = DEFAULT_UNKNOWN_TYPE_COLOR;
-    sw.style.border = "2px solid " + border;
+    // Hollow mirrors the map: closed listings are a ring, not a fill.
+    sw.style.background = hollow ? "transparent" : DEFAULT_UNKNOWN_TYPE_COLOR;
+    sw.style.border = (hollow ? "3px solid " : "2px solid ") + border;
     row.appendChild(sw);
     row.appendChild(document.createTextNode(label));
     node.appendChild(row);
@@ -397,6 +438,22 @@ function panPopupIntoView() {
   });
 }
 
+// Put the layer buckets back to their DEFAULTS, checkboxes included. Used by
+// the empty-state reset: a "Nullstill filtre" that cannot undo a layer toggle
+// is a dead button for the user who emptied the map by unchecking Eie and DNB.
+// Defaults rather than all-on, because the button says "nullstill" -- switching
+// on Solgt and Inaktiv, which most users never enable, would be doing more than
+// the label promises.
+function restoreLayerToggles() {
+  const defaults = { eie: true, dnb: true, sold: false, inactive: false };
+  Object.entries(defaults).forEach(([bucket, on]) => {
+    state.ui[bucket] = on;
+    const cb = document.getElementById("toggle-" + bucket);
+    if (cb) cb.checked = on;
+  });
+  saveUi();
+}
+
 function wireLayerToggles() {
   const map = {
     eie: "toggle-eie",
@@ -425,6 +482,10 @@ function wireLayerToggles() {
           input.disabled = false;
         }
       }
+      // Every bucket change moves the vocabulary boundary, in both directions.
+      // The enable path already rebuilds via ensureSoldLoaded, but eie/dnb and
+      // every disable path did not, which is how switched-off values got stuck.
+      rebuildFilterUIs();
       applyAll();
     });
   });
@@ -541,6 +602,7 @@ function wireStationControls() {
     });
   };
   bindCheckbox("toggle-stations", "show");
+  bindCheckbox("toggle-station-radius", "showRadius");
   bindCheckbox("toggle-hide-outside", "hideOutside");
   bindCheckbox("toggle-transfer", "includeTransfer");
 
@@ -573,21 +635,43 @@ function wireStationControls() {
       container.classList.add("muted");
     }
     lines.forEach((line) => {
-      const row = document.createElement("label");
-      row.className = "toggle line-toggle";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = !st.lineHidden[line];
-      cb.addEventListener("change", () => {
-        if (cb.checked) delete st.lineHidden[line];
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "line-chip" + (st.lineHidden[line] ? " off" : "");
+      btn.style.setProperty("--line-color", lineColor(line));
+      btn.textContent = line;
+      btn.setAttribute("aria-pressed", String(!st.lineHidden[line]));
+      btn.addEventListener("click", () => {
+        if (st.lineHidden[line]) delete st.lineHidden[line];
         else st.lineHidden[line] = true;
+        btn.classList.toggle("off", Boolean(st.lineHidden[line]));
+        btn.setAttribute("aria-pressed", String(!st.lineHidden[line]));
         saveUi();
         applyAll();
       });
-      row.appendChild(cb);
-      row.appendChild(document.createTextNode(line));
-      container.appendChild(row);
+      container.appendChild(btn);
     });
+
+    // Isolating one line meant twelve clicks before this existed.
+    const setAll = (hidden) => {
+      lines.forEach((line) => {
+        if (hidden) st.lineHidden[line] = true;
+        else delete st.lineHidden[line];
+      });
+      // Repaint the chips in place. Calling wireStationControls() again would
+      // stack a second change listener on every checkbox that bindCheckbox
+      // touches, so each later click would fire its handler twice.
+      container.querySelectorAll(".line-chip").forEach((chip) => {
+        chip.classList.toggle("off", hidden);
+        chip.setAttribute("aria-pressed", String(!hidden));
+      });
+      saveUi();
+      applyAll();
+    };
+    const allBtn = document.getElementById("lines-all");
+    const noneBtn = document.getElementById("lines-none");
+    if (allBtn) allBtn.onclick = () => setAll(false);
+    if (noneBtn) noneBtn.onclick = () => setAll(true);
   }
 }
 
@@ -654,6 +738,10 @@ async function handleHash() {
     const cb = document.getElementById(bucket === "sold" ? "toggle-sold" : "toggle-inactive");
     if (cb) cb.checked = true;
     saveUi();
+    // The filter vocabulary was derived from the previously-visible buckets;
+    // now that this deep link just widened what's on screen, it must be
+    // rebuilt or the chip row will describe a narrower set than the map shows.
+    rebuildFilterUIs();
   }
   applyAll();
   state.map.flyTo({ center: [item.lng, item.lat], zoom: 15 });
@@ -725,9 +813,11 @@ function onFilterChange() {
 // (Re)build every filter/display control that renders shared state -- init,
 // reset, cross-tab storage event, sold-load, annotation-save.
 function rebuildFilterUIs() {
+  const vocabs = deriveVocabs(vocabItems());
+  if (pruneFilterSets(state.ui.filters, vocabs, vocabIsComplete())) saveUi();
   buildFilterPanelUI(document.getElementById("filter-panel-body"), {
     meta: state.meta,
-    vocabs: deriveVocabs([...state.itemsById.values()]),
+    vocabs,
     colorByType: { ...state.colorByType, "": DEFAULT_UNKNOWN_TYPE_COLOR },
     filters: state.ui.filters,
     collapsed: state.ui.collapsed,
@@ -806,6 +896,22 @@ async function init() {
       onFilterChange();
     });
   }
+  const emptyReset = document.getElementById("map-empty-reset");
+  if (emptyReset) {
+    emptyReset.addEventListener("click", () => {
+      // Unlike the sidebar reset button above, this one ALSO switches the
+      // layer buckets back on: its message blames "lag og filtre", and the
+      // commonest way to empty the map is unchecking Eie and DNB, where a
+      // filters-only reset visibly does nothing at all.
+      restoreLayerToggles();
+      // resetFilters needs state.meta (defaultFilters reads meta.destinations)
+      // and onFilterChange keeps the "active filters" line in sync, not just
+      // the map data.
+      resetFilters(state.ui.filters, state.meta);
+      rebuildFilterUIs();
+      onFilterChange();
+    });
+  }
   // Live cross-tab sync: another tab (e.g. the table) changed the filters.
   subscribeOtherTabs(() => {
     state.ui.filters = loadFilters(state.meta);
@@ -823,8 +929,9 @@ async function init() {
     wireStationNamePopup(map);
     addBoundary(map, meta.polygon || []);
     state.layersReady = true;
-    if (state.ui.soldPremium) setSoldColorMode(map, state.groups, true);
-
+    // No initial setSoldColorMode(..., true) call here: budpremie colouring is
+    // retired (Task 7B) and loadUi() forces soldPremium false on every load, so
+    // this branch could never fire -- removed rather than left as dead code.
     applyAll();
 
     map.on("render", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));

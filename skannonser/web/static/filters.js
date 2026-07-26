@@ -451,14 +451,24 @@ export function selectField(parent, { label, options, hidden, swatches, onChange
 // §3). Same storage semantics as the checkbox group: chip visible = key
 // absent from `hidden`. options = vocabs.tags; the "" bucket renders as its
 // "(uten tag)" label with a neutral color.
-export function tagChipRow(parent, { options, hidden, tagColors, onChange }) {
+export function tagChipRow(parent, { options, hidden, tagColors, onChange, label }) {
+  if (label) {
+    const head = document.createElement("div");
+    head.className = "filter-head chip-row-head";
+    head.textContent = label;
+    parent.appendChild(head);
+  }
   const wrap = document.createElement("div");
   wrap.className = "tag-chip-row";
-  options.forEach((opt) => {
+  // The "" bucket is the listings NOT yet assessed -- the least interesting
+  // group, and the widest chip. Sort it last so the tags the user actually
+  // applied lead the row.
+  const ordered = [...options].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : 0));
+  ordered.forEach((opt) => {
     const color = colorForTag(opt.key, tagColors) || "#6f7e76";
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "tag-chip" + (hidden[opt.key] ? " off" : "");
+    btn.className = "tag-chip" + (hidden[opt.key] ? " off" : "") + (opt.key === "" ? " untagged" : "");
     btn.style.setProperty("--tag-color", color);
     btn.textContent = opt.count != null ? `${opt.label} (${opt.count})` : opt.label;
     btn.addEventListener("click", () => {
@@ -526,6 +536,7 @@ export function buildFilterPanelUI(
   // cardinality the chips ARE the better summary, and they double as the
   // one-click filter (2026-07-25 spec §3).
   tagChipRow(fields, {
+    label: "Tags",
     options: vocabs.tags,
     hidden: filters.tagHidden,
     tagColors: assignTagColors(vocabs.tags.map((o) => o.key)),

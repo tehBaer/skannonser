@@ -15,6 +15,7 @@ import {
   activeFilterCount,
   subscribeOtherTabs,
   resetFilters,
+  pruneFilterSets,
 } from "./filterstate.js";
 import {
   isColumnFilterActive,
@@ -86,7 +87,12 @@ const COLUMNS = [
 // Column picker (2026-07-25 spec §7): first-run default hides the noise
 // columns (Pris/Felleskost are semi-redundant with Totalpris/Mnd-kost).
 // Adresse and Kart are load-bearing (identity + map handoff) -- not hideable.
-const DEFAULT_HIDDEN_COLUMNS = ["postnummer", "pris", "felleskost_mnd", "soverom", "etasje"];
+// First-run defaults. `tilgjengelighet` is empty for every active listing in
+// production (0 of 770) -- it stays in the picker for anyone who wants it, but
+// costs a column of horizontal scroll by default for nothing.
+const DEFAULT_HIDDEN_COLUMNS = [
+  "postnummer", "pris", "felleskost_mnd", "soverom", "etasje", "tilgjengelighet",
+];
 const ALWAYS_VISIBLE_COLUMNS = new Set(["adresse", "kart"]);
 
 function loadHiddenColumns() {
@@ -145,7 +151,19 @@ function onFilterChange() {
 }
 
 function refreshVocabs() {
-  state.vocabs = deriveVocabs(state.items);
+  // Same rule as the map (app.js vocabItems): the vocabulary describes the
+  // rows the user can see. `state.items` only ever grows, so without this the
+  // tag chips keep values that only closed rows carried after "Vis solgte" is
+  // switched back off.
+  const visible = state.showSold ? state.items : state.items.filter((it) => !it.closed);
+  state.vocabs = deriveVocabs(visible);
+  // Deleting stored filter values is only safe once the vocabulary covers the
+  // WHOLE dataset -- see pruneFilterSets. With "Vis solgte" off (which is also
+  // the state during init, before wireToolbar has read the pref) closed
+  // listings are invisible or not even fetched, and the map next door may well
+  // be showing them.
+  const vocabComplete = state.showSold && state.soldLoaded;
+  if (pruneFilterSets(state.filters, state.vocabs, vocabComplete)) saveFilters(state.filters);
   state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
 }
 
@@ -180,6 +198,27 @@ function saveSoldPref(sold) {
   } catch (_) {
     /* storage may be unavailable; non-fatal */
   }
+}
+
+// Turn "Vis solgte" on, fetching the closed bucket the first time. Shared by
+// the toggle itself and the empty-state reset (F5), whose message blames "lag
+// og filtre" but whose button could only ever touch the filters.
+async function enableSold() {
+  if (state.showSold) return;
+  state.showSold = true;
+  const soldToggle = document.getElementById("table-sold");
+  if (soldToggle) soldToggle.checked = true;
+  saveSoldPref(true);
+  if (!state.soldLoaded) {
+    setStatus("Laster solgte …");
+    try {
+      state.items = state.items.concat(await fetchListings(1));
+      state.soldLoaded = true;
+    } catch (err) {
+      setStatus("Kunne ikke laste solgte: " + err.message);
+    }
+  }
+  refreshVocabs();
 }
 
 // sold=truthy fetches ONLY the sold bucket (?bucket=sold) -- the actives are
@@ -471,6 +510,27 @@ function render() {
   body.innerHTML = "";
   const rows = visibleRows();
   rows.forEach((item) => body.appendChild(buildRow(item)));
+  if (!rows.length && state.items.length) {
+    const tr = el("tr");
+    const td = el("td", "empty-row", "Ingen annonser vises med gjeldende lag og filtre. ");
+    td.colSpan = visibleColumns().length;
+    const btn = el("button", null, "Nullstill filtre");
+    btn.type = "button";
+    btn.addEventListener("click", async () => {
+      resetFilters(state.filters, state.meta);
+      saveFilters(state.filters);
+      // Also restore the one "lag" this page has. The message names layers as
+      // a possible cause of the empty table, so the button must be able to
+      // undo them too -- a filters-only reset leaves a user who emptied the
+      // table by unchecking "Vis solgte" clicking on nothing.
+      await enableSold();
+      refreshVocabs();
+      render();
+    });
+    td.appendChild(btn);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
   const n = activeFilterCount(state.filters, state.meta);
   setStatus(
     rows.length + " av " + state.items.length + " annonser" +
@@ -497,20 +557,18 @@ function wireToolbar() {
   soldToggle.checked = loadSoldPref();
   state.showSold = soldToggle.checked;
   soldToggle.addEventListener("change", async () => {
-    state.showSold = soldToggle.checked;
-    saveSoldPref(soldToggle.checked);
-    if (soldToggle.checked && !state.soldLoaded) {
+    if (soldToggle.checked) {
       soldToggle.disabled = true;
-      setStatus("Laster solgte …");
       try {
-        state.items = state.items.concat(await fetchListings(1));
-        state.soldLoaded = true;
-        refreshVocabs();
-      } catch (err) {
-        setStatus("Kunne ikke laste solgte: " + err.message);
+        await enableSold();
       } finally {
         soldToggle.disabled = false;
       }
+    } else {
+      state.showSold = false;
+      saveSoldPref(false);
+      // The off path changes the vocabulary boundary just as much as the on one.
+      refreshVocabs();
     }
     render();
   });
@@ -606,6 +664,10 @@ async function handleHash() {
     const soldToggle = document.getElementById("table-sold");
     if (soldToggle) soldToggle.checked = true;
     saveSoldPref(true);
+    // Vocab was derived from the non-closed set; this deep link just widened
+    // the visible rows to include the closed one, so the chips would
+    // describe a narrower set than what's now on screen without a rebuild.
+    refreshVocabs();
   }
   state.focusFinnkode = finnkode;
   render();

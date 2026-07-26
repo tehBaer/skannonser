@@ -1623,3 +1623,391 @@ pre-existing vocabulary-pollution bug; fixed in round 3 (see
 git add docs/superpowers/specs/2026-07-25-ui-polish-round-2-design.md
 git commit -m "docs: cross-reference the round 3 follow-up from the round 2 spec"
 ```
+
+---
+
+## Plan amendment (owner feedback after Phase 2, 2026-07-26)
+
+Owner reviewed the Phase 2 markers in their own browser. Sizes approved. Two changes requested,
+inserted here as Tasks 7A and 7B and to be done before Phase 3.
+
+### Task 7A: Make the tag colour read on the bubble again
+
+**Files:**
+- Modify: `skannonser/web/static/map.js` (the `RING_R` constant; the `-tagring` pass in `addListingGroups`)
+- Test: `tests/web/maplayers.test.mjs` (extend)
+
+**Interfaces:**
+- Consumes: `DOT_R` from Task 6.
+- Produces: no export change. `RING_R` stays private.
+
+**Why:** the owner reports tagged listings no longer read as tagged. Two changes compounded.
+Task 6 moved the ring from radius 12 to 15 while the dot went 7 → 9, so the gap between dot edge
+and ring grew from 3.5px to 4.5px and the ring's outer edge went from 15px to 18px — it reads as a
+large loose circle near the dot rather than an outline on it. Task 5 then moved every ring into a
+single pass **beneath every dot on the map**; previously a group's ring drew above earlier groups'
+dots. In dense areas a 36px-wide ring is now substantially covered by neighbouring dots.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/web/maplayers.test.mjs`:
+
+```js
+test("the tag ring hugs its dot and draws above every dot layer", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const specs = [];
+  const map = fakeMap();
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  const ring = specs.find((s) => s.id.endsWith("-tagring"));
+  const dot = specs.find((s) => s.id.endsWith("-eie"));
+  const dotOuter = dot.paint["circle-radius"] + dot.paint["circle-stroke-width"];
+  const gap = ring.paint["circle-radius"] - dotOuter;
+  assert.ok(gap >= 0 && gap <= 2.5,
+    `ring should hug the dot, got a ${gap}px gap`);
+
+  const lastDot = Math.max(...map.added.flatMap((id, i) => (/-(eie|dnb|sold)$/.test(id) ? [i] : [])));
+  const firstRing = Math.min(...map.added.flatMap((id, i) => (id.endsWith("-tagring") ? [i] : [])));
+  assert.ok(firstRing > lastDot,
+    "rings must draw above dots so a neighbouring dot cannot cover them");
+});
+```
+
+Note this REPLACES the intent of the earlier "tag rings sit beneath every dot layer" test added in
+Task 5 — delete that test, since the two now contradict and this one is the owner's decision.
+
+- [ ] **Step 2: Run it to make sure it fails**
+
+Run: `node --test tests/web/maplayers.test.mjs`
+Expected: FAIL on the gap assertion (4.5px) and on the ordering assertion.
+
+- [ ] **Step 3: Tighten the ring**
+
+Change the `RING_R` constant to hug the dot:
+
+```js
+const RING_R = DOT_R + 2; // ring band sits just outside the dot's 1.5px border
+```
+
+- [ ] **Step 4: Draw rings above the dots**
+
+Move the whole `groups.forEach` pass that adds the `-tagring` layer so it runs AFTER the closed
+pass and the active pass, i.e. make it the last layer pass in `addListingGroups`, immediately
+before the trailing click-wiring block. Do not change the layer's `paint`, `filter` or `id`.
+
+Update the layer's leading comment: the ring is a halo drawn ABOVE the dots so a neighbouring
+dot cannot cover it, and it can safely sit on top because its fill is transparent.
+
+- [ ] **Step 5: Run the tests**
+
+Run: `node --test tests/web/*.test.mjs`
+Expected: PASS, `# fail 0`. Count drops by one (deleted test) and rises by one (new test).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add skannonser/web/static/map.js tests/web/maplayers.test.mjs
+git commit -m "fix(map): tag ring hugs its dot and draws above neighbouring dots"
+```
+
+---
+
+### Task 7B: Retire the budpremie colouring control
+
+**Files:**
+- Modify: `skannonser/web/static/index.html` (the `toggle-sold-premium` label; the `premium-legend` div)
+- Modify: `skannonser/web/static/app.js` (`soldPremium` default and its wiring)
+
+**Interfaces:**
+- Consumes: existing `setSoldColorMode`, `PREMIUM_LEGEND`.
+- Produces: nothing new. `setSoldColorMode`, `PREMIUM_COLOR` and `PREMIUM_LEGEND` stay in `map.js`
+  unused-but-intact.
+
+**Why:** the owner finds the budpremie colouring confusing and does not want it for now, but may
+want it later. So this hides the control rather than deleting the mechanism.
+
+**Critical:** a user with `soldPremium: true` already persisted in their `skannonser.ui.v1` blob
+must not be stranded in premium colouring with no control to leave it. Force the flag off.
+
+- [ ] **Step 1: Remove the control from the markup**
+
+In `index.html`, delete the `toggle-sold-premium` label line and the `premium-legend` div that
+follows it.
+
+- [ ] **Step 2: Force the flag off and stop applying the mode**
+
+In `app.js`, change the state default to make the retirement explicit:
+
+```js
+    // Budpremie colouring is retired for now (owner, 2026-07-26): the control is
+    // gone from the sidebar but setSoldColorMode/PREMIUM_* remain in map.js so it
+    // can be brought back. Forced false on load so a stored `true` from before the
+    // control disappeared cannot strand anyone in premium colours.
+    soldPremium: false,
+```
+
+Then, wherever the UI state is loaded, force it off after the merge with stored values, so a
+persisted `true` cannot survive. Find the load path and set `ui.soldPremium = false` there.
+
+Make `wirePremiumToggle` (or whatever wires the checkbox) tolerate the missing element and do
+nothing — it should already guard with a null check; verify it does and leave it otherwise intact.
+
+Remove the call that applies the mode on map load (`if (state.ui.soldPremium) setSoldColorMode(...)`)
+since the flag is now always false — or leave it, and say which you chose and why.
+
+- [ ] **Step 3: Verify no dead reference breaks**
+
+Run: `grep -rn "toggle-sold-premium\|premium-legend" skannonser/web/static/`
+Every remaining hit must be a null-guarded lookup, not an unconditional dereference.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `node --test tests/web/*.test.mjs` — expected `# fail 0`. `PREMIUM_LEGEND` and
+`setSoldColorMode` keep their tests; they are still exported and still work.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add skannonser/web/static/index.html skannonser/web/static/app.js
+git commit -m "feat(map): retire the budpremie colouring control for now"
+```
+
+---
+
+### Task 7C: Cluster halo showing how much of a cluster is reviewed
+
+**Files:**
+- Modify: `skannonser/web/static/map.js` (`clusterProperties` on each source; a new cluster-halo layer in the final tag pass)
+- Test: `tests/web/maplayers.test.mjs` (extend)
+
+**Interfaces:**
+- Consumes: the per-feature `hasTag` boolean app.js already stamps (the `-tagring` layer filters on it); the existing `clusterProperties` mechanism, which already aggregates `op_sum`.
+- Produces: a `tag_sum` cluster property and a `{g.id}-cluster-tagring` layer. No export change.
+
+**Why:** a tag marks a listing the owner has reviewed, but the ring disappears when dots collapse into a cluster, so at overview zoom there is no sense of which areas have been worked through. A binary "contains ≥1 tagged listing" indicator was rejected: a cluster of 50 with one tag would look identical to a cluster of 3 fully reviewed. Scaling the halo with the reviewed FRACTION answers the question actually asked at that zoom — how much of this area have I been through — and costs the same single layer.
+
+Note the halo uses ONE fixed colour, not a tag colour: a cluster mixes tags, so no single tag's colour applies. Colour is deliberately secondary here — the owner's stated priority is that the marker reads as "reviewed" at all.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/web/maplayers.test.mjs`:
+
+```js
+test("clusters carry a tagged-count property and a proportional halo", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const specs = [];
+  const sources = [];
+  const map = fakeMap();
+  map.addSource = (id, cfg) => sources.push({ id, cfg });
+  map.addLayer = (spec) => { map.added.push(spec.id); specs.push(spec); };
+  addListingGroups(map, groups, () => {});
+
+  assert.ok(sources.every((s) => s.cfg.clusterProperties && s.cfg.clusterProperties.tag_sum),
+    "every clustered source must aggregate a tagged count");
+
+  const halo = specs.find((s) => s.id.endsWith("-cluster-tagring"));
+  assert.ok(halo, "a cluster halo layer must exist");
+  assert.equal(halo.paint["circle-opacity"], 0, "halo is a ring, not a disc");
+  assert.ok(JSON.stringify(halo.filter).includes("point_count"),
+    "halo applies to clusters only");
+  assert.ok(JSON.stringify(halo.paint["circle-stroke-opacity"]).includes("tag_sum"),
+    "halo strength must derive from the tagged fraction, not be a constant");
+});
+
+test("the cluster halo draws above the cluster bubble", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const map = fakeMap();
+  addListingGroups(map, groups, () => {});
+  const bubble = Math.max(...map.added.flatMap((id, i) => (id.endsWith("-cluster") ? [i] : [])));
+  const halo = Math.min(...map.added.flatMap((id, i) => (id.endsWith("-cluster-tagring") ? [i] : [])));
+  assert.ok(halo > bubble, "halo must not be hidden behind its own bubble");
+});
+```
+
+- [ ] **Step 2: Run it to make sure it fails**
+
+Run: `node --test tests/web/maplayers.test.mjs`
+Expected: FAIL — no `tag_sum`, no `-cluster-tagring` layer.
+
+- [ ] **Step 3: Aggregate the tagged count**
+
+In the source config, extend `clusterProperties`:
+
+```js
+      clusterProperties: {
+        op_sum: ["+", ["get", "op"]],
+        // How many members carry a tag. With point_count this gives the
+        // reviewed FRACTION, which drives the halo's strength below.
+        tag_sum: ["+", ["case", ["==", ["get", "hasTag"], true], 1, 0]],
+      },
+```
+
+- [ ] **Step 4: Add the halo layer**
+
+Add this inside the SAME final pass that adds the `-tagring` layer (the last layer pass, so tag indicators are never covered), directly after the `-tagring` `addLayer` call:
+
+```js
+    // Cluster-level "how much of this have I reviewed" halo. One fixed colour,
+    // not a tag colour: a cluster mixes tags, so no single tag's colour applies.
+    // Strength scales with the reviewed fraction -- a barely-touched cluster
+    // shows a faint ring, a fully-reviewed one a strong one -- because a binary
+    // "contains a tag" mark would make 1-of-50 look like 3-of-3. Multiplied by
+    // the same cluster opacity as the bubble so nedtoning still fades it.
+    map.addLayer({
+      id: g.id + "-cluster-tagring",
+      type: "circle",
+      source: g.id,
+      filter: ["all", ["has", "point_count"], [">", ["get", "tag_sum"], 0]],
+      paint: {
+        "circle-radius": [
+          "interpolate", ["linear"], ["get", "point_count"],
+          2, 18, 25, 23, 100, 29, 500, 34,
+        ],
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-opacity": 0,
+        "circle-stroke-width": 2.5,
+        "circle-stroke-color": TAG_CLUSTER_HALO,
+        "circle-stroke-opacity": [
+          "*",
+          clusterOpacity,
+          [
+            "interpolate", ["linear"],
+            ["/", ["get", "tag_sum"], ["get", "point_count"]],
+            0, 0.3,
+            1, 1,
+          ],
+        ],
+      },
+    });
+```
+
+The radius stops are the cluster bubble's own stops (`2,14 25,19 100,25 500,30`) plus 4, so the halo clears the bubble at every size.
+
+`clusterOpacity` is the expression already computed in the cluster pass. It is scoped to that pass — hoist it, or recompute the identical expression in this pass and say which you did.
+
+- [ ] **Step 5: Define the halo colour**
+
+Beside `ACTIVE_BORDER`, add:
+
+```js
+// Cluster review-halo colour. Deliberately one fixed colour rather than a tag
+// colour (clusters mix tags), and taken from the TAG palette family rather than
+// the boligtype palette so it reads as annotation, not data.
+const TAG_CLUSTER_HALO = "#c2185b";
+```
+
+- [ ] **Step 6: Run the tests**
+
+Run: `node --test tests/web/*.test.mjs`
+Expected: PASS, `# fail 0`, 21 tests.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add skannonser/web/static/map.js tests/web/maplayers.test.mjs
+git commit -m "feat(map): cluster halo scaled to how much of the cluster is reviewed"
+```
+
+---
+
+### Task 7D: Cluster review indicator becomes a progress arc, not a full ring
+
+**Files:**
+- Modify: `skannonser/web/static/map.js` (delete the `-cluster-tagring` GL layer and `TAG_CLUSTER_HALO`; extend `syncClusterMarkers`)
+- Modify: `skannonser/web/static/style.css` (append)
+- Test: `tests/web/maplayers.test.mjs` (replace the two Task 7C halo tests)
+
+**Interfaces:**
+- Consumes: the `tag_sum` cluster property from Task 7C (KEEP it — the DOM marker needs it), `clusterSize(count)`.
+- Produces: a `--reviewed` CSS custom property and a `data-reviewed` attribute on cluster marker elements.
+
+**Why:** owner feedback on the Task 7C halo. A full ring whose *thickness* encodes proportion is hard to read as a proportion — a progress arc is directly legible ("this much of the circle is filled in" = "this much reviewed"). A GL `circle` layer cannot draw an arc, but the cluster count marker is already a DOM element sitting exactly over the bubble, and CSS `conic-gradient` draws arcs trivially. Owner also rejected the crimson as too aggressive and asked for white or another neutral.
+
+- [ ] **Step 1: Replace the two halo tests**
+
+In `tests/web/maplayers.test.mjs`, DELETE the two Task 7C tests ("clusters carry a tagged-count property and a proportional halo" and "the cluster halo draws above the cluster bubble") and add:
+
+```js
+test("the tagged-count cluster property survives (the DOM arc needs it)", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const sources = [];
+  const map = fakeMap();
+  map.addSource = (id, cfg) => sources.push({ id, cfg });
+  addListingGroups(map, groups, () => {});
+  assert.ok(sources.every((s) => s.cfg.clusterProperties && s.cfg.clusterProperties.tag_sum),
+    "every clustered source must still aggregate a tagged count");
+});
+
+test("no GL cluster-halo layer remains — the arc is drawn in the DOM", () => {
+  const groups = buildGroups(["Enebolig"], { Enebolig: "#0f4c81" });
+  const map = fakeMap();
+  addListingGroups(map, groups, () => {});
+  assert.ok(!map.added.some((id) => id.endsWith("-cluster-tagring")),
+    "the GL halo layer must be gone");
+});
+```
+
+- [ ] **Step 2: Run them to confirm the second fails**
+
+Run: `node --test tests/web/maplayers.test.mjs`
+Expected: FAIL on "no GL cluster-halo layer remains" — the layer is still there.
+
+- [ ] **Step 3: Delete the GL halo**
+
+Remove the whole `map.addLayer({ id: g.id + "-cluster-tagring", ... })` block from the final tag pass, and delete the `TAG_CLUSTER_HALO` constant. Leave the `-tagring` per-dot layer and the `tag_sum` aggregation exactly as they are.
+
+Confirm: `grep -rn "TAG_CLUSTER_HALO\|cluster-tagring" skannonser/web/static/` returns nothing.
+
+- [ ] **Step 4: Feed the fraction to the DOM marker**
+
+In `syncClusterMarkers`, after `div.textContent = f.properties.point_count_abbreviated;` add:
+
+```js
+      // Reviewed-progress arc (CSS draws it; see style.css). A GL circle layer
+      // can only draw a full ring, and thickness reads poorly as a proportion --
+      // an arc is directly legible. Only set when something is tagged, so
+      // untouched clusters carry no decoration at all.
+      const reviewed = Number(f.properties.tag_sum) || 0;
+      if (reviewed > 0 && count > 0) {
+        div.dataset.reviewed = "";
+        div.style.setProperty("--reviewed", String(Math.min(1, reviewed / count)));
+      }
+```
+
+- [ ] **Step 5: Draw the arc**
+
+Append to `style.css`:
+
+```css
+/* Cluster review-progress arc (2026-07-26). The count marker sits exactly over
+   the GL bubble, so a pseudo-element just outside it reads as that bubble's
+   own progress. White with a soft dark shadow so it holds up on both the pale
+   and the dark parts of the OSM basemap without competing with the boligtype
+   colours the way the earlier crimson ring did. */
+.cluster-marker.cluster-count { position: relative; }
+.cluster-marker.cluster-count[data-reviewed]::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  /* from -90deg so the arc starts at 12 o'clock, like a progress dial. */
+  background: conic-gradient(from -90deg, #ffffff calc(var(--reviewed, 0) * 360deg), rgba(0, 0, 0, 0) 0);
+  -webkit-mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+```
+
+- [ ] **Step 6: Run the tests**
+
+Run: `node --test tests/web/*.test.mjs`
+Expected: PASS, `# fail 0`, 21 tests.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add skannonser/web/static/map.js skannonser/web/static/style.css tests/web/maplayers.test.mjs
+git commit -m "feat(map): cluster review indicator becomes a white progress arc"
+```

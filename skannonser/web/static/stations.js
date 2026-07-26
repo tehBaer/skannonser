@@ -42,6 +42,8 @@
 export const STATION_SOURCE_ID = "stations";
 export const STATION_CIRCLE_LAYER = "station-circles";
 export const STATION_RING_LAYER = "station-ring";
+export const STATION_POINT_SOURCE_ID = "station-points";
+export const STATION_POINT_LAYER = "station-point-dots";
 
 // getEffectiveStationRadiusM default (map.html defaultStationRadius default 1000).
 export const DEFAULT_STATION_RADIUS_M = 1000;
@@ -158,21 +160,66 @@ export function effectiveStationRadiusM(station) {
   return Number.isFinite(r) && r > 0 ? r : DEFAULT_STATION_RADIUS_M;
 }
 
-// One Polygon feature per (station, line): each line's ring in its own colour,
-// filterable by line visibility -- mirrors getExpandedStations (map.html
-// 3957-3992) drawing one Circle per (station, line).
-export function stationCircleFeatures(stations) {
+// Which of a station's lines gives it its colour. The FIRST VISIBLE one, not
+// simply the first: Sandvika serves L1 and R11, and colouring it L1-blue after
+// the user switched L1 off points at a line that is no longer on the map --
+// especially confusing now that the line chips carry these same colours. Falls
+// back to the first line when none is visible (the station is on its way out
+// of the source anyway) and to "" when it has none, which lineColor maps to
+// the UNASSIGNED colour.
+function displayLineOf(lines, visibleLines) {
+  if (visibleLines) {
+    const visible = lines.find((l) => visibleLines.has(l));
+    if (visible) return visible;
+  }
+  return lines[0] || "";
+}
+
+export function stationCircleFeatures(stations, visibleLines) {
   const features = [];
   (stations || []).forEach((station) => {
     if (station.lat == null || station.lng == null) return;
+    const lines = stationLineIds(station);
     const radiusM = effectiveStationRadiusM(station);
     const ring = geodesicCircle(station.lng, station.lat, radiusM);
-    stationLineIds(station).forEach((line) => {
-      features.push({
-        type: "Feature",
-        geometry: { type: "Polygon", coordinates: [ring] },
-        properties: { name: station.name || "Stasjon", line, color: lineColor(line) },
-      });
+    // ONE circle per station. Emitting one per line stacked identical polygons
+    // on the 28 multi-line stations, darkening their edges and costing geometry
+    // for no information -- line filtering already happens on the station list
+    // in updateStationLayers, before this is called.
+    features.push({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [ring] },
+      properties: {
+        name: station.name || "Stasjon",
+        lines: lines.join(","),
+        color: lineColor(displayLineOf(lines, visibleLines)),
+      },
+    });
+  });
+  return { type: "FeatureCollection", features };
+}
+
+// The station itself, as a point. Until round 3 the only station geometry was
+// the radius polygon, so a station's position was merely implied by the centre
+// of its circle -- which is why "show stations without radii" was impossible.
+// One feature per station (not per line): the radius circles are line-filtered
+// upstream in updateStationLayers, so nothing here needs per-line duplicates.
+// Carries `lines` (same comma-joined shape as stationCircleFeatures) so
+// wireStationNamePopup's line suffix reads identically whether the hover
+// lands on the point or the radius ring.
+export function stationPointFeatures(stations, visibleLines) {
+  const features = [];
+  (stations || []).forEach((station) => {
+    if (station.lat == null || station.lng == null) return;
+    const lines = stationLineIds(station);
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [station.lng, station.lat] },
+      properties: {
+        name: station.name || "Stasjon",
+        lines: lines.join(","),
+        color: lineColor(displayLineOf(lines, visibleLines)),
+      },
     });
   });
   return { type: "FeatureCollection", features };
@@ -263,10 +310,29 @@ export function addStationLayers(map) {
     source: STATION_SOURCE_ID,
     paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.85 },
   });
+
+  map.addSource(STATION_POINT_SOURCE_ID, {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+  // Added last so station dots sit above their own radius rings.
+  map.addLayer({
+    id: STATION_POINT_LAYER,
+    type: "circle",
+    source: STATION_POINT_SOURCE_ID,
+    paint: {
+      "circle-radius": 4,
+      "circle-color": ["get", "color"],
+      "circle-stroke-width": 1.5,
+      "circle-stroke-color": "#ffffff",
+    },
+  });
 }
 
-// Recompute the station source (visible lines + commute-visible stations only)
-// and toggle the master "show stations" visibility.
+// Recompute the station sources (visible lines + commute-visible stations
+// only) and apply the two INDEPENDENT visibility flags: "Vis stasjoner" drives
+// the station dots, and "Vis radius" -- gated by the first, since a radius is a
+// detail of a station -- drives the radius fill and ring.
 export function updateStationLayers(map, stations, ui) {
   const src = map.getSource(STATION_SOURCE_ID);
   if (!src) return;
@@ -283,12 +349,22 @@ export function updateStationLayers(map, stations, ui) {
       : true;
     return anyVisible && stationCommuteVisible(s, opts);
   });
-  src.setData(stationCircleFeatures(kept));
+  // visibleLines is handed on so a station is coloured by a line the user can
+  // actually see, not by whichever line happens to be first in its list.
+  src.setData(stationCircleFeatures(kept, visibleLines));
 
-  const vis = ui.stations.show ? "visible" : "none";
-  [STATION_CIRCLE_LAYER, STATION_RING_LAYER].forEach((id) => {
-    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
-  });
+  const pointSrc = map.getSource(STATION_POINT_SOURCE_ID);
+  if (pointSrc) pointSrc.setData(stationPointFeatures(kept, visibleLines));
+
+  // The radius is a detail OF the stations, so it can only show when they do.
+  const showStations = !!ui.stations.show;
+  const showRadius = showStations && ui.stations.showRadius !== false;
+  const setVis = (id, on) => {
+    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
+  };
+  setVis(STATION_POINT_LAYER, showStations);
+  setVis(STATION_CIRCLE_LAYER, showRadius);
+  setVis(STATION_RING_LAYER, showRadius);
 }
 
 // Set of visible normalized line ids given the persisted `lineHidden` map.
@@ -301,7 +377,8 @@ export function visibleLineSet(ui) {
   return set;
 }
 
-// Bind the hover/click station-name popup to the circle layers.
+// Bind the hover/click station-name popup to every layer a station is drawn
+// with: the radius fill, the radius ring, AND the station point itself.
 export function wireStationNamePopup(map) {
   let popup = null;
   const show = (e) => {
@@ -310,9 +387,13 @@ export function wireStationNamePopup(map) {
     map.getCanvas().style.cursor = "pointer";
     if (!popup) popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
     const name = f.properties.name || "Stasjon";
-    const line = f.properties.line && f.properties.line !== UNASSIGNED_LINE_LABEL
-      ? " (" + f.properties.line + ")"
-      : "";
+    // `lines` is comma-joined (stationCircleFeatures/stationPointFeatures); split
+    // and re-join with ", " so a three-line station reads as "L1, R11, R21"
+    // rather than the raw "L1,R11,R21".
+    const lineIds = (f.properties.lines || "")
+      .split(",")
+      .filter((l) => l && l !== UNASSIGNED_LINE_LABEL);
+    const line = lineIds.length ? " (" + lineIds.join(", ") + ")" : "";
     popup.setLngLat(e.lngLat).setHTML('<div class="sk-station-name"></div>').addTo(map);
     popup.getElement().querySelector(".sk-station-name").textContent = name + line;
   };
@@ -320,7 +401,10 @@ export function wireStationNamePopup(map) {
     map.getCanvas().style.cursor = "";
     if (popup) { popup.remove(); popup = null; }
   };
-  [STATION_CIRCLE_LAYER, STATION_RING_LAYER].forEach((id) => {
+  // Also bind the point layer: the popup must follow the station itself, not
+  // only its radius, because "Vis radius" can be switched off independently
+  // (Task 9) while the station point stays visible.
+  [STATION_CIRCLE_LAYER, STATION_RING_LAYER, STATION_POINT_LAYER].forEach((id) => {
     map.on("mouseenter", id, show);
     map.on("mousemove", id, show);
     map.on("mouseleave", id, hide);

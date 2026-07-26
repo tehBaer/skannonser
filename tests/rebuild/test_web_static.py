@@ -80,7 +80,10 @@ def test_index_served_at_root(tmp_path):
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     body = resp.text
-    assert '<div id="map"></div>' in body
+    # Opening tag only: the map pane is no longer empty (it holds the
+    # absolutely-positioned empty-state message, which needs #map as its
+    # containing block). What matters here is that the mount point is served.
+    assert '<div id="map">' in body
     assert 'id="sidebar"' in body
     # Loads the vendor lib + the app entrypoint as a module.
     assert "/vendor/maplibre-gl.js" in body

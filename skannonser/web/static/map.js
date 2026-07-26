@@ -36,6 +36,31 @@ const SOLD_COLOR = "#9aa5a0";
 const CLUSTER_RADIUS = 22;
 const CLUSTER_MAX_ZOOM = 10;
 
+// Cluster-bubble size, as flat [point_count, radius_px] pairs. Defined ONCE
+// because two consumers need it in two different forms and they must not
+// drift: the GL circle layer splices it into an "interpolate"/"linear"
+// expression, and clusterBubbleRadius() below evaluates it as a number so the
+// DOM count marker can size its progress arc to the bubble it decorates. The
+// arc used to be sized off the marker box (clusterSize) instead, a completely
+// different curve that agrees with this one only at the extremes -- at ~50
+// points it left the arc floating ~13px clear of its bubble.
+export const CLUSTER_RADIUS_STOPS = [2, 14, 25, 19, 100, 25, 500, 30];
+
+// Numeric evaluation of CLUSTER_RADIUS_STOPS with MapLibre's own
+// interpolate/linear semantics: linear between stops, clamped outside them.
+export function clusterBubbleRadius(count) {
+  const s = CLUSTER_RADIUS_STOPS;
+  const n = Number(count);
+  if (!Number.isFinite(n) || n <= s[0]) return s[1];
+  for (let i = 0; i + 3 < s.length; i += 2) {
+    if (n <= s[i + 2]) {
+      const t = (n - s[i]) / (s[i + 2] - s[i]);
+      return s[i + 1] + t * (s[i + 3] - s[i + 1]);
+    }
+  }
+  return s[s.length - 1];
+}
+
 const OSM_STYLE = {
   version: 8,
   sources: {
@@ -150,7 +175,7 @@ function ensureSquareIcon(map, color, strokeColor) {
   const safe = (c) => c.replace(/[^a-z0-9]/gi, "");
   const name = "dnb-sq-" + safe(color) + "-" + safe(stroke);
   if (map.hasImage(name)) return name;
-  const size = 18;
+  const size = SQUARE_PX;
   const cvs = document.createElement("canvas");
   cvs.width = size;
   cvs.height = size;
@@ -171,7 +196,7 @@ function ensureSquareIcon(map, color, strokeColor) {
 function ensureXIcon(map) {
   const name = "inactive-x";
   if (map.hasImage(name)) return name;
-  const size = 16;
+  const size = X_PX;
   const cvs = document.createElement("canvas");
   cvs.width = size;
   cvs.height = size;
@@ -196,10 +221,24 @@ function ensureXIcon(map) {
   return name;
 }
 
-// Border convention: ACTIVE listings get a black border, SOLD keep a white
-// border (both are coloured by boligtype).
+// One source of truth for marker geometry. The DNB square and the inactive X
+// are canvas rasters that do NOT follow circle-radius, and the tag ring is its
+// own circle layer -- so all of them must be derived from one number or they
+// drift apart (the ring's old 12 was hand-tuned against a dot radius of 7).
+// Raster icons are cached by name, so these must stay module constants: making
+// them dynamic without putting the size in the cache key would serve stale art.
+export const DOT_R = 9;
+const CLOSED_R = DOT_R - 1.5;
+const RING_R = DOT_R + 2; // ring band sits just outside the dot's 1.5px border
+// Exported (alongside DOT_R) so tests can verify the square raster stays
+// larger than the dot's diameter without duplicating the 2.55 factor here.
+export const SQUARE_PX = Math.round(DOT_R * 2.55);
+const X_PX = Math.round(DOT_R * 2);
+
+// Border convention: ACTIVE listings are solid boligtype-coloured dots with a
+// dark border. CLOSED listings are hollow rings in the same colour (see the
+// -sold layer paint).
 const ACTIVE_BORDER = "#111111";
-const SOLD_BORDER = "#ffffff";
 
 const IS_CLOSED = ["==", ["get", "closed"], true];
 const NOT_CLOSED = ["==", ["get", "closed"], false];
@@ -225,9 +264,10 @@ export const PREMIUM_LEGEND = [
   { color: "#b9c4be", label: "Ingen tinglyst pris ennå" },
 ];
 
-// Flip every "-sold" layer between boligtype colour and the budpremie scale.
-// The premium scale only applies to genuine sales; inactive/trukket dots (no
-// sale, never a premium) keep their boligtype colour in both modes.
+// Flip every closed layer between boligtype colour and the budpremie scale.
+// Closed dots are hollow, so the colour lives on the stroke. The premium scale
+// applies only to genuine sales; inactive/trukket dots never had a premium and
+// keep their boligtype colour in both modes.
 export function setSoldColorMode(map, groups, premiumOn) {
   groups.forEach((g) => {
     if (!g.hasSold) return;
@@ -235,18 +275,40 @@ export function setSoldColorMode(map, groups, premiumOn) {
     if (!map.getLayer(layerId)) return;
     map.setPaintProperty(
       layerId,
-      "circle-color",
+      "circle-stroke-color",
       premiumOn ? ["case", ["==", ["get", "sold"], true], PREMIUM_COLOR, g.color] : g.color
     );
   });
 }
 
 // Adds one clustered source per group, with unclustered GL layers. Both active
-// and sold are coloured by their boligtype (g.color); active gets a dark border,
-// sold a white border. Layers are gated by g.hasActive/g.hasSold so a "both"
-// source renders active AND sold, while active/sold variants render just one.
+// and sold are coloured by their boligtype (g.color); active is a filled dot
+// with a dark border, sold is a hollow ring in the same colour. Layers are
+// gated by g.hasActive/g.hasSold so a "both" source renders active AND sold,
+// while active/sold variants render just one.
 export function addListingGroups(map, groups, onListingClick) {
   const clickLayers = [];
+
+  // Layers are added in five passes rather than one per group, because add
+  // order IS z-order in MapLibre. Per-group ordering put every later boligtype
+  // over every earlier one, and closed dots over active ones -- with 4.5x more
+  // closed than active listings in production, that buried exactly the dots
+  // that matter. Passes: sources -> clusters -> closed -> active -> rings.
+  // Rings are last (owner feedback, 2026-07-26): a per-group ring pass drawn
+  // before the dots let a neighbouring group's dot cover a ring meant to
+  // halo an earlier dot -- drawing rings last guarantees nothing can bury one.
+
+  // Hoisted rather than recomputed: this expression reads only op_sum and
+  // point_count, both uniform cluster properties across every group's source
+  // (buildGroups never varies their shape), so it is identical for every g.
+  // The cluster-bubble pass and the cluster-halo pass (below) both need it --
+  // duplicating the literal would let the two drift apart silently.
+  const clusterOpacity = [
+    "max",
+    0.15, // floor so a fully-dimmed cluster stays faintly visible
+    ["/", ["coalesce", ["get", "op_sum"], ["get", "point_count"]], ["get", "point_count"]],
+  ];
+
   groups.forEach((g) => {
     map.addSource(g.id, {
       type: "geojson",
@@ -258,115 +320,147 @@ export function addListingGroups(map, groups, onListingClick) {
       // faded in proportion to how many of its listings are dimmed (nedtoning).
       clusterProperties: {
         op_sum: ["+", ["get", "op"]],
+        // How many members carry a tag. With point_count this gives the
+        // reviewed FRACTION, which drives the halo's strength below.
+        // hasTag is only stamped on tagged features (app.js) and is ABSENT
+        // -- not false -- on the rest, so coalesce it before comparing;
+        // relying on a missing-property comparison to resolve to false is
+        // not something to depend on across expression evaluators.
+        tag_sum: ["+", ["case", ["==", ["coalesce", ["get", "hasTag"], false], true], 1, 0]],
       },
     });
+  });
 
+  groups.forEach((g) => {
     // GL cluster bubble: colour + border + OPACITY driven by the aggregated
     // op_sum (avg member opacity). GL paint expressions read clusterProperties
     // reliably and GL opacity actually renders -- unlike DOM-marker opacity,
     // which MapLibre overwrites. The DOM marker on top carries only the count.
-    const clusterBorder = g.hasSold && !g.hasActive ? SOLD_BORDER : ACTIVE_BORDER;
-    const clusterOpacity = [
-      "max",
-      0.15, // floor so a fully-dimmed cluster stays faintly visible
-      ["/", ["coalesce", ["get", "op_sum"], ["get", "point_count"]], ["get", "point_count"]],
-    ];
+    // A cluster mixes many features, but a group is fanned out into
+    // active/sold/both variants (buildGroups), so a "sold" cluster source
+    // NEVER contains an active listing -- closed-only-ness is a property of
+    // the whole bubble, not a per-feature mix. So the same hollow-vs-filled
+    // convention as the dots applies: closed-only clusters get a transparent
+    // fill and a thick boligtype-coloured ring instead of a solid fill, so
+    // "filled = live, hollow = gone" reads at every zoom level. "Both"
+    // clusters stay filled -- they do contain active listings.
+    const closedOnly = g.hasSold && !g.hasActive;
     map.addLayer({
       id: g.id + "-cluster",
       type: "circle",
       source: g.id,
       filter: ["has", "point_count"],
       paint: {
-        "circle-color": g.color,
+        "circle-color": closedOnly ? "rgba(0,0,0,0)" : g.color,
         "circle-radius": [
           "interpolate", ["linear"], ["get", "point_count"],
-          2, 14, 25, 19, 100, 25, 500, 30,
+          ...CLUSTER_RADIUS_STOPS,
         ],
-        "circle-stroke-width": 2,
-        "circle-stroke-color": clusterBorder,
-        "circle-opacity": clusterOpacity,
+        // Cluster bubbles are much bigger than the 9px dots, so the dots' 3px
+        // ring would look thin/lost against a 14-30px radius bubble; 5px
+        // keeps the hollow ring legible at the smallest cluster size while
+        // still leaving a visible gap for the DOM count label to sit on.
+        "circle-stroke-width": closedOnly ? 5 : 2,
+        "circle-stroke-color": closedOnly ? g.color : ACTIVE_BORDER,
+        "circle-opacity": closedOnly ? 0 : clusterOpacity,
         "circle-stroke-opacity": clusterOpacity,
       },
     });
+  });
 
-    // Tagged-listing ring: a hollow circle slightly larger than the dot,
-    // drawn BENEATH the dot layers (added first) so it reads as a halo.
-    // Stroke colour is the TAG's own colour (tagcolors.js) -- features
-    // matching the hasTag filter always carry a tagColor property.
+  groups.forEach((g) => {
+    if (!g.hasSold) return;
+    map.addLayer({
+      id: g.id + "-sold",
+      type: "circle",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, IS_CLOSED],
+      paint: {
+        // Hollow on purpose. A lighter tint of the same hue measured 2.94:1
+        // against the active dot and read as "same thing, faded" -- a dimmed
+        // orange even landed on the colour of an ACTIVE tomannsbolig. Filled
+        // vs hollow is a shape difference, so it survives the nedtoning
+        // slider and cannot be confused with another boligtype.
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-opacity": 0,
+        "circle-radius": CLOSED_R,
+        "circle-stroke-width": 3,
+        "circle-stroke-color": g.color,
+        "circle-stroke-opacity": OP,
+      },
+    });
+    map.addLayer({
+      id: g.id + "-inactive-x",
+      type: "symbol",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, IS_CLOSED, ["!=", ["get", "sold"], true]],
+      layout: {
+        "icon-image": ensureXIcon(map),
+        "icon-size": 0.75,
+        "icon-allow-overlap": true,
+      },
+      paint: { "icon-opacity": OP },
+    });
+    clickLayers.push(g.id + "-sold");
+  });
+
+  groups.forEach((g) => {
+    if (!g.hasActive) return;
+    map.addLayer({
+      id: g.id + "-eie",
+      type: "circle",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "eie"]],
+      paint: {
+        "circle-color": g.color,
+        "circle-radius": DOT_R,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": ACTIVE_BORDER, // active = dark border
+        "circle-opacity": OP,
+        "circle-stroke-opacity": OP,
+      },
+    });
+    map.addLayer({
+      id: g.id + "-dnb",
+      type: "symbol",
+      source: g.id,
+      filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "dnb"]],
+      layout: {
+        "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
+        "icon-size": 1,
+        "icon-allow-overlap": true,
+      },
+      paint: { "icon-opacity": OP },
+    });
+    clickLayers.push(g.id + "-eie", g.id + "-dnb");
+  });
+
+  groups.forEach((g) => {
+    // Tagged-listing ring: a hollow circle just outside the dot's border,
+    // drawn ABOVE every dot layer (added last) so a neighbouring dot cannot
+    // cover it -- it reads as a halo on ITS dot regardless of what else is
+    // nearby. Safe to sit on top because its fill is transparent, so it
+    // never occludes the dots beneath it. Stroke colour is the TAG's own
+    // colour (tagcolors.js) -- features matching the hasTag filter always
+    // carry a tagColor property.
     map.addLayer({
       id: g.id + "-tagring",
       type: "circle",
       source: g.id,
       filter: ["all", NOT_CLUSTER, ["==", ["get", "hasTag"], true]],
       paint: {
-        "circle-radius": 12,
+        "circle-radius": RING_R,
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-width": 3,
         "circle-stroke-color": ["get", "tagColor"],
         "circle-stroke-opacity": ["min", 0.9, OP],
       },
     });
-
-    if (g.hasActive) {
-      map.addLayer({
-        id: g.id + "-eie",
-        type: "circle",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "eie"]],
-        paint: {
-          "circle-color": g.color,
-          "circle-radius": 7,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": ACTIVE_BORDER, // active = dark border
-          "circle-opacity": OP,
-          "circle-stroke-opacity": OP,
-        },
-      });
-      map.addLayer({
-        id: g.id + "-dnb",
-        type: "symbol",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, NOT_CLOSED, ["==", ["get", "source"], "dnb"]],
-        layout: {
-          "icon-image": ensureSquareIcon(map, g.color, ACTIVE_BORDER),
-          "icon-size": 1,
-          "icon-allow-overlap": true,
-        },
-        paint: { "icon-opacity": OP },
-      });
-      clickLayers.push(g.id + "-eie", g.id + "-dnb");
-    }
-    if (g.hasSold) {
-      map.addLayer({
-        id: g.id + "-sold",
-        type: "circle",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, IS_CLOSED],
-        paint: {
-          "circle-color": g.color, // sold AND inactive: boligtype colour (inactive adds an X on top)
-          "circle-radius": 6,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": SOLD_BORDER, // sold = white border
-          "circle-opacity": OP,
-          "circle-stroke-opacity": OP,
-        },
-      });
-      map.addLayer({
-        id: g.id + "-inactive-x",
-        type: "symbol",
-        source: g.id,
-        filter: ["all", NOT_CLUSTER, IS_CLOSED, ["!=", ["get", "sold"], true]],
-        layout: {
-          "icon-image": ensureXIcon(map),
-          "icon-size": 0.75,
-          "icon-allow-overlap": true,
-        },
-        paint: { "icon-opacity": OP },
-      });
-      clickLayers.push(g.id + "-sold");
-    }
   });
 
+  // UNCHANGED: the existing trailing block that wires click / mouseenter /
+  // mouseleave over clickLayers stays exactly as it is, at the end of the
+  // function. addListingGroups returns nothing -- do not add a return.
   clickLayers.forEach((layerId) => {
     map.on("click", layerId, (e) => {
       const f = e.features && e.features[0];
@@ -381,8 +475,10 @@ export function addListingGroups(map, groups, onListingClick) {
   });
 }
 
-// Continuous cluster-bubble size (px), scaling with sqrt(count) so a 200-point
-// cluster reads clearly bigger than a 20-point one, clamped to a sane range.
+// Size (px) of the DOM count marker's BOX -- the hit target and text field
+// that sits over the bubble. This is NOT the bubble's size: the bubble is a GL
+// circle sized by CLUSTER_RADIUS_STOPS. Anything that has to line up with the
+// bubble's edge must use clusterBubbleRadius(), not this.
 export function clusterSize(count) {
   return Math.max(26, Math.min(60, Math.round(20 + 5.5 * Math.sqrt(count))));
 }
@@ -428,6 +524,25 @@ export function syncClusterMarkers(map, groups, cache) {
       div.style.width = size + "px";
       div.style.height = size + "px";
       div.textContent = f.properties.point_count_abbreviated;
+      // Reviewed-progress arc (CSS draws it; see style.css). A GL circle layer
+      // can only draw a full ring, and thickness reads poorly as a proportion --
+      // an arc is directly legible. Only set when something is tagged, so
+      // untouched clusters carry no decoration at all.
+      const reviewed = Number(f.properties.tag_sum) || 0;
+      if (reviewed > 0 && count > 0) {
+        div.dataset.reviewed = "";
+        // The arc must ring the GL BUBBLE, and this marker box is not the same
+        // size as it (clusterSize vs CLUSTER_RADIUS_STOPS are different
+        // curves). Hand the bubble's own diameter to the CSS so the arc is
+        // sized off the thing it decorates rather than off its own box.
+        div.style.setProperty("--bubble-d", 2 * clusterBubbleRadius(count) + "px");
+        // Floored at 6 % of the circle: a true proportion renders 1-of-300 as a
+        // 1.2-degree sliver, i.e. indistinguishable from none reviewed at all,
+        // which loses the primary signal ("I have been here") to protect a
+        // precision nobody reads off a 44px dial. Above the floor it is exact.
+        const fraction = Math.min(1, reviewed / count);
+        div.style.setProperty("--reviewed", String(Math.max(0.06, fraction)));
+      }
       const clusterId = f.properties.cluster_id;
       const coords = f.geometry.coordinates;
       div.addEventListener("click", () => {
