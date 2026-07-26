@@ -206,9 +206,12 @@ export function rangeRow(parent, { label, min, max, step, value, fmt, onInput })
 
 const shortDest = (key) => key.split("_").pop().toUpperCase();
 
-// Checkbox group over a small vocabulary, HIDDEN-set semantics: every option
-// rendered, checked = visible; unchecking writes {key: true} into `hidden`.
-export function checkboxGroup(parent, { label, options, hidden, onChange }) {
+// Checkbox group over a small vocabulary, SELECTED-set semantics: every option
+// rendered, checked = selected; `selected` is an ARRAY mutated in place, and an
+// empty one means the filter is off. Same rule as searchableMultiSelect and the
+// chip rows -- this is the funnel-shaped mount for a column header, where a
+// checkbox list reads better than chips (2026-07-26 selection conversion).
+export function checkboxGroup(parent, { label, options, selected, onChange }) {
   const wrap = document.createElement("div");
   wrap.className = "filter-row checkbox-group";
   if (label) {
@@ -222,10 +225,11 @@ export function checkboxGroup(parent, { label, options, hidden, onChange }) {
     row.className = "toggle";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = !hidden[opt.key];
+    cb.checked = selected.includes(opt.key);
     cb.addEventListener("change", () => {
-      if (cb.checked) delete hidden[opt.key];
-      else hidden[opt.key] = true;
+      const i = selected.indexOf(opt.key);
+      if (cb.checked && i === -1) selected.push(opt.key);
+      if (!cb.checked && i !== -1) selected.splice(i, 1);
       onChange();
     });
     row.appendChild(cb);
@@ -390,9 +394,14 @@ export function selectionChipRow(parent, { label, options, selected, colorFor, o
 
   const head = document.createElement("div");
   head.className = "filter-head chip-row-head";
-  const name = document.createElement("span");
-  name.textContent = label;
-  head.appendChild(name);
+  // `label` is optional: the table toolbar mounts this row beside already
+  // labelled buttons and has no room for a heading. The head stays either way
+  // so the bulk controls keep their place.
+  if (label) {
+    const name = document.createElement("span");
+    name.textContent = label;
+    head.appendChild(name);
+  }
 
   const bulkWrap = document.createElement("span");
   bulkWrap.className = "chip-bulk";

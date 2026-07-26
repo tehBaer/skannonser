@@ -7,7 +7,7 @@
 
 import { saveAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
-import { listingExcluded, deriveVocabs, tagChipRow, openPopover } from "./filters.js";
+import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   loadFilters,
@@ -495,10 +495,12 @@ function render() {
   const chipMount = document.getElementById("table-tag-chips");
   if (chipMount) {
     chipMount.innerHTML = "";
-    tagChipRow(chipMount, {
+    // No label: the toolbar has no room for a heading, and these chips sit
+    // beside buttons that already name themselves.
+    selectionChipRow(chipMount, {
       options: state.vocabs.tags,
-      hidden: state.filters.tagHidden,
-      tagColors: state.tagColors,
+      selected: state.filters.tagSelected,
+      colorFor: (key) => colorForTag(key, state.tagColors),
       onChange: onFilterChange,
     });
   }
