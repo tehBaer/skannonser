@@ -479,6 +479,22 @@ function render() {
   body.innerHTML = "";
   const rows = visibleRows();
   rows.forEach((item) => body.appendChild(buildRow(item)));
+  if (!rows.length && state.items.length) {
+    const tr = el("tr");
+    const td = el("td", "empty-row", "Ingen annonser vises med gjeldende lag og filtre. ");
+    td.colSpan = visibleColumns().length;
+    const btn = el("button", null, "Nullstill filtre");
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      resetFilters(state.filters, state.meta);
+      saveFilters(state.filters);
+      refreshVocabs();
+      render();
+    });
+    td.appendChild(btn);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
   const n = activeFilterCount(state.filters, state.meta);
   setStatus(
     rows.length + " av " + state.items.length + " annonser" +

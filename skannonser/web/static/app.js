@@ -248,6 +248,7 @@ function featureCollectionsByGroup() {
   const soldPct = Math.max(0, Math.min(100, Number(state.ui.soldDim) || 0));
   const soldOpacity = 1 - soldPct / 100;
   const byGroup = {};
+  let shown = 0;
   state.groups.forEach((g) => (byGroup[g.id] = []));
   const hideExcluded = Number(state.ui.dimIntensity) >= 100;
   state.itemsById.forEach((item) => {
@@ -262,7 +263,10 @@ function featureCollectionsByGroup() {
     // filter dim; passing sold dots keep the separate "Solgt nedtoning".
     const op = excluded ? residual : item.closed ? soldOpacity : 1;
     byGroup[gid].push(itemToFeature(item, op));
+    shown++;
   });
+  // The only point that knows what survived layers + filters + hard-hide.
+  state.shownCount = shown;
   return byGroup;
 }
 
@@ -277,6 +281,9 @@ function applyAll() {
   requestAnimationFrame(() => {
     rafPending = false;
     const byGroup = featureCollectionsByGroup();
+    // A blank map reads as a loading failure, not as a filter result.
+    const emptyEl = document.getElementById("map-empty");
+    if (emptyEl) emptyEl.hidden = !(state.itemsById.size > 0 && state.shownCount === 0);
     // Clear cached cluster markers BEFORE setData -- see clearClusterCache's
     // doc comment in map.js. Reused cluster_ids after a data change would
     // otherwise leave stale bubbles (wrong count/position) on screen.
@@ -857,6 +864,17 @@ async function init() {
   const resetBtn = document.getElementById("reset-filters");
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
+      resetFilters(state.ui.filters, state.meta);
+      rebuildFilterUIs();
+      onFilterChange();
+    });
+  }
+  const emptyReset = document.getElementById("map-empty-reset");
+  if (emptyReset) {
+    emptyReset.addEventListener("click", () => {
+      // Mirrors the sidebar reset button above: resetFilters needs state.meta
+      // (defaultFilters reads meta.destinations) and onFilterChange keeps the
+      // "active filters" line in sync, not just the map data.
       resetFilters(state.ui.filters, state.meta);
       rebuildFilterUIs();
       onFilterChange();
