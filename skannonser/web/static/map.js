@@ -234,7 +234,16 @@ function ensureXIcon(map) {
 // Raster icons are cached by name, so these must stay module constants: making
 // them dynamic without putting the size in the cache key would serve stale art.
 export const DOT_R = 9;
-const CLOSED_R = DOT_R - 1.5;
+const DOT_STROKE_W = 1.5; // the active dot's dark border
+// A closed listing is a hollow RING, not a smaller dot: its band is sized so
+// the outer edge lands exactly on the active dot's (GL strokes draw outside
+// circle-radius), leaving fill as the only difference between the two.
+// 4px wide, up from 3 (owner, 2026-07-26): at 3 the band read as faint beside a
+// filled dot and was taken for opacity dimming -- it is drawn at full alpha.
+// Widened INWARD on purpose; growing outward would make gone listings claim
+// more of the map than live ones.
+const CLOSED_W = 4;
+const CLOSED_R = DOT_R + DOT_STROKE_W - CLOSED_W;
 const RING_R = DOT_R + 2; // ring band sits just outside the dot's 1.5px border
 const RING_W = 3; // white band thickness
 const RING_OUTLINE_W = 1; // black showing past the white on each side
@@ -392,7 +401,7 @@ export function addListingGroups(map, groups, onListingClick) {
         "circle-color": "rgba(0,0,0,0)",
         "circle-opacity": 0,
         "circle-radius": CLOSED_R,
-        "circle-stroke-width": 3,
+        "circle-stroke-width": CLOSED_W,
         "circle-stroke-color": g.color,
         "circle-stroke-opacity": OP,
       },
@@ -422,7 +431,7 @@ export function addListingGroups(map, groups, onListingClick) {
       paint: {
         "circle-color": g.color,
         "circle-radius": DOT_R,
-        "circle-stroke-width": 1.5,
+        "circle-stroke-width": DOT_STROKE_W,
         "circle-stroke-color": ACTIVE_BORDER, // active = dark border
         "circle-opacity": OP,
         "circle-stroke-opacity": OP,
