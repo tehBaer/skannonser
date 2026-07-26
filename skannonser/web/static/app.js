@@ -46,6 +46,7 @@ import {
   anyLineVisibleStation,
   commuteDisabled,
   SANDVIKA_MAX,
+  lineColor,
 } from "./stations.js";
 
 /* global maplibregl */
@@ -596,21 +597,43 @@ function wireStationControls() {
       container.classList.add("muted");
     }
     lines.forEach((line) => {
-      const row = document.createElement("label");
-      row.className = "toggle line-toggle";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = !st.lineHidden[line];
-      cb.addEventListener("change", () => {
-        if (cb.checked) delete st.lineHidden[line];
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "line-chip" + (st.lineHidden[line] ? " off" : "");
+      btn.style.setProperty("--line-color", lineColor(line));
+      btn.textContent = line;
+      btn.setAttribute("aria-pressed", String(!st.lineHidden[line]));
+      btn.addEventListener("click", () => {
+        if (st.lineHidden[line]) delete st.lineHidden[line];
         else st.lineHidden[line] = true;
+        btn.classList.toggle("off", Boolean(st.lineHidden[line]));
+        btn.setAttribute("aria-pressed", String(!st.lineHidden[line]));
         saveUi();
         applyAll();
       });
-      row.appendChild(cb);
-      row.appendChild(document.createTextNode(line));
-      container.appendChild(row);
+      container.appendChild(btn);
     });
+
+    // Isolating one line meant twelve clicks before this existed.
+    const setAll = (hidden) => {
+      lines.forEach((line) => {
+        if (hidden) st.lineHidden[line] = true;
+        else delete st.lineHidden[line];
+      });
+      // Repaint the chips in place. Calling wireStationControls() again would
+      // stack a second change listener on every checkbox that bindCheckbox
+      // touches, so each later click would fire its handler twice.
+      container.querySelectorAll(".line-chip").forEach((chip) => {
+        chip.classList.toggle("off", hidden);
+        chip.setAttribute("aria-pressed", String(!hidden));
+      });
+      saveUi();
+      applyAll();
+    };
+    const allBtn = document.getElementById("lines-all");
+    const noneBtn = document.getElementById("lines-none");
+    if (allBtn) allBtn.onclick = () => setAll(false);
+    if (noneBtn) noneBtn.onclick = () => setAll(true);
   }
 }
 

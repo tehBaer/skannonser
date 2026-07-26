@@ -165,7 +165,7 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 }
 
 .legend-keys { margin-top: 10px; }
-.boligtype-toggle, .line-toggle { font-size: 13px; }
+.boligtype-toggle { font-size: 13px; }
 
 /* ---- Filter sliders -------------------------------------------------- */
 .filter-row { margin: 10px 0; }
@@ -597,4 +597,32 @@ details.subgroup > summary {
   mask: radial-gradient(farthest-side, rgba(0, 0, 0, 0) calc(100% - 3px), #000 calc(100% - 3px));
   filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
   pointer-events: none;
+}
+
+/* --- line chips (2026-07-25 round 3): thirteen checkbox rows cost 423px, an
+   eighth of the sidebar, to show labels of two to four characters. The
+   container keeps its .legend class (shared with the LAG swatch list), whose
+   flex-direction: column would otherwise stack these into full-width rows
+   again -- flex-direction must be set here explicitly, not just display,
+   since the cascade resolves each property independently and only display
+   is overridden by this ID's higher specificity. --- */
+#line-toggles { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+.line-chip {
+  border: 1px solid var(--line-color);
+  background: var(--line-color);
+  color: #fff;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.line-chip.off { background: transparent; color: var(--line-color); opacity: 0.55; }
+.subhead-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.line-bulk { display: flex; gap: 8px; }
+.linkish {
+  background: none; border: none; padding: 0;
+  font: inherit; font-size: 12px; color: var(--accent, #156f55);
+  cursor: pointer; text-decoration: underline;
 }
