@@ -428,38 +428,95 @@ export function selectField(parent, { label, options, hidden, swatches, onChange
   return field;
 }
 
-// Colored tag quick-chips over the shared tagHidden set (2026-07-25 spec
-// §3). Same storage semantics as the checkbox group: chip visible = key
-// absent from `hidden`. options = vocabs.tags; the "" bucket renders as its
-// "(uten tag)" label with a neutral color.
-export function tagChipRow(parent, { options, hidden, tagColors, onChange, label }) {
-  if (label) {
-    const head = document.createElement("div");
-    head.className = "filter-head chip-row-head";
-    head.textContent = label;
-    parent.appendChild(head);
-  }
+// The one interaction rule: a chip toggles, EXCEPT that the first selection
+// isolates. Returns the new selection; never mutates its input. `allKeys` is
+// unused by the rule itself but pins the caller's vocabulary at click time so
+// a future "select all" can share this function.
+export function applyChipClick(selected, key, allKeys) {
+  const current = selected || [];
+  if (!current.length) return [key];
+  if (current.includes(key)) return current.filter((k) => k !== key);
+  return current.concat([key]);
+}
+
+// One selection control for every value list: tags, boligtype, eieform,
+// energimerking, tilgjengelighet, and the station lines. Selected chips are
+// FILLED and unselected ones outlined, so state reads without relying on the
+// per-value colour -- tags and lines carry their own colours and cannot also
+// use colour to mean "on".
+export function selectionChipRow(parent, { label, options, selected, colorFor, onChange }) {
   const wrap = document.createElement("div");
-  wrap.className = "tag-chip-row";
-  // The "" bucket is the listings NOT yet assessed -- the least interesting
-  // group, and the widest chip. Sort it last so the tags the user actually
-  // applied lead the row.
-  const ordered = [...options].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : 0));
-  ordered.forEach((opt) => {
-    const color = colorForTag(opt.key, tagColors) || "#6f7e76";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "tag-chip" + (hidden[opt.key] ? " off" : "") + (opt.key === "" ? " untagged" : "");
-    btn.style.setProperty("--tag-color", color);
-    btn.textContent = opt.count != null ? `${opt.label} (${opt.count})` : opt.label;
-    btn.addEventListener("click", () => {
-      if (hidden[opt.key]) delete hidden[opt.key];
-      else hidden[opt.key] = true;
-      btn.classList.toggle("off", Boolean(hidden[opt.key]));
+  wrap.className = "chip-row-block";
+
+  const head = document.createElement("div");
+  head.className = "filter-head chip-row-head";
+  const name = document.createElement("span");
+  name.textContent = label;
+  head.appendChild(name);
+
+  const bulkWrap = document.createElement("span");
+  bulkWrap.className = "chip-bulk";
+  const mkBulk = (text, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "linkish";
+    b.textContent = text;
+    b.addEventListener("click", () => {
+      fn();
+      repaint();
       onChange();
     });
-    wrap.appendChild(btn);
+    bulkWrap.appendChild(b);
+  };
+  // Both controls reach the same resting state -- an empty selection shows
+  // everything -- but they read differently to a user mid-filter, so both are
+  // offered. "Alle" is the answer to "show me everything again"; "Tøm" is the
+  // answer to "undo my picks".
+  mkBulk("Alle", () => selected.splice(0, selected.length));
+  mkBulk("Tøm", () => selected.splice(0, selected.length));
+  head.appendChild(bulkWrap);
+  wrap.appendChild(head);
+
+  // Painting is per-chip and closes over its own key, so no step depends on
+  // the chip's position in the row. Declared before the empty-list bail so
+  // the bulk handlers above always have something to call.
+  const paints = [];
+  const repaint = () => paints.forEach((p) => p());
+
+  if (!options.length) {
+    const empty = document.createElement("div");
+    empty.className = "chip-row-empty muted";
+    empty.textContent = "Ingen verdier";
+    wrap.appendChild(empty);
+    parent.appendChild(wrap);
+    return wrap;
+  }
+
+  const row = document.createElement("div");
+  row.className = "tag-chip-row";
+  const allKeys = options.map((o) => o.key);
+  options.forEach((opt) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const color = colorFor ? colorFor(opt.key) : null;
+    btn.style.setProperty("--tag-color", color || "#6f7e76");
+    const paint = () => {
+      const on = selected.includes(opt.key);
+      btn.className = "tag-chip" + (on ? "" : " off") + (opt.key === "" ? " untagged" : "");
+      btn.setAttribute("aria-pressed", String(on));
+    };
+    paints.push(paint);
+    btn.textContent = opt.count != null ? `${opt.label} (${opt.count})` : opt.label;
+    btn.addEventListener("click", () => {
+      const next = applyChipClick(selected, opt.key, allKeys);
+      selected.splice(0, selected.length, ...next);
+      repaint();
+      onChange();
+    });
+    paint();
+    row.appendChild(btn);
   });
+  wrap.appendChild(row);
   parent.appendChild(wrap);
   return wrap;
 }

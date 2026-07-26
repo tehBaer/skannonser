@@ -693,3 +693,10 @@ details.subgroup > summary {
   white-space: normal;
 }
 #listings-table td.empty-row button { margin-left: 10px; }
+
+/* Selection chip rows (2026-07-26). Selected chips are filled, unselected
+   outlined -- state must not depend on the per-value colour, since tags and
+   lines already use colour to mean *which* value. */
+.chip-row-block { margin: 10px 0; }
+.chip-bulk { display: flex; gap: 8px; }
+.chip-row-empty { font-size: 12px; padding: 2px 0; }
