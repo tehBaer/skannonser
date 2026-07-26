@@ -24,3 +24,16 @@ test("the empty bucket behaves like any other value", () => {
   assert.deepEqual(applyChipClick([], "", ["", "maybe"]), [""]);
   assert.deepEqual(applyChipClick([""], "", ["", "maybe"]), []);
 });
+
+// Guarded explicitly because every other test here passes against a mutating
+// implementation: none of them retains a reference to the input and re-checks
+// it. The caller splices the returned array into the live selection, so an
+// implementation that returned its own input would splice an array into itself.
+test("applyChipClick never mutates its input", () => {
+  const input = ["maybe", "hard no"];
+  applyChipClick(input, "maybe", ["", "maybe", "hard no"]);
+  assert.deepEqual(input, ["maybe", "hard no"], "the caller's array is untouched");
+  const empty = [];
+  applyChipClick(empty, "maybe", ["", "maybe"]);
+  assert.deepEqual(empty, []);
+});

@@ -494,8 +494,14 @@ export function selectionChipRow(parent, { label, options, selected, colorFor, o
 
   const row = document.createElement("div");
   row.className = "tag-chip-row";
-  const allKeys = options.map((o) => o.key);
-  options.forEach((opt) => {
+  // The "" bucket ("(uten tag)", "Ukjent boligtype", "Ingen status") sorts LAST
+  // regardless of the vocabulary's own order, which puts it first under
+  // localeCompare. It is the default state rather than a choice, and it carries
+  // the largest count, so leading with it buries the values the user actually
+  // picked behind the widest chip in the row.
+  const ordered = [...options].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : 0));
+  const allKeys = ordered.map((o) => o.key);
+  ordered.forEach((opt) => {
     const btn = document.createElement("button");
     btn.type = "button";
     const color = colorFor ? colorFor(opt.key) : null;
