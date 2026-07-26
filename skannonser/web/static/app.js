@@ -26,6 +26,7 @@ import {
   buildFilterPanelUI,
   buildDisplayUI,
   deriveVocabs,
+  selectionChipRow,
 } from "./filters.js";
 import {
   defaultFilters,
@@ -83,7 +84,8 @@ function defaultUi(meta) {
       hideOutside: false,
       includeTransfer: false,
       sandvikaMax: SANDVIKA_MAX, // == max -> commute filter off
-      lineHidden: {},
+      // Empty == every line shows, same as the sidebar's value filters.
+      lineSelected: [],
     },
   };
 }
@@ -121,7 +123,7 @@ function loadUi(meta) {
         stations: {
           ...base.stations,
           ...(stored.stations || {}),
-          lineHidden: { ...((stored.stations || {}).lineHidden || {}) },
+          lineSelected: [...((stored.stations || {}).lineSelected || [])],
         },
       };
       // One-time nudge (2026-07-23): soldDim used to DEFAULT to 0, so every
@@ -136,6 +138,10 @@ function loadUi(meta) {
       // saveUi can never re-persist the old shape.
       delete ui.boligtypeHidden;
       delete ui.tagHidden;
+      // Same 2026-07-26 hidden-set -> selection conversion, for the station
+      // lines. The ...stored.stations spread above copies the old key straight
+      // through, so drop it here or saveUi re-persists it forever.
+      delete ui.stations.lineHidden;
       // Budpremie colouring is retired (owner, 2026-07-26): the ...stored spread
       // above would otherwise let a pre-existing `soldPremium: true` survive
       // forever, with no control left in the sidebar to turn it back off.
@@ -624,54 +630,29 @@ function wireStationControls() {
     });
   }
 
-  // Line visibility toggles.
+  // Lines pick like every other value filter, on the shared chip row -- which
+  // brings its own "Alle"/"Tøm" controls, so the panel carries no bulk markup.
+  // There is deliberately no "Ingen": an empty selection means *all* lines, so
+  // "no lines" is unrepresentable. "Vis stasjoner" clears the stations from the
+  // map, which covers the visible intent -- but note it is NOT equivalent to the
+  // old "Ingen". That emptied visibleLineSet, which also silently switched off
+  // the commute filter and "Ton ned utenfor radius" while both controls still
+  // looked active. Losing that back door is the point; those two filters now
+  // stay in force until you turn them off yourself.
   const container = document.getElementById("line-toggles");
   if (container) {
     container.innerHTML = "";
     container.classList.remove("muted");
-    const lines = state.ui._allLines || [];
-    if (!lines.length) {
-      container.textContent = "Ingen linjer.";
-      container.classList.add("muted");
-    }
-    lines.forEach((line) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "line-chip" + (st.lineHidden[line] ? " off" : "");
-      btn.style.setProperty("--line-color", lineColor(line));
-      btn.textContent = line;
-      btn.setAttribute("aria-pressed", String(!st.lineHidden[line]));
-      btn.addEventListener("click", () => {
-        if (st.lineHidden[line]) delete st.lineHidden[line];
-        else st.lineHidden[line] = true;
-        btn.classList.toggle("off", Boolean(st.lineHidden[line]));
-        btn.setAttribute("aria-pressed", String(!st.lineHidden[line]));
+    selectionChipRow(container, {
+      label: "Linjer",
+      options: (state.ui._allLines || []).map((l) => ({ key: l, label: l })),
+      selected: st.lineSelected,
+      colorFor: lineColor,
+      onChange: () => {
         saveUi();
         applyAll();
-      });
-      container.appendChild(btn);
+      },
     });
-
-    // Isolating one line meant twelve clicks before this existed.
-    const setAll = (hidden) => {
-      lines.forEach((line) => {
-        if (hidden) st.lineHidden[line] = true;
-        else delete st.lineHidden[line];
-      });
-      // Repaint the chips in place. Calling wireStationControls() again would
-      // stack a second change listener on every checkbox that bindCheckbox
-      // touches, so each later click would fire its handler twice.
-      container.querySelectorAll(".line-chip").forEach((chip) => {
-        chip.classList.toggle("off", hidden);
-        chip.setAttribute("aria-pressed", String(!hidden));
-      });
-      saveUi();
-      applyAll();
-    };
-    const allBtn = document.getElementById("lines-all");
-    const noneBtn = document.getElementById("lines-none");
-    if (allBtn) allBtn.onclick = () => setAll(false);
-    if (noneBtn) noneBtn.onclick = () => setAll(true);
   }
 }
 

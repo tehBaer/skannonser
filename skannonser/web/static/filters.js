@@ -39,14 +39,21 @@ function numOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function hiddenSetExcludes(set, key) {
-  return Boolean(set && set[key]);
-}
-
 function selectedSetExcludes(selected, raw, unknownFails) {
   if (!selected || !selected.length) return false;
   if (raw === null || raw === undefined || raw === "") return unknownFails;
   return !selected.includes(String(raw));
+}
+
+// Selection over values the UI renders EXPLICITLY, including the "" bucket
+// ("Ukjent boligtype" / "(uten tag)"). Distinct from
+// selectedSetExcludes, which treats a missing value as *unknown* and defers to
+// `includeUnknown`: here "" is a value the user can pick like any other, so
+// routing it through the unknown policy would make the empty bucket
+// unselectable. Empty selection = filter off.
+export function selectionExcludes(selected, value) {
+  if (!selected || !selected.length) return false;
+  return !selected.includes(value);
 }
 
 // THE predicate: true when `item` fails the current filters. Map renders
@@ -107,33 +114,14 @@ export function listingExcluded(item, filters, meta) {
     }
   }
 
-  // Hidden sets with explicit "" buckets.
-  if (hiddenSetExcludes(f.boligtypeHidden, item.boligtype || "")) return true;
-  if (hiddenSetExcludes(f.tagHidden, item.tag ? String(item.tag).trim() : "")) return true;
-  if (hiddenSetExcludes(f.tilgjengelighetHidden, item.tilgjengelighet || "")) return true;
-
-  // Hidden sets where null = unknown (governed by includeUnknown once the
-  // set is non-empty).
-  const energiHidden = f.energiHidden || {};
-  if (Object.keys(energiHidden).length) {
-    const letter = item.energimerke || null;
-    if (letter == null) {
-      if (unknownFails) return true;
-    } else if (energiHidden[letter]) {
-      return true;
-    }
-  }
-  const eieformHidden = f.eieformHidden || {};
-  if (Object.keys(eieformHidden).length) {
-    const v = item.eieform || null;
-    if (v == null) {
-      if (unknownFails) return true;
-    } else if (eieformHidden[v]) {
-      return true;
-    }
-  }
+  // Selections over explicitly-rendered values, "" bucket included.
+  if (selectionExcludes(f.boligtypeSelected, item.boligtype || "")) return true;
+  if (selectionExcludes(f.tagSelected, item.tag ? String(item.tag).trim() : "")) return true;
+  if (selectionExcludes(f.tilgjengelighetSelected, item.tilgjengelighet || "")) return true;
 
   // Selected sets (empty = off; non-empty = only these pass).
+  if (selectedSetExcludes(f.energiSelected, item.energimerke, unknownFails)) return true;
+  if (selectedSetExcludes(f.eieformSelected, item.eieform, unknownFails)) return true;
   if (selectedSetExcludes(f.postnummerSelected, item.postnummer, unknownFails)) return true;
   if (selectedSetExcludes(f.nabolagSelected, item.nabolag, unknownFails)) return true;
 
@@ -174,7 +162,11 @@ export function deriveVocabs(items) {
     [...m.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "nb"))
       .map(([key, count]) => ({ key, label: key, count }));
-  const tilgList = byCount(tilg).map((o) => (o.key === "" ? { ...o, label: "Ingen status" } : o));
+  // "" here is NOT missing data: the backend only ever fills tilgjengelighet for
+  // CLOSED listings (Solgt / Inaktiv / Trukket), so a null means the listing is
+  // still being advertised. Every one of production's active listings is null.
+  // Labelling that "Ingen status" read as "we don't know" when we know exactly.
+  const tilgList = byCount(tilg).map((o) => (o.key === "" ? { ...o, label: "Til salgs" } : o));
   const tagList = byKey(tags).map((o) => (o.key === "" ? { ...o, label: "(uten tag)" } : o));
   return { postnummer: byKey(post), nabolag: byCount(nab), tilgjengelighet: tilgList, tags: tagList };
 }
@@ -225,9 +217,12 @@ export function rangeRow(parent, { label, min, max, step, value, fmt, onInput })
 
 const shortDest = (key) => key.split("_").pop().toUpperCase();
 
-// Checkbox group over a small vocabulary, HIDDEN-set semantics: every option
-// rendered, checked = visible; unchecking writes {key: true} into `hidden`.
-export function checkboxGroup(parent, { label, options, hidden, onChange }) {
+// Checkbox group over a small vocabulary, SELECTED-set semantics: every option
+// rendered, checked = selected; `selected` is an ARRAY mutated in place, and an
+// empty one means the filter is off. Same rule as searchableMultiSelect and the
+// chip rows -- this is the funnel-shaped mount for a column header, where a
+// checkbox list reads better than chips (2026-07-26 selection conversion).
+export function checkboxGroup(parent, { label, options, selected, onChange }) {
   const wrap = document.createElement("div");
   wrap.className = "filter-row checkbox-group";
   if (label) {
@@ -236,15 +231,28 @@ export function checkboxGroup(parent, { label, options, hidden, onChange }) {
     head.textContent = label;
     wrap.appendChild(head);
   }
+  if (!options.length) {
+    // Same reason the chip rows carry this: a value list can legitimately be
+    // empty (eieform and energimerking are, in any dataset that lacks the
+    // enrichment), and a popover containing only its own header reads as
+    // broken rather than as "nothing to choose from".
+    const empty = document.createElement("div");
+    empty.className = "chip-row-empty muted";
+    empty.textContent = "Ingen verdier";
+    wrap.appendChild(empty);
+    parent.appendChild(wrap);
+    return wrap;
+  }
   options.forEach((opt) => {
     const row = document.createElement("label");
     row.className = "toggle";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = !hidden[opt.key];
+    cb.checked = selected.includes(opt.key);
     cb.addEventListener("change", () => {
-      if (cb.checked) delete hidden[opt.key];
-      else hidden[opt.key] = true;
+      const i = selected.indexOf(opt.key);
+      if (cb.checked && i === -1) selected.push(opt.key);
+      if (!cb.checked && i !== -1) selected.splice(i, 1);
       onChange();
     });
     row.appendChild(cb);
@@ -335,7 +343,10 @@ export function searchableMultiSelect(parent, { label, options, selected, onChan
 }
 
 // --- shared popover singleton (moved from tablefilters.js 2026-07-24) ---
-// Used by the table's header filters AND the sidebar's select-fields.
+// Used by the table's header filters and its column picker. The sidebar no
+// longer opens popovers (its select-fields became chip rows), but this stays
+// exported here because tablefilters.js and table.js must share ONE open
+// popover and one dismiss wiring.
 
 let popoverEl = null;
 let popoverAnchor = null;
@@ -384,106 +395,115 @@ if (typeof document !== "undefined") {
   });
 }
 
-// Notion-style compact select-field over a HIDDEN-set: closed it shows a
-// summary ("Alle" when nothing is hidden, chips of the visible values when
-// ≤3 remain, else "N av M"); clicking opens the shared popover with the
-// familiar checkbox rows (checked = visible). Storage semantics unchanged.
-export function selectField(parent, { label, options, hidden, swatches, onChange }) {
-  const field = document.createElement("button");
-  field.type = "button";
-  field.className = "select-field";
-  const name = document.createElement("span");
-  name.className = "select-field-label";
-  name.textContent = label;
-  const value = document.createElement("span");
-  value.className = "select-field-value";
-  field.appendChild(name);
-  field.appendChild(value);
-
-  const paint = () => {
-    value.innerHTML = "";
-    value.classList.remove("muted");
-    const visible = options.filter((o) => !hidden[o.key]);
-    if (visible.length === options.length) {
-      value.textContent = "Alle";
-      value.classList.add("muted");
-    } else if (visible.length === 0) {
-      value.textContent = "Ingen";
-    } else if (visible.length <= 3) {
-      visible.forEach((o) => {
-        const chip = document.createElement("span");
-        chip.className = "chip";
-        if (swatches && o.swatch) {
-          const dot = document.createElement("span");
-          dot.className = "chip-dot";
-          dot.style.background = o.swatch;
-          chip.appendChild(dot);
-        }
-        chip.appendChild(document.createTextNode(o.label));
-        value.appendChild(chip);
-      });
-    } else {
-      value.textContent = visible.length + " av " + options.length;
-    }
-  };
-
-  const buildBody = (pop) => {
-    checkboxGroup(pop, {
-      options,
-      hidden,
-      onChange: () => {
-        paint();
-        onChange();
-      },
-    });
-  };
-
-  field.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    openPopover(field, buildBody);
-  });
-  paint();
-  parent.appendChild(field);
-  return field;
+// The one interaction rule: a chip toggles, EXCEPT that the first selection
+// isolates. Returns the new selection; never mutates its input. `allKeys` is
+// unused by the rule itself but pins the caller's vocabulary at click time so
+// a future "select all" can share this function.
+export function applyChipClick(selected, key, allKeys) {
+  const current = selected || [];
+  if (!current.length) return [key];
+  if (current.includes(key)) return current.filter((k) => k !== key);
+  return current.concat([key]);
 }
 
-// Colored tag quick-chips over the shared tagHidden set (2026-07-25 spec
-// §3). Same storage semantics as the checkbox group: chip visible = key
-// absent from `hidden`. options = vocabs.tags; the "" bucket renders as its
-// "(uten tag)" label with a neutral color.
-export function tagChipRow(parent, { options, hidden, tagColors, onChange, label }) {
-  if (label) {
-    const head = document.createElement("div");
-    head.className = "filter-head chip-row-head";
-    head.textContent = label;
-    parent.appendChild(head);
-  }
+// One selection control for every value list -- the five sidebar filters, the
+// station lines, and the table toolbar's tags (which passes no `label` and so
+// gets the bulk controls without a heading). Selected chips are
+// FILLED and unselected ones outlined, so state reads without relying on the
+// per-value colour -- tags and lines carry their own colours and cannot also
+// use colour to mean "on".
+export function selectionChipRow(parent, { label, options, selected, colorFor, emptyIsRealValue, onChange }) {
   const wrap = document.createElement("div");
-  wrap.className = "tag-chip-row";
-  // The "" bucket is the listings NOT yet assessed -- the least interesting
-  // group, and the widest chip. Sort it last so the tags the user actually
-  // applied lead the row.
-  const ordered = [...options].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : 0));
-  ordered.forEach((opt) => {
-    const color = colorForTag(opt.key, tagColors) || "#6f7e76";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "tag-chip" + (hidden[opt.key] ? " off" : "") + (opt.key === "" ? " untagged" : "");
-    btn.style.setProperty("--tag-color", color);
-    btn.textContent = opt.count != null ? `${opt.label} (${opt.count})` : opt.label;
-    btn.addEventListener("click", () => {
-      if (hidden[opt.key]) delete hidden[opt.key];
-      else hidden[opt.key] = true;
-      btn.classList.toggle("off", Boolean(hidden[opt.key]));
+  wrap.className = "chip-row-block";
+
+  const head = document.createElement("div");
+  head.className = "filter-head chip-row-head";
+  // `label` is optional: the table toolbar mounts this row beside already
+  // labelled buttons and has no room for a heading. The head stays either way
+  // so the bulk controls keep their place.
+  if (label) {
+    const name = document.createElement("span");
+    name.textContent = label;
+    head.appendChild(name);
+  }
+
+  const bulkWrap = document.createElement("span");
+  bulkWrap.className = "chip-bulk";
+  const mkBulk = (text, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "linkish";
+    b.textContent = text;
+    b.addEventListener("click", () => {
+      fn();
+      repaint();
       onChange();
     });
-    wrap.appendChild(btn);
+    bulkWrap.appendChild(b);
+  };
+  // Both controls reach the same resting state -- an empty selection shows
+  // everything -- but they read differently to a user mid-filter, so both are
+  // offered. "Alle" is the answer to "show me everything again"; "Tøm" is the
+  // answer to "undo my picks".
+  mkBulk("Alle", () => selected.splice(0, selected.length));
+  mkBulk("Tøm", () => selected.splice(0, selected.length));
+  head.appendChild(bulkWrap);
+  wrap.appendChild(head);
+
+  // Painting is per-chip and closes over its own key, so no step depends on
+  // the chip's position in the row. Declared before the empty-list bail so
+  // the bulk handlers above always have something to call.
+  const paints = [];
+  const repaint = () => paints.forEach((p) => p());
+
+  if (!options.length) {
+    const empty = document.createElement("div");
+    empty.className = "chip-row-empty muted";
+    empty.textContent = "Ingen verdier";
+    wrap.appendChild(empty);
+    parent.appendChild(wrap);
+    return wrap;
+  }
+
+  const row = document.createElement("div");
+  row.className = "tag-chip-row";
+  // The "" bucket ("(uten tag)", "Ukjent boligtype") sorts LAST regardless of
+  // the vocabulary's own order, which puts it first under localeCompare. It is
+  // the absence of a choice rather than a choice, and it carries the largest
+  // count, so leading with it buries the values the user actually picked.
+  // `emptyIsRealValue` opts out: tilgjengelighet's "" means "Til salgs", which
+  // is a genuine status and its most common one -- burying it would be wrong.
+  const ordered = emptyIsRealValue
+    ? options
+    : [...options].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : 0));
+  const allKeys = ordered.map((o) => o.key);
+  ordered.forEach((opt) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const color = colorFor ? colorFor(opt.key) : null;
+    btn.style.setProperty("--tag-color", color || "#6f7e76");
+    const paint = () => {
+      const on = selected.includes(opt.key);
+      btn.className = "tag-chip" + (on ? "" : " off") + (opt.key === "" ? " untagged" : "");
+      btn.setAttribute("aria-pressed", String(on));
+    };
+    paints.push(paint);
+    btn.textContent = opt.count != null ? `${opt.label} (${opt.count})` : opt.label;
+    btn.addEventListener("click", () => {
+      const next = applyChipClick(selected, opt.key, allKeys);
+      selected.splice(0, selected.length, ...next);
+      repaint();
+      onChange();
+    });
+    paint();
+    row.appendChild(btn);
   });
+  wrap.appendChild(row);
   parent.appendChild(wrap);
   return wrap;
 }
 
-// The whole "Filtre" panel body: four select-fields, the tag chip row,
+// The whole "Filtre" panel body: five selection chip rows,
 // three collapsible slider sub-groups (collapse state persisted via
 // ui.collapsed through onCollapse), and the unknown-value policy toggle.
 // Replaces the old
@@ -500,46 +520,46 @@ export function buildFilterPanelUI(
 
   const fields = document.createElement("div");
   fields.className = "filter-fields";
-  selectField(fields, {
+  // Boligtype's "" bucket is synthesised here: meta.boligtyper is the list of
+  // KNOWN types, so without this row a listing with no type would be
+  // unselectable. The vocab-derived rows below already carry their own "".
+  selectionChipRow(fields, {
     label: "Boligtype",
     options: [
-      ...(meta.boligtyper || []).map((t) => ({
-        key: t,
-        label: t,
-        swatch: (colorByType && colorByType[t]) || "#6f7e76",
-      })),
-      { key: "", label: "Ukjent boligtype", swatch: (colorByType && colorByType[""]) || "#6f7e76" },
+      ...(meta.boligtyper || []).map((t) => ({ key: t, label: t })),
+      { key: "", label: "Ukjent boligtype" },
     ],
-    hidden: filters.boligtypeHidden,
-    swatches: true,
+    selected: filters.boligtypeSelected,
+    colorFor: (key) => (colorByType && colorByType[key]) || null,
     onChange,
   });
-  selectField(fields, {
+  selectionChipRow(fields, {
     label: "Eieform",
     options: (meta.eieformer || []).map((v) => ({ key: v, label: v })),
-    hidden: filters.eieformHidden,
+    selected: filters.eieformSelected,
     onChange,
   });
-  selectField(fields, {
+  selectionChipRow(fields, {
     label: "Energimerking",
     options: (meta.energimerker || []).map((v) => ({ key: v, label: v })),
-    hidden: filters.energiHidden,
+    selected: filters.energiSelected,
     onChange,
   });
-  selectField(fields, {
+  selectionChipRow(fields, {
     label: "Tilgjengelighet",
     options: vocabs.tilgjengelighet,
-    hidden: filters.tilgjengelighetHidden,
+    selected: filters.tilgjengelighetSelected,
+    // "" is "Til salgs" here, a real status and the most common one -- it must
+    // keep its by-count position rather than being sorted to the end.
+    emptyIsRealValue: true,
     onChange,
   });
-  // Tags render as always-visible colored chips, not a select-field: at tag
-  // cardinality the chips ARE the better summary, and they double as the
-  // one-click filter (2026-07-25 spec §3).
-  tagChipRow(fields, {
+  const tagColors = assignTagColors(vocabs.tags.map((o) => o.key));
+  selectionChipRow(fields, {
     label: "Tags",
     options: vocabs.tags,
-    hidden: filters.tagHidden,
-    tagColors: assignTagColors(vocabs.tags.map((o) => o.key)),
+    selected: filters.tagSelected,
+    colorFor: (key) => colorForTag(key, tagColors),
     onChange,
   });
   container.appendChild(fields);

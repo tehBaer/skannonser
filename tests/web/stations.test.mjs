@@ -4,6 +4,7 @@ import {
   stationPointFeatures,
   stationCircleFeatures,
   lineColor,
+  visibleLineSet,
 } from "../../skannonser/web/static/stations.js";
 
 const stations = [
@@ -77,4 +78,36 @@ test("omitting visibleLines keeps the previous first-line behaviour", () => {
   const fc = stationPointFeatures(stations);
   const sandvika = fc.features.find((f) => f.properties.name === "Sandvika");
   assert.equal(sandvika.properties.color, lineColor("L1"));
+});
+
+// visibleLineSet is now SELECTION-shaped like every other value filter
+// (2026-07-26): an empty selection means all, never none. The inverted
+// lineHidden map is gone.
+test("an empty line selection means every line is visible", () => {
+  const ui = { _allLines: ["L1", "R11", "L13"], stations: { lineSelected: [] } };
+  assert.deepEqual([...visibleLineSet(ui)].sort(), ["L1", "L13", "R11"]);
+});
+
+test("a non-empty selection means only those lines", () => {
+  const ui = { _allLines: ["L1", "R11", "L13"], stations: { lineSelected: ["R11"] } };
+  assert.deepEqual([...visibleLineSet(ui)], ["R11"]);
+});
+
+test("adding a second line widens the selection rather than replacing it", () => {
+  const ui = { _allLines: ["L1", "R11", "L13"], stations: { lineSelected: ["R11", "L13"] } };
+  assert.deepEqual([...visibleLineSet(ui)].sort(), ["L13", "R11"]);
+});
+
+// A line can disappear from the timetable while the user's pick survives in
+// localStorage; that must narrow the map, not throw on the way to drawing it.
+test("an unknown line id in the selection is harmless", () => {
+  const ui = { _allLines: ["L1", "R11"], stations: { lineSelected: ["R99"] } };
+  const set = visibleLineSet(ui);
+  assert.deepEqual([...set], ["R99"]);
+  assert.equal(set.has("L1"), false);
+});
+
+test("a missing stations or _allLines key yields an empty set, not a throw", () => {
+  assert.equal(visibleLineSet({}).size, 0);
+  assert.equal(visibleLineSet({ _allLines: [] }).size, 0);
 });

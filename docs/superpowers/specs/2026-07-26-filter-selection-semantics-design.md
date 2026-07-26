@@ -1,7 +1,7 @@
 # Filter selection semantics — design
 
 **Date:** 2026-07-26
-**Status:** Approved (design), not yet implemented
+**Status:** Implemented 2026-07-26
 
 ## Goal
 

@@ -367,14 +367,12 @@ export function updateStationLayers(map, stations, ui) {
   setVis(STATION_RING_LAYER, showRadius);
 }
 
-// Set of visible normalized line ids given the persisted `lineHidden` map.
+// Which lines are visible: an EMPTY selection means all of them, matching every
+// other value filter. Previously an inverted hidden-map.
 export function visibleLineSet(ui) {
-  const hidden = (ui.stations && ui.stations.lineHidden) || {};
-  const set = new Set();
-  (ui._allLines || []).forEach((l) => {
-    if (!hidden[l]) set.add(l);
-  });
-  return set;
+  const all = ui._allLines || [];
+  const selected = (ui.stations && ui.stations.lineSelected) || [];
+  return new Set(selected.length ? selected : all);
 }
 
 // Bind the hover/click station-name popup to every layer a station is drawn

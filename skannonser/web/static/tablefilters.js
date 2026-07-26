@@ -45,11 +45,11 @@ export const COLUMN_FILTERS = {
   brj: { kind: "slider-travel", destKey: "brj" },
   mvv: { kind: "slider-travel", destKey: "mvv" },
   mvv_uni: { kind: "slider-travel", destKey: "mvv_uni" },
-  boligtype: { kind: "set", stateKey: "boligtypeHidden", vocab: "meta:boligtyper", unknownBucket: "Ukjent boligtype" },
-  eieform: { kind: "set", stateKey: "eieformHidden", vocab: "meta:eieformer" },
-  energimerke: { kind: "set", stateKey: "energiHidden", vocab: "meta:energimerker" },
-  tilgjengelighet: { kind: "set", stateKey: "tilgjengelighetHidden", vocab: "vocab:tilgjengelighet" },
-  tag: { kind: "set", stateKey: "tagHidden", vocab: "vocab:tags" },
+  boligtype: { kind: "selection", stateKey: "boligtypeSelected", vocab: "meta:boligtyper", unknownBucket: "Ukjent boligtype" },
+  eieform: { kind: "selection", stateKey: "eieformSelected", vocab: "meta:eieformer" },
+  energimerke: { kind: "selection", stateKey: "energiSelected", vocab: "meta:energimerker" },
+  tilgjengelighet: { kind: "selection", stateKey: "tilgjengelighetSelected", vocab: "vocab:tilgjengelighet" },
+  tag: { kind: "selection", stateKey: "tagSelected", vocab: "vocab:tags" },
   postnummer: { kind: "search-set", stateKey: "postnummerSelected", vocab: "vocab:postnummer" },
   nabolag: { kind: "search-set", stateKey: "nabolagSelected", vocab: "vocab:nabolag" },
 };
@@ -75,8 +75,10 @@ export function isColumnFilterActive(colKey, ctx) {
       return f[desc.stateKey] > desc.floor;
     case "slider-travel":
       return (f.travelMax[desc.destKey] ?? TRAVEL_MAX) < TRAVEL_MAX;
-    case "set":
-      return Object.keys(f[desc.stateKey] || {}).length > 0;
+    // Both selection kinds are arrays: filtered exactly while something is
+    // picked. (Their bodies differ -- checkbox list vs. searchable list -- but
+    // the active rule is the same.)
+    case "selection":
     case "search-set":
       return (f[desc.stateKey] || []).length > 0;
     default:
@@ -135,10 +137,13 @@ function buildBody(pop, desc, ctx) {
       });
       break;
     }
-    case "set": {
+    case "selection": {
+      // "Vis kun" spells out the semantics: nothing checked shows everything,
+      // checking narrows to the checked values.
       checkboxGroup(pop, {
+        label: "Vis kun",
         options: vocabOptions(desc, ctx),
-        hidden: f[desc.stateKey],
+        selected: f[desc.stateKey],
         onChange: ctx.onChange,
       });
       break;
