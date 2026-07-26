@@ -3,6 +3,11 @@
 **Date:** 2026-07-25
 **Status:** Implemented 2026-07-25
 
+**Follow-up:** the 2026-07-25 UX review found the tag chips introduced here inherit a
+pre-existing vocabulary-pollution bug — values from a switched-off layer stayed in the
+filter UI forever. Fixed in round 3, along with the marker-encoding and stations-panel
+work: `docs/superpowers/plans/2026-07-25-ui-polish-round-3.md`.
+
 ## Goal
 
 Eight small, related web-UI improvements: make user tags first-class visual
