@@ -438,22 +438,20 @@ function panPopupIntoView() {
   });
 }
 
-// Switch every layer bucket back on, checkboxes included, fetching the closed
-// listings if this is the first time they are wanted. Used by the empty-state
-// reset (F5): a "Nullstill filtre" that cannot undo a layer toggle is a dead
-// button for the user who emptied the map by unchecking Eie and DNB.
+// Put the layer buckets back to their DEFAULTS, checkboxes included. Used by
+// the empty-state reset: a "Nullstill filtre" that cannot undo a layer toggle
+// is a dead button for the user who emptied the map by unchecking Eie and DNB.
+// Defaults rather than all-on, because the button says "nullstill" -- switching
+// on Solgt and Inaktiv, which most users never enable, would be doing more than
+// the label promises.
 function restoreLayerToggles() {
-  const needsClosed = !state.ui.sold || !state.ui.inactive;
-  ["eie", "dnb", "sold", "inactive"].forEach((bucket) => {
-    state.ui[bucket] = true;
+  const defaults = { eie: true, dnb: true, sold: false, inactive: false };
+  Object.entries(defaults).forEach(([bucket, on]) => {
+    state.ui[bucket] = on;
     const cb = document.getElementById("toggle-" + bucket);
-    if (cb) cb.checked = true;
+    if (cb) cb.checked = on;
   });
   saveUi();
-  if (needsClosed && !state.soldLoaded) {
-    // ensureSoldLoaded rebuilds the filter UIs itself once the data lands.
-    ensureSoldLoaded().then(applyAll).catch(() => {});
-  }
 }
 
 function wireLayerToggles() {

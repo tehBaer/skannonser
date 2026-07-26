@@ -688,5 +688,8 @@ details.subgroup > summary {
   color: var(--muted);
   padding: 24px 12px;
   border-bottom: none;
+  /* The table sets nowrap for data cells; this one is a sentence, so let it
+     wrap rather than force horizontal scroll on a narrow viewport. */
+  white-space: normal;
 }
 #listings-table td.empty-row button { margin-left: 10px; }
