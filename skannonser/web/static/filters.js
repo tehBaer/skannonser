@@ -8,7 +8,9 @@
 // filter and null energimerke/eieform/postnummer/nabolag/facilities.
 // Deliberate exceptions: missing TRAVEL minutes never exclude (legacy rule,
 // apps_script map.html 3824-3826), and the "" buckets of boligtype/tag/
-// tilgjengelighet are explicit toggle rows, not "unknown".
+// tilgjengelighet are explicit toggle rows, not "unknown". A NEGATIVE travel
+// value is not "missing" -- it is a pipeline failure code and an active slider
+// drops it; see listingmeta.js's travel-sentinel section.
 
 import {
   BRA_I_SLIDER_MAX,
@@ -25,7 +27,7 @@ import {
   priceBoundOf,
 } from "./filterstate.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
-import { premiumPct } from "./listingmeta.js";
+import { premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -75,7 +77,12 @@ export function listingExcluded(item, filters, meta) {
   for (const key of Object.keys(f.travelMax || {})) {
     const max = f.travelMax[key];
     if (max >= TRAVEL_MAX) continue;
-    const mins = numOrNull(travel[key]);
+    // A sentinel (-1/-2/-3) is a failure code, not a fast commute: count it as
+    // unreachable so an active slider drops it. Without this a raw -1 clears
+    // every "maks reisetid" -- a 70 km listing the router found no route to
+    // survived a "<= 20 min" filter as if it were a 20-minute commute.
+    const raw = travel[key];
+    const mins = isTravelSentinel(raw) ? TRAVEL_UNREACHABLE : numOrNull(raw);
     if (mins == null) continue; // missing travel never excludes (legacy rule)
     if (mins > max) return true;
   }

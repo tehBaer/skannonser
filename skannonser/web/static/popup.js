@@ -8,7 +8,7 @@
 // re-open reflects the saved values.
 
 import { saveAnnotation } from "./annotations.js";
-import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
+import { isNew, fmtDate, premiumPct, fmtPremium, travelMinutes } from "./listingmeta.js";
 import { colorForTag } from "./tagcolors.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
@@ -194,10 +194,12 @@ export function buildPopupContent(item, destinations, tagColors) {
     }
   }
 
-  const travel = item.travel || {};
+  // Sentinel commutes are dropped rather than shown as "-1 min"; this used to
+  // be an inline `>= 0` check, now the same helper the table and the filter
+  // use so the three views cannot drift apart.
   (destinations || []).forEach((d) => {
-    const mins = travel[d.key];
-    if (mins !== null && mins !== undefined && Number(mins) >= 0) {
+    const mins = travelMinutes(item, d.key);
+    if (mins !== null) {
       addRow(dl, shortDest(d.key), mins + " min");
     }
   });

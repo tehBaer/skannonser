@@ -6,7 +6,7 @@
 // existing hash-focus handling).
 
 import { saveAnnotation } from "./annotations.js";
-import { isNew, fmtDate, premiumPct, fmtPremium } from "./listingmeta.js";
+import { isNew, fmtDate, premiumPct, fmtPremium, travelMinutes } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, tagChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
@@ -196,7 +196,11 @@ function cellValue(item, key) {
     case "brj":
     case "mvv":
     case "mvv_uni":
-      return (item.travel || {})[key];
+      // Not a raw read: travelMinutes nulls out the pipeline's negative
+      // failure codes, which puts them on the blank path below (empty cell,
+      // and `compareItems` sorts them last) instead of printing "-1" and
+      // sorting it ahead of every real commute.
+      return travelMinutes(item, key);
     case "premium":
       return premiumPct(item);
     case "kart":
