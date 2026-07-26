@@ -633,7 +633,12 @@ function wireStationControls() {
   // Lines pick like every other value filter, on the shared chip row -- which
   // brings its own "Alle"/"Tøm" controls, so the panel carries no bulk markup.
   // There is deliberately no "Ingen": an empty selection means *all* lines, so
-  // "no lines" is unrepresentable -- and "Vis stasjoner" already clears the map.
+  // "no lines" is unrepresentable. "Vis stasjoner" clears the stations from the
+  // map, which covers the visible intent -- but note it is NOT equivalent to the
+  // old "Ingen". That emptied visibleLineSet, which also silently switched off
+  // the commute filter and "Ton ned utenfor radius" while both controls still
+  // looked active. Losing that back door is the point; those two filters now
+  // stay in force until you turn them off yourself.
   const container = document.getElementById("line-toggles");
   if (container) {
     container.innerHTML = "";

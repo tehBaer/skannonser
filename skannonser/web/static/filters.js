@@ -220,6 +220,18 @@ export function checkboxGroup(parent, { label, options, selected, onChange }) {
     head.textContent = label;
     wrap.appendChild(head);
   }
+  if (!options.length) {
+    // Same reason the chip rows carry this: a value list can legitimately be
+    // empty (eieform and energimerking are, in any dataset that lacks the
+    // enrichment), and a popover containing only its own header reads as
+    // broken rather than as "nothing to choose from".
+    const empty = document.createElement("div");
+    empty.className = "chip-row-empty muted";
+    empty.textContent = "Ingen verdier";
+    wrap.appendChild(empty);
+    parent.appendChild(wrap);
+    return wrap;
+  }
   options.forEach((opt) => {
     const row = document.createElement("label");
     row.className = "toggle";
@@ -383,8 +395,9 @@ export function applyChipClick(selected, key, allKeys) {
   return current.concat([key]);
 }
 
-// One selection control for every value list: tags, boligtype, eieform,
-// energimerking, tilgjengelighet, and the station lines. Selected chips are
+// One selection control for every value list -- the five sidebar filters, the
+// station lines, and the table toolbar's tags (which passes no `label` and so
+// gets the bulk controls without a heading). Selected chips are
 // FILLED and unselected ones outlined, so state reads without relying on the
 // per-value colour -- tags and lines carry their own colours and cannot also
 // use colour to mean "on".

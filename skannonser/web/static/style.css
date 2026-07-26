@@ -159,7 +159,6 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 }
 .legend-swatch.square { border-radius: 2px; }
 
-
 .legend-keys { margin-top: 10px; }
 .boligtype-toggle { font-size: 13px; }
 
@@ -471,38 +470,6 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 .app-tabs .tab:hover { color: var(--text, #222); }
 
 .filter-fields { margin: 8px 0; }
-.select-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  margin: 4px 0;
-  background: none;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  text-align: left;
-}
-.select-field:hover { border-color: var(--accent, #2f6f4f); }
-.select-field-label { font-weight: 600; white-space: nowrap; }
-.select-field-value { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
-.select-field-value.muted { color: var(--muted, #8a938c); }
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(47, 111, 79, 0.1);
-  border-radius: 10px;
-  padding: 1px 8px;
-  font-size: 12px;
-}
-.chip-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-
-details.subgroup { margin: 8px 0; }
 details.subgroup > summary {
   cursor: pointer;
   font-size: 12px;
