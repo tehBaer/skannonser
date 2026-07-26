@@ -44,7 +44,7 @@ function selectedSetExcludes(selected, raw, unknownFails) {
 }
 
 // Selection over values the UI renders EXPLICITLY, including the "" bucket
-// ("Ukjent boligtype" / "(uten tag)" / "Ingen status"). Distinct from
+// ("Ukjent boligtype" / "(uten tag)"). Distinct from
 // selectedSetExcludes, which treats a missing value as *unknown* and defers to
 // `includeUnknown`: here "" is a value the user can pick like any other, so
 // routing it through the unknown policy would make the empty bucket
@@ -155,7 +155,11 @@ export function deriveVocabs(items) {
     [...m.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "nb"))
       .map(([key, count]) => ({ key, label: key, count }));
-  const tilgList = byCount(tilg).map((o) => (o.key === "" ? { ...o, label: "Ingen status" } : o));
+  // "" here is NOT missing data: the backend only ever fills tilgjengelighet for
+  // CLOSED listings (Solgt / Inaktiv / Trukket), so a null means the listing is
+  // still being advertised. Every one of production's active listings is null.
+  // Labelling that "Ingen status" read as "we don't know" when we know exactly.
+  const tilgList = byCount(tilg).map((o) => (o.key === "" ? { ...o, label: "Til salgs" } : o));
   const tagList = byKey(tags).map((o) => (o.key === "" ? { ...o, label: "(uten tag)" } : o));
   return { postnummer: byKey(post), nabolag: byCount(nab), tilgjengelighet: tilgList, tags: tagList };
 }
@@ -401,7 +405,7 @@ export function applyChipClick(selected, key, allKeys) {
 // FILLED and unselected ones outlined, so state reads without relying on the
 // per-value colour -- tags and lines carry their own colours and cannot also
 // use colour to mean "on".
-export function selectionChipRow(parent, { label, options, selected, colorFor, onChange }) {
+export function selectionChipRow(parent, { label, options, selected, colorFor, emptyIsRealValue, onChange }) {
   const wrap = document.createElement("div");
   wrap.className = "chip-row-block";
 
@@ -456,12 +460,15 @@ export function selectionChipRow(parent, { label, options, selected, colorFor, o
 
   const row = document.createElement("div");
   row.className = "tag-chip-row";
-  // The "" bucket ("(uten tag)", "Ukjent boligtype", "Ingen status") sorts LAST
-  // regardless of the vocabulary's own order, which puts it first under
-  // localeCompare. It is the default state rather than a choice, and it carries
-  // the largest count, so leading with it buries the values the user actually
-  // picked behind the widest chip in the row.
-  const ordered = [...options].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : 0));
+  // The "" bucket ("(uten tag)", "Ukjent boligtype") sorts LAST regardless of
+  // the vocabulary's own order, which puts it first under localeCompare. It is
+  // the absence of a choice rather than a choice, and it carries the largest
+  // count, so leading with it buries the values the user actually picked.
+  // `emptyIsRealValue` opts out: tilgjengelighet's "" means "Til salgs", which
+  // is a genuine status and its most common one -- burying it would be wrong.
+  const ordered = emptyIsRealValue
+    ? options
+    : [...options].sort((a, b) => (a.key === "" ? 1 : b.key === "" ? -1 : 0));
   const allKeys = ordered.map((o) => o.key);
   ordered.forEach((opt) => {
     const btn = document.createElement("button");
@@ -535,6 +542,9 @@ export function buildFilterPanelUI(
     label: "Tilgjengelighet",
     options: vocabs.tilgjengelighet,
     selected: filters.tilgjengelighetSelected,
+    // "" is "Til salgs" here, a real status and the most common one -- it must
+    // keep its by-count position rather than being sorted to the end.
+    emptyIsRealValue: true,
     onChange,
   });
   const tagColors = assignTagColors(vocabs.tags.map((o) => o.key));
