@@ -144,6 +144,31 @@ A field is reported when all of these hold:
 Verified against real corpus numbers: P-ROM collapsing 19% → 0% fires; BRA-b
 fluctuating 7% → 5% does not. A field whose rate *rises* never fires.
 
+`MIN_BATCH = 100` was checked against real runs rather than guessed. Every
+nightly since the pipeline cut over on 2026-07-22 (`~/skannonser-logs/
+full_*.log` on the server):
+
+| Date | parsed | failed |
+|---|---|---|
+| 07-22 | 967 | 0 |
+| 07-23 | 960 | 0 |
+| 07-24 | 947 | 0 |
+| 07-25 | 953 | 0 |
+| 07-26 | 1008 | 0 |
+| 07-27 | 1009 | 0 |
+
+947–1009, roughly ten times the floor. The batch tracks the size of the active
+listing set — the crawl re-walks the whole polygon nightly and most of the
+result is updates (07-27: 1009 parsed, 231 upserted) — so it is structurally
+stable rather than dependent on how many new listings appeared. A night that
+falls below 100 means something is already badly wrong, and guards 1 and 2
+own that case; the canary correctly stands down instead of adding noise.
+
+Detail parsing matched listing parsing exactly on every run
+(`details_upserted: 1009`), so the separate-sample-size rule is currently
+non-binding — but it stays, because detail failures are swallowed by design
+and nothing guarantees the two stay equal.
+
 The `BASELINE_ROWS` guard matters on a fresh or newly-migrated database.
 `listing_details` is a derived, disposable cache — `backfill-details --wipe`
 empties it by design — and a near-empty baseline would otherwise read every
