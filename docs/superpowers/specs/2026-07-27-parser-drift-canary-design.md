@@ -202,8 +202,11 @@ Message shape:
 ```
 Parser drift: 2 field(s)
 info_primary_area  19.2% -> 0.0%  (n=1043)
-energimerke        85.4% -> 1.1%  (n=1043)
+energimerke  85.4% -> 1.1%  (n=1043)
 ```
+
+One line per field, unpadded — the field names vary enough in length that
+column alignment would cost a max-width pass for no gain in a phone alert.
 
 ## Testing
 
