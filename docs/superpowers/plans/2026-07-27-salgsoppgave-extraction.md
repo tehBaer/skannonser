@@ -662,6 +662,19 @@ def test_returns_model_with_finnkode_even_for_junk():
     assert result.eiendomsskatt_kr is None
 
 
+def test_absent_topic_is_false_not_null_when_a_salgsoppgave_was_read():
+    """NULL means 'no salgsoppgave text'; False means 'read it, not mentioned'.
+    Conflating the two would make an unparsed listing indistinguishable from
+    one that simply never discusses radon."""
+    parsed = _parse("448347467")
+    assert parsed.radon_omtalt in (True, False)
+    assert parsed.heftelser in (True, False)
+
+    unparsed = parse_salgsoppgave("<html></html>", "999")
+    assert unparsed.radon_omtalt is None
+    assert unparsed.heftelser is None
+
+
 @pytest.mark.parametrize(
     "junk", ["", "<html>", "<script>enqueue(</script>", "not html at all"]
 )
@@ -877,10 +890,14 @@ def parse_salgsoppgave(html: str, finnkode: str) -> Salgsoppgave:
         boligselgerforsikring=_boligselgerforsikring(text),
         eiendomsskatt_kr=_eiendomsskatt(text),
         ferdigattest=_ferdigattest(text),
-        radon_omtalt=bool(_RADON.search(text)) or None,
+        # bool(...), NOT `bool(...) or None`: reaching this branch means we
+        # DID read a salgsoppgave, so "radon not mentioned" is False, not
+        # unknown. NULL stays reserved for "no salgsoppgave text at all",
+        # which the early return above handles.
+        radon_omtalt=bool(_RADON.search(text)),
         utleie=_utleie(text),
         husdyr=_husdyr(text),
-        heftelser=bool(_HEFTELSER.search(text)) or None,
+        heftelser=bool(_HEFTELSER.search(text)),
     )
 ```
 
