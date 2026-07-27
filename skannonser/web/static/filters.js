@@ -5,12 +5,12 @@
 // (tablefilters.js). State shape and bounds live in ./filterstate.js.
 //
 // Null policy: `filters.includeUnknown` (default true) governs every numeric
-// filter and null energimerke/eieform/postnummer/nabolag/facilities.
+// filter and null eieform/postnummer/nabolag/facilities.
 // Deliberate exceptions: missing TRAVEL minutes never exclude (legacy rule,
 // apps_script map.html 3824-3826), and the "" buckets of boligtype/tag/
-// tilgjengelighet are explicit toggle rows, not "unknown". A NEGATIVE travel
-// value is not "missing" -- it is a pipeline failure code and an active slider
-// drops it; see listingmeta.js's travel-sentinel section.
+// tilgjengelighet/energimerke are explicit toggle rows, not "unknown".
+// A NEGATIVE travel value is not "missing" -- it is a pipeline failure code
+// and an active slider drops it; see listingmeta.js's travel-sentinel section.
 
 import {
   BRA_I_SLIDER_MAX,
@@ -118,9 +118,14 @@ export function listingExcluded(item, filters, meta) {
   if (selectionExcludes(f.boligtypeSelected, item.boligtype || "")) return true;
   if (selectionExcludes(f.tagSelected, item.tag ? String(item.tag).trim() : "")) return true;
   if (selectionExcludes(f.tilgjengelighetSelected, item.tilgjengelighet || "")) return true;
+  // Energimerking joined these on 2026-07-27: an ungraded listing is now the
+  // explicit "Ukjent" chip rather than an "unknown" deferring to
+  // includeUnknown. Under the old routing, picking A returned every ungraded
+  // listing too -- which was ~70 % of the data before the svg energy-label
+  // parser fix, so "A" was mostly not-A.
+  if (selectionExcludes(f.energiSelected, item.energimerke || "")) return true;
 
   // Selected sets (empty = off; non-empty = only these pass).
-  if (selectedSetExcludes(f.energiSelected, item.energimerke, unknownFails)) return true;
   if (selectedSetExcludes(f.eieformSelected, item.eieform, unknownFails)) return true;
   if (selectedSetExcludes(f.postnummerSelected, item.postnummer, unknownFails)) return true;
   if (selectedSetExcludes(f.nabolagSelected, item.nabolag, unknownFails)) return true;
@@ -539,9 +544,16 @@ export function buildFilterPanelUI(
     selected: filters.eieformSelected,
     onChange,
   });
+  // Same synthesis as Boligtype above: meta.energimerker is the list of KNOWN
+  // grades (A-G), so the ungraded listings need a row of their own to be
+  // selectable at all -- and, more to the point, to be EXCLUDABLE by picking a
+  // grade without them.
   selectionChipRow(fields, {
     label: "Energimerking",
-    options: (meta.energimerker || []).map((v) => ({ key: v, label: v })),
+    options: [
+      ...(meta.energimerker || []).map((v) => ({ key: v, label: v })),
+      { key: "", label: "Ukjent" },
+    ],
     selected: filters.energiSelected,
     onChange,
   });
