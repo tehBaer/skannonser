@@ -90,7 +90,43 @@ classifier constrained to a fixed vocabulary does not make.
 Money fields already covered by `parse_details.py` from the pricing `<dl>`
 (`fellesgjeld`, `formuesverdi`, `kommunale_avg_aar`, `felleskost_mnd`) are
 **not** re-extracted here — that would duplicate existing columns.
-`eiendomsskatt` is the one money field genuinely missing.
+
+### Two labels the pricing `<dl>` already offers and we drop
+
+Surfaced by a parallel session and verified over 400 cached ads (all 400 have a
+`pricing-details` `<dl>`). `_PRICING_LABELS` in `parse_details.py` currently
+discards two `dt` labels it could capture for free:
+
+| Label | Coverage | Existing `_parse_kr` handles it |
+| --- | --- | --- |
+| `Eiendomsskatt` | 33/400 (8%) | 33/33, values 1 664–12 396 kr |
+| `Verditakst` | 15/400 (3%) | yes |
+
+This is a two-line addition to `_PRICING_LABELS` plus two columns on
+`listing_details`, folded into **migration 015** below rather than taking a
+second migration number. It is deterministic DOM parsing — strictly better than
+regex over prose wherever it is present.
+
+It does **not** replace the prose path: `eiendomsskatt` appears in the
+salgsoppgave prose of ~32% of ads, four times the `<dl>`'s 8%. So both sources
+stay, with distinct provenance:
+
+- `listing_details.eiendomsskatt_kr` — from the `<dl>`, deterministic, 8%
+- `listing_salgsoppgave.eiendomsskatt_kr` — from prose, rules-extracted, ~32%
+
+Each table stays independently rebuildable from its own source, which preserves
+migration 010's "full-row REPLACE, no fill-only columns" invariant — writing a
+prose-derived value into `listing_details` would break it. The web layer
+coalesces at read time, preferring the deterministic source:
+
+```sql
+COALESCE(d.eiendomsskatt_kr, s.eiendomsskatt_kr)
+```
+
+**Stage-1 check:** where both sources fire on the same listing, confirm they
+agree. A systematic disagreement means the prose regex is picking up a
+different figure (a neighbouring year, or the kommunale avgifter total) and the
+rule needs tightening.
 
 ## Architecture
 
@@ -140,7 +176,7 @@ CREATE TABLE listing_salgsoppgave (
     byggeaar INTEGER,
     boligselgerforsikring BOOLEAN,
     -- rules-extracted
-    eiendomsskatt_kr INTEGER,
+    eiendomsskatt_kr INTEGER,   -- from prose; <dl> source lives in listing_details
     ferdigattest TEXT,          -- 'ferdigattest' | 'midlertidig' | 'ingen'
     radon_omtalt BOOLEAN,
     utleie TEXT,                -- 'tillatt' | 'ikke_tillatt' | 'egen_enhet'
@@ -177,6 +213,11 @@ CREATE TABLE salgsoppgave_llm_cache (
     model TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+-- The two pricing-<dl> labels parse_details.py currently drops (see above).
+-- Deterministic DOM parsing, so they belong with the other <dl> money fields.
+ALTER TABLE listing_details ADD COLUMN eiendomsskatt_kr INTEGER;
+ALTER TABLE listing_details ADD COLUMN verditakst INTEGER;
 ```
 
 `salgsoppgave_llm_cache` is what preserves the *"derived, disposable,
@@ -298,6 +339,13 @@ Golden fixtures, as with the existing 12 for `parse_details`:
   in `jittered_delay`). Tests use recorded responses; `pytest` never touches
   the network.
 - **Cache** — a second run with unchanged input issues no API call.
+- **The two new `<dl>` labels** — **none of the 12 existing golden fixtures in
+  `tests/rebuild/fixtures/finn/` contains `Eiendomsskatt` or `Verditakst`**
+  (verified 2026-07-27), so at least one new fixture must be added from a
+  cached ad that has them. Without it the `_PRICING_LABELS` addition ships
+  untested. Ready candidates carrying `Eiendomsskatt`: `463763329`,
+  `454056850`, `446262470`, `458192947`. No ad in the 400-ad sample carried
+  *both* new labels, so `Verditakst` needs its own fixture.
 
 Baseline before this work: **662 passed** (CLAUDE.md documents 659; three were
 added on `origin/master` since).
@@ -330,6 +378,7 @@ local pipeline write.
 | Output shape | Strictly typed; no free-text columns |
 | Field scope | All four groups (condition, egenerklæring, legal booleans, structured extras + eiendomsskatt) |
 | Unmappable labels | Bucket to `annet`, still counted |
+| Eiendomsskatt | Both sources: `<dl>` into `listing_details` (deterministic, 8%), prose into `listing_salgsoppgave` (~32%), coalesced at read time |
 | Model | Deferred to backfill stage 1 |
 | API key | Backfill runs locally; server needs no key |
 | Backfill | Staged, validating between stages |
