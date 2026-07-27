@@ -54,6 +54,30 @@ rare — 12 entries across 250 ads, mostly reguleringsplan attachments. What the
 PDF adds over the embedded text is floor plans, the full tilstandsrapport with
 photos and cost estimates, nabolagsprofil, vedtekter, and energiattest.
 
+## Two payload fields we do NOT use
+
+Both looked like free wins and both were rejected on measurement. Recording
+them so a later reader does not re-add either.
+
+`objectData.ad.constructionYear` is *sound* — present on 291/300, all parse,
+range 1890–2026 — but **redundant**: `eiendom.info_construction_year` is
+already populated on **99%** of live rows (5 834/5 863) and already exposed by
+the web API as `byggeaar`. Adding it would duplicate a column at lower
+coverage and collide with an existing API key. **No `byggeaar` column here.**
+
+> **Do not use `changeOfOwnershipInsurance` for boligselgerforsikring.** It
+> looks like exactly the right field and is present on ~98% of ads — but that
+> is field *presence*, not correctness. It reads `False` on 103 ads whose prose
+> says the seller *has* taken out boligselgerforsikring, and `False` on the 22
+> saying they have not; only 5 of 300 are `True`. Mapping it would yield a
+> column wrong for ~82% of checkable ads.
+>
+> `boligselgerforsikring` is therefore **rules-extracted from prose**, where
+> `(selger|det) har tegnet …selgerforsikring` vs `har ikke tegnet …` resolved
+> 130 of 300 ads cleanly. Generalise the lesson: a payload field's presence
+> rate says nothing about whether it means what its name suggests — cross-check
+> against the prose before wiring one up.
+
 ## Why the condition data needs a classifier
 
 The text is broker prose, not structured data. Across 118 ads: **401 distinct
@@ -172,10 +196,8 @@ enum-constrained `TEXT`. No prose anywhere.
 ```sql
 CREATE TABLE listing_salgsoppgave (
     finnkode TEXT PRIMARY KEY REFERENCES eiendom(finnkode),
-    -- structured in the payload already; no parsing (98% coverage)
-    byggeaar INTEGER,
+    -- rules-extracted from prose (no payload-sourced columns; see above)
     boligselgerforsikring BOOLEAN,
-    -- rules-extracted
     eiendomsskatt_kr INTEGER,   -- from prose; <dl> source lives in listing_details
     ferdigattest TEXT,          -- 'ferdigattest' | 'midlertidig' | 'ingen'
     radon_omtalt BOOLEAN,
