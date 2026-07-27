@@ -9,6 +9,8 @@ EXPECTED_TABLES = {
     "listing_comments", "stations", "station_lines", "station_travel",
     "annotations", "sold_prices", "sold_sweep_state", "sold_price_attempts",
     "listing_details", "listing_facilities",
+    "listing_salgsoppgave", "listing_tg_findings", "listing_egenerklaering",
+    "salgsoppgave_llm_cache",
 }
 
 ALL_MIGRATIONS = [
@@ -17,6 +19,7 @@ ALL_MIGRATIONS = [
     "007_sold_sweep_state", "008_postnummer_pad", "009_sold_attempts",
     "010_listing_details", "011_neighbour_sold", "012_neighbour_sold_index",
     "013_gjovikbanen_missing_stations", "014_r31_north_of_jaren",
+    "015_salgsoppgave",
 ]
 
 
@@ -366,3 +369,23 @@ def test_statements_keeps_trigger_block_intact():
     stmts = migrations._statements(sql)
     assert len(stmts) == 3
     assert stmts[1].startswith("CREATE TRIGGER") and stmts[1].rstrip().endswith("END;")
+
+
+def test_migration_015_adds_dl_columns_to_listing_details(tmp_path):
+    """The two pricing-<dl> labels parse_details was dropping need columns."""
+    conn = connection.connect(tmp_path / "fresh.db")
+    migrations.migrate(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(listing_details)")}
+    assert {"eiendomsskatt_kr", "verditakst"} <= cols
+
+
+def test_migration_015_tg_findings_dedupes(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    migrations.migrate(conn)
+    conn.execute("INSERT INTO eiendom (finnkode, url) VALUES ('1', 'u')")
+    for _ in range(2):
+        conn.execute(
+            "INSERT OR IGNORE INTO listing_tg_findings "
+            "(finnkode, tg, bygningsdel) VALUES ('1', 2, 'vatrom')"
+        )
+    assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 1
