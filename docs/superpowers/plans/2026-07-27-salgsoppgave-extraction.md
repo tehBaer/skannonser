@@ -22,6 +22,10 @@ This plan covers **Phase 1 only: the deterministic path.** It ships working, ind
 - **Parsers never raise on arbitrary input.** Every field is optional; a parse failure yields `None` for that field only. This mirrors `parse_details.py`.
 - **Migration 015 is the only migration number available to this work.** A parallel session has claimed 016+.
 - **Fully offline.** No network access in parsing, backfill, or tests.
+- **The ad-HTML cache lives ONLY in the main clone**, at
+  `/Users/tehbaer/kode/skannonser/data/eiendom/html_extracted` (7,731 files).
+  It is gitignored, so this worktree does not have it. Read from that absolute
+  path; never write to it, and never `cd` into the main clone.
 - **Baseline is 662 passing tests.** No task may reduce it.
 - `listing_details` keeps migration 010's full-row REPLACE semantics — **no fill-only columns, ever.**
 
@@ -185,8 +189,9 @@ git commit -m "feat(store): migration 015 — salgsoppgave tables + two dropped 
 None of the 12 existing fixtures carries either label (verified 2026-07-27), so the parser change would otherwise ship untested.
 
 ```bash
-cp data/eiendom/html_extracted/463763329.html tests/rebuild/fixtures/finn/463763329.html
-cp data/eiendom/html_extracted/447401579.html tests/rebuild/fixtures/finn/447401579.html
+CACHE=/Users/tehbaer/kode/skannonser/data/eiendom/html_extracted
+cp "$CACHE"/463763329.html tests/rebuild/fixtures/finn/463763329.html
+cp "$CACHE"/447401579.html tests/rebuild/fixtures/finn/447401579.html
 ```
 
 Confirm the labels are present:
@@ -318,8 +323,9 @@ git commit -m "feat(finn): capture Eiendomsskatt and Verditakst from the pricing
 `432672475` is the only Remix-format ad among the fixtures — without it the second decoder branch ships untested. `445242445` is a `realestate-development-single` ad, the documented empty-`generalText` case.
 
 ```bash
-cp data/eiendom/html_extracted/432672475.html tests/rebuild/fixtures/finn/432672475.html
-cp data/eiendom/html_extracted/445242445.html tests/rebuild/fixtures/finn/445242445.html
+CACHE=/Users/tehbaer/kode/skannonser/data/eiendom/html_extracted
+cp "$CACHE"/432672475.html tests/rebuild/fixtures/finn/432672475.html
+cp "$CACHE"/445242445.html tests/rebuild/fixtures/finn/445242445.html
 grep -c __remixContext tests/rebuild/fixtures/finn/432672475.html
 ```
 
@@ -583,7 +589,8 @@ This is the claim the whole feature rests on; verify it against real data, not j
 import random
 from pathlib import Path
 from skannonser.ingest.finn.payload import decode_ad, sections
-files = sorted(Path("data/eiendom/html_extracted").glob("*.html"))
+CACHE = "/Users/tehbaer/kode/skannonser/data/eiendom/html_extracted"
+files = sorted(Path(CACHE).glob("*.html"))
 random.seed(1)
 ok = empty = fail = 0
 for f in random.sample(files, 200):
@@ -915,7 +922,8 @@ The spec's coverage figures are predictions; confirm the regexes actually fire.
 import collections, random
 from pathlib import Path
 from skannonser.ingest.finn.parse_salgsoppgave import parse_salgsoppgave
-files = sorted(Path("data/eiendom/html_extracted").glob("*.html"))
+CACHE = "/Users/tehbaer/kode/skannonser/data/eiendom/html_extracted"
+files = sorted(Path(CACHE).glob("*.html"))
 random.seed(2)
 hits, n = collections.Counter(), 0
 for f in random.sample(files, 200):
