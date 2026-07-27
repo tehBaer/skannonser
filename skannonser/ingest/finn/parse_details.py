@@ -111,25 +111,57 @@ def _nabolag(soup) -> str | None:
     return element.get_text(strip=True) or None
 
 
+# The svg badge's aria-label, e.g. 'Energimerke E'. Anchored and limited to the
+# seven real Norwegian grades: an unrecognized shape must stay None rather than
+# be stored as a grade -- a bare 'Energimerke' (no letter) is a real case.
+_ENERGY_ARIA_RE = re.compile(r"^Energimerke\s+([A-G])$")
+
+
+def _energy_from_svg(element) -> str | None:
+    """FINN renders the grade two ways. The second draws it as an <svg> badge
+    whose only textual trace is ``aria-label="Energimerke E"`` -- ``get_text()``
+    returns the bare 'Energimerking' heading, so the letter is invisible to the
+    text path in ``_energy``. 47 % of the crawled corpus (3712 of 7867 ads) uses
+    this variant; until it was read those ads stored a NULL ``energimerke`` and
+    then passed every Energimerking filter as "unknown" (``includeUnknown``
+    defaults true), so picking 'A' returned C/D/E/G listings."""
+    for svg in element.find_all("svg"):
+        match = _ENERGY_ARIA_RE.match((svg.get("aria-label") or "").strip())
+        if match:
+            return match.group(1)
+    return None
+
+
 def _energy(soup) -> tuple[str | None, str | None]:
     """'Energimerking A - Mørkegrønn' -> ('A', 'Mørkegrønn'). A bare
     'Energimerking' heading (grade missing on the ad) -> (None, None).
     Some ads carry a colour with no letter -- 'Energimerking - Oransje'
-    (leading dash after stripping the prefix) -> (None, 'Oransje')."""
+    (leading dash after stripping the prefix) -> (None, 'Oransje').
+    When the visible text yields no letter, the svg badge's aria-label is the
+    fallback (see ``_energy_from_svg``), mirroring how ``_eieform`` falls back
+    to the GAM blob."""
     element = soup.find(attrs={"data-testid": "energy-label"})
     if element is None:
         return None, None
     text = element.get_text(" ", strip=True)
     text = re.sub(r"^Energimerking\s*", "", text).strip()
-    if not text:
-        return None, None
+    letter: str | None = None
+    colour: str | None = None
     if text.startswith("-"):
-        colour = text.lstrip("-").strip()
-        return None, colour or None
-    if " - " in text:
-        letter, colour = text.split(" - ", 1)
-        return letter.strip() or None, colour.strip() or None
-    return text, None
+        colour = text.lstrip("-").strip() or None
+    elif " - " in text:
+        head, tail = text.split(" - ", 1)
+        letter, colour = head.strip() or None, tail.strip() or None
+    elif text:
+        letter = text
+    # Fallback only -- the visible text is the richer source (it is the one that
+    # also carries the colour), and the badge supplies no Norwegian colour name
+    # of its own, only raw hex fills. So the colour is left unknown rather than
+    # inferred from the letter: FINN itself pairs them inconsistently (fixture
+    # 466043223 ships 'G - Mørkegrønn').
+    if letter is None:
+        letter = _energy_from_svg(element)
+    return letter, colour
 
 
 # dt label -> ListingDetails field, exactly as they appear in the

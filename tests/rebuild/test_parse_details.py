@@ -150,6 +150,49 @@ def test_energy_bare_heading_is_none():
     assert d.energimerke is None and d.energifarge is None
 
 
+def test_energy_svg_variant_reads_grade_from_aria_label():
+    # FINN's second energy-label markup: the grade is drawn as an <svg> badge
+    # and appears ONLY in its aria-label -- get_text() sees just the heading.
+    # 47 % of the crawled corpus (3712/7867 ads) uses this variant.
+    html = (
+        '<html><body><div data-testid="energy-label">'
+        '<dt>Energimerking</dt><dd><svg aria-label="Energimerke E" role="img">'
+        '<path d="M61.7 45.2C61.3 45.6 60.7 45.9 60.1 45.9L4.1 45.9Z"></path>'
+        "</svg></dd></div></body></html>"
+    )
+    d = parse_details(html, "123")
+    assert d.energimerke == "E"
+    # The svg carries no Norwegian colour name (only hex fills), so the colour
+    # stays unknown rather than being guessed from the letter -- real ads pair
+    # them inconsistently (fixture 466043223 is "G - Mørkegrønn").
+    assert d.energifarge is None
+
+
+def test_energy_prefers_text_variant_over_svg_aria_label():
+    # When an ad carries both, the visible text wins -- it is the only one of
+    # the two that also supplies the colour.
+    html = (
+        '<html><body><div data-testid="energy-label">'
+        '<dt>Energimerking</dt><dd><span data-testid="energy-label-info">C - Gul</span>'
+        '<svg aria-label="Energimerke E"></svg></dd>'
+        "</div></body></html>"
+    )
+    d = parse_details(html, "123")
+    assert d.energimerke == "C"
+    assert d.energifarge == "Gul"
+
+
+def test_energy_ignores_unrelated_aria_label():
+    # A non-grade aria-label must not be stored as a grade.
+    html = (
+        '<html><body><div data-testid="energy-label">'
+        '<dt>Energimerking</dt><dd><svg aria-label="Energimerke"></svg></dd>'
+        "</div></body></html>"
+    )
+    d = parse_details(html, "123")
+    assert d.energimerke is None and d.energifarge is None
+
+
 def test_energy_colour_only_yields_none_letter():
     html = (
         '<html><body><div data-testid="energy-label">'
