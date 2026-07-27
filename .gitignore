@@ -28,3 +28,10 @@ data/thumbs/
 # Parallel-session worktrees (see CLAUDE.md). Each is a full checkout of this
 # repo; committing one would nest the repo inside itself.
 .claude/worktrees/
+
+# Crawled DNB fixture, restored into every worktree by ops/setup-worktree.sh as
+# a symlink into the main clone. `.venv` is ignored for exactly this reason
+# (that script's own comment: "so the symlink never shows in status") but this
+# path was missed, so a routine `git add -A` in a worktree committed an
+# ABSOLUTE symlink to one machine's checkout -- dangling anywhere else.
+data/dnbeiendom/html_crawled
