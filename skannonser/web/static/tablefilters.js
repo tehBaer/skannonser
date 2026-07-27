@@ -47,7 +47,7 @@ export const COLUMN_FILTERS = {
   mvv_uni: { kind: "slider-travel", destKey: "mvv_uni" },
   boligtype: { kind: "selection", stateKey: "boligtypeSelected", vocab: "meta:boligtyper", unknownBucket: "Ukjent boligtype" },
   eieform: { kind: "selection", stateKey: "eieformSelected", vocab: "meta:eieformer" },
-  energimerke: { kind: "selection", stateKey: "energiSelected", vocab: "meta:energimerker" },
+  energimerke: { kind: "selection", stateKey: "energiSelected", vocab: "meta:energimerker", unknownBucket: "Ukjent" },
   tilgjengelighet: { kind: "selection", stateKey: "tilgjengelighetSelected", vocab: "vocab:tilgjengelighet" },
   tag: { kind: "selection", stateKey: "tagSelected", vocab: "vocab:tags" },
   postnummer: { kind: "search-set", stateKey: "postnummerSelected", vocab: "vocab:postnummer" },

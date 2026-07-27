@@ -45,6 +45,55 @@ test("the predicate routes the explicit-value filters through selection", () => 
   );
 });
 
+test("Energimerking has an explicit Ukjent bucket, not an unknown-policy hole", () => {
+  const base = defaultFilters({ destinations: [] });
+  const meta = {};
+  const mk = (over) => ({ ...base, ...over });
+
+  const gradeA = { energimerke: "A" };
+  const gradeC = { energimerke: "C" };
+  const ungraded = { energimerke: null };
+
+  assert.equal(listingExcluded(ungraded, mk({}), meta), false, "no selection = everything passes");
+
+  // The reported bug: picking A returned ungraded listings too, because a null
+  // grade was "unknown" and includeUnknown (default true) waved it through.
+  // ~70 % of listings were ungraded, so "A" was mostly not-A.
+  assert.equal(listingExcluded(gradeA, mk({ energiSelected: ["A"] }), meta), false);
+  assert.equal(listingExcluded(gradeC, mk({ energiSelected: ["A"] }), meta), true);
+  assert.equal(
+    listingExcluded(ungraded, mk({ energiSelected: ["A"] }), meta),
+    true,
+    "an ungraded listing must NOT survive a grade selection"
+  );
+  // ...and includeUnknown must not rescue it either: the bucket is explicit now.
+  assert.equal(
+    listingExcluded(ungraded, mk({ energiSelected: ["A"], includeUnknown: true }), meta),
+    true,
+    "includeUnknown no longer governs Energimerking"
+  );
+
+  // Selecting Ukjent isolates exactly the ungraded ones, and stays selectable
+  // with unknowns switched off (same rule the tag "" bucket relies on).
+  assert.equal(listingExcluded(ungraded, mk({ energiSelected: [""] }), meta), false);
+  assert.equal(listingExcluded(gradeA, mk({ energiSelected: [""] }), meta), true);
+  assert.equal(
+    listingExcluded(ungraded, mk({ energiSelected: [""], includeUnknown: false }), meta),
+    false,
+    "the Ukjent bucket stays selectable when unknowns are excluded"
+  );
+
+  // A grade and Ukjent together = union of both.
+  assert.equal(listingExcluded(ungraded, mk({ energiSelected: ["A", ""] }), meta), false);
+  assert.equal(listingExcluded(gradeA, mk({ energiSelected: ["A", ""] }), meta), false);
+  assert.equal(listingExcluded(gradeC, mk({ energiSelected: ["A", ""] }), meta), true);
+
+  // An absent field is the same case as an explicit null -- the API omits
+  // energimerke entirely on DNB items, which have no grade at all.
+  assert.equal(listingExcluded({}, mk({ energiSelected: ["A"] }), meta), true);
+  assert.equal(listingExcluded({}, mk({ energiSelected: [""] }), meta), false);
+});
+
 test("a non-empty selection counts as an active filter and clears back to empty", () => {
   const base = defaultFilters({ destinations: [] });
   base.tagSelected = ["maybe", "hard no"];
