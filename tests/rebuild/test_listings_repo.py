@@ -175,3 +175,49 @@ def test_upsert_is_one_transaction(repo, monkeypatch):
     monkeypatch.undo()
     # "111" was inserted before "BAD" failed; the whole batch rolled back.
     assert repo.conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] == 0
+
+
+# --- Primærrom reaches eiendom.info_primary_area on re-parse ----------------
+# The P-ROM fix (parse.py:_get_primary_area) is only useful if rows already in
+# the DB pick the value up. `info_primary_area` is in `_DATA_COLUMNS`, so the
+# ordinary pipeline upsert -- which re-parses from CACHED html, no FINN traffic
+# -- backfills it on the next run, and the enrich pass then recomputes
+# pris_kvm off it. This pins that path end to end.
+
+
+def test_reparse_backfills_primary_area_and_changes_pris_kvm(repo):
+    from pathlib import Path
+
+    from skannonser.enrich.travel import compute_pris_kvm
+    from skannonser.ingest.finn.parse import parse_ad
+
+    # A row stored before the fix: P-ROM empty, BRA-i present.
+    repo.upsert([_listing("424071751", Pris=5_000_000, **{"Internt bruksareal (BRA-i)": "105"})])
+    row = repo.conn.execute(
+        "SELECT * FROM eiendom WHERE finnkode = '424071751'"
+    ).fetchone()
+    assert row["info_primary_area"] is None
+    before = compute_pris_kvm(
+        row["pris"], row["info_primary_area"], row["info_usable_i_area"], row["info_usable_area"]
+    )
+
+    # Same ad re-parsed from the cached HTML the crawler already has.
+    fixture = Path(__file__).parent / "fixtures" / "finn" / "424071751.html"
+    listing = parse_ad(
+        fixture.read_text(encoding="utf-8", errors="replace"),
+        "424071751",
+        "https://www.finn.no/realestate/homes/ad.html?finnkode=424071751",
+    )
+    repo.upsert([listing])
+
+    row = repo.conn.execute(
+        "SELECT * FROM eiendom WHERE finnkode = '424071751'"
+    ).fetchone()
+    assert row["info_primary_area"] == 100
+    after = compute_pris_kvm(
+        row["pris"], row["info_primary_area"], row["info_usable_i_area"], row["info_usable_area"]
+    )
+    # P-ROM (100) leads the chain over BRA-i (105): a real kr/m² correction.
+    assert before == round(5_000_000 / 105)
+    assert after == round(row["pris"] / 100)
+    assert after != before

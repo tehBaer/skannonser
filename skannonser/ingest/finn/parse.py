@@ -15,6 +15,7 @@ import re
 from bs4 import BeautifulSoup
 
 from skannonser.ingest.base import NormalizedListing
+from skannonser.ingest.finn.gam import gam_targeting
 
 # ---------------------------------------------------------------------------
 # Field extractors -- ports of main/extractors/parsing_helpers_common.py
@@ -62,6 +63,32 @@ def _get_all_sizes(soup) -> dict:
         sizes[test_id] = _get_size_helper(element)
 
     return sizes
+
+
+def _get_primary_area(soup) -> str:
+    """P-ROM, as a bare digit string like every other size extractor ("" when
+    unavailable).
+
+    The one deliberate deviation from the legacy port. Legacy read only
+    `data-testid="info-primary-area"`, but FINN dropped that key-info block
+    when Norway moved to NS 3940:2023 (BRA-i/e/b): it is absent from all 12
+    golden fixtures and from ~98% of the crawled corpus, so the testid alone
+    yields "" on essentially every modern ad. FINN still publishes the number
+    as `primary_size` in the GAM targeting JSON (~19% of ads), which is where
+    we fall back to.
+
+    P-ROM is NOT interchangeable with BRA-i -- of 170 sampled ads carrying
+    both, 68 disagreed (BRA-i larger by ~5.6% at the median). It leads the
+    `compute_pris_kvm` priority chain, so an empty P-ROM silently pushed
+    every kr/m² onto a larger denominator.
+    """
+    size = _get_size_helper(soup.find("div", {"data-testid": "info-primary-area"}))
+    if size:
+        return size
+    values = gam_targeting(soup).get("primary_size") or []
+    if not values:
+        return ""
+    return re.sub(r"\D", "", str(values[0]))
 
 
 def _get_buy_price(soup):
@@ -221,7 +248,7 @@ def parse_ad(html: str, finnkode: str, url: str) -> NormalizedListing:
         "Pris": buy_price,
         "URL": url,
         "IMAGE_URL": image_url,
-        "Primærrom": sizes.get("info-primary-area"),
+        "Primærrom": _get_primary_area(soup),
         "Internt bruksareal (BRA-i)": sizes.get("info-usable-i-area"),
         "Bruksareal": sizes.get("info-usable-area"),
         "Eksternt bruksareal (BRA-e)": sizes.get("info-usable-e-area"),
