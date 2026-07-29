@@ -95,7 +95,9 @@ def run_finn_ingest(
     fixtures.
 
     Returns counts: `crawled`, `parsed`, `failed`, `upserted`, `deactivated`,
-    `details_upserted`, plus `drift` (a list of `DriftFinding`; see
+    `details_upserted`, plus `drift` (a list of `DriftFinding`) and
+    `drift_status` (per-table "checked"/"skipped:.../"error" -- disambiguates
+    an empty `drift` list between healthy, skipped, and a crashed canary; see
     `skannonser/ingest/drift.py`).
     """
     project_dir = Path(project_dir)
@@ -141,14 +143,16 @@ def run_finn_ingest(
     # alters ingest, and a failure here is swallowed exactly like the details
     # parse above, for the same reason.
     drift_findings = []
+    drift_status = {}
     try:
-        drift_findings = drift_check(
+        drift_findings, drift_status = drift_check(
             conn,
             [listing.to_row() for listing in listings],
             [detail.model_dump() for detail in details],
         )
     except Exception:
-        pass
+        drift_findings = []
+        drift_status = {"error": "drift check raised"}
 
     upsert_stats = repo.upsert(listings)
 
@@ -171,6 +175,7 @@ def run_finn_ingest(
         "deactivated": deactivated,
         "details_upserted": details_upserted,
         "drift": drift_findings,
+        "drift_status": drift_status,
     }
 
 

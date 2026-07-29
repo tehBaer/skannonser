@@ -583,5 +583,12 @@ def nightly(
         typer.echo(
             "nightly: budget exhausted on: " + ", ".join(result["budget_exhausted"]), err=True
         )
-    if result["failed"]:
+    # Fix 1: `run ingest` surfaces drift via `_drift_ok`, but production's
+    # cron runs `run nightly`, not `run ingest` -- without this, drift is
+    # never actually observed on the path that matters. `ingest_finn`'s step
+    # record carries no "stats" key at all on a hard failure (see
+    # `nightly.py`'s `_record_failure`), hence the two `or {}` guards.
+    finn_stats = (result["steps"].get("ingest_finn") or {}).get("stats") or {}
+    drift_ok = _drift_ok("finn", finn_stats)
+    if result["failed"] or not drift_ok:
         raise typer.Exit(code=1)

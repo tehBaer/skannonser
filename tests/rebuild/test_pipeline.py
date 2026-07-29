@@ -134,6 +134,7 @@ def test_finn_mark_inactive_skipped_when_crawl_yields_zero_urls(conn, domain, tm
         "deactivated": 0,
         "details_upserted": 0,
         "drift": [],
+        "drift_status": {"eiendom": "skipped:batch", "listing_details": "skipped:batch"},
     }
     # The previously-active listing must NOT have been deactivated by an
     # empty crawl.
@@ -438,6 +439,7 @@ def test_finn_parse_failure_is_counted_and_not_upserted(tmp_path):
         "deactivated": 0,
         "details_upserted": 0,
         "drift": [],
+        "drift_status": {"eiendom": "skipped:batch", "listing_details": "skipped:batch"},
     }
     assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] == 0
 
@@ -718,9 +720,11 @@ def test_finn_ingest_reports_drift_in_stats(monkeypatch, tmp_path):
             sample_size=1000,
         )
     ]
-    monkeypatch.setattr("skannonser.pipeline.drift_check", lambda *a, **k: sentinel)
+    status = {"eiendom": "checked", "listing_details": "checked"}
+    monkeypatch.setattr("skannonser.pipeline.drift_check", lambda *a, **k: (sentinel, status))
     stats = _ingest_over_fixtures(tmp_path)
     assert stats["drift"] == sentinel
+    assert stats["drift_status"] == status
 
 
 def test_finn_ingest_survives_drift_failure(monkeypatch, tmp_path):
@@ -731,6 +735,7 @@ def test_finn_ingest_survives_drift_failure(monkeypatch, tmp_path):
     monkeypatch.setattr("skannonser.pipeline.drift_check", boom)
     stats = _ingest_over_fixtures(tmp_path)
     assert stats["drift"] == []
+    assert stats["drift_status"] == {"error": "drift check raised"}
     assert stats["parsed"] > 0
     assert stats["upserted"] > 0
 
@@ -744,7 +749,7 @@ def test_drift_baseline_is_read_before_upsert(monkeypatch, tmp_path):
         seen["rows_at_call"] = conn.execute(
             "SELECT COUNT(*) FROM eiendom"
         ).fetchone()[0]
-        return []
+        return [], {}
 
     monkeypatch.setattr("skannonser.pipeline.drift_check", spy)
     _ingest_over_fixtures(tmp_path)

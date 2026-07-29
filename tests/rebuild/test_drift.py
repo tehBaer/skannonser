@@ -144,6 +144,24 @@ def test_baseline_rates_counts_all_rows(conn):
     assert rates["info_primary_area"] == pytest.approx(0.5)
 
 
+def test_baseline_rates_treats_empty_string_as_absent(conn):
+    """Fix 3: `eiendom`'s TEXT columns store "" for a missing value (see
+    `is_present`'s docstring), but a bare `COUNT("col")` counts "" as
+    present -- it only excludes NULL. That mismatch is a latent
+    false-negative source for drift (a column reading 100% present here
+    while the batch-side `is_present("")` correctly calls it absent)."""
+    conn.execute(
+        "INSERT INTO eiendom (finnkode, url, info_plot_ownership) VALUES ('1','u','Selveier')"
+    )
+    conn.execute(
+        "INSERT INTO eiendom (finnkode, url, info_plot_ownership) VALUES ('2','u2','')"
+    )
+    conn.commit()
+    rates, rows = baseline_rates(conn, "eiendom", ["info_plot_ownership"])
+    assert rows == 2
+    assert rates["info_plot_ownership"] == pytest.approx(0.5)
+
+
 def test_baseline_rates_empty_table_no_zero_division(conn):
     rates, rows = baseline_rates(conn, "eiendom", ["info_primary_area"])
     assert rows == 0
@@ -161,17 +179,29 @@ def test_baseline_rates_missing_table_is_survivable(conn):
 
 
 def test_check_reports_collapse_across_both_tables(conn):
+    """Fix 4a: earn the test's name -- seed a trusted baseline and a
+    collapsing batch for BOTH tables, not just `eiendom`, and assert both
+    findings arrive (sorted by field for determinism)."""
     for i in range(BASELINE_ROWS):
         conn.execute(
             "INSERT INTO eiendom (finnkode, url, info_primary_area) VALUES (?,?,100)",
             (str(i), f"u{i}"),
         )
+        conn.execute(
+            "INSERT INTO listing_details (finnkode, energimerke) VALUES (?, 'C')",
+            (str(i),),
+        )
     conn.commit()
     listing_rows = [{"Primærrom": ""} for _ in range(MIN_BATCH)]
-    found = check(conn, listing_rows, [])
-    assert [f.field for f in found] == ["info_primary_area"]
+    detail_rows = [{"energimerke": None} for _ in range(MIN_BATCH)]
+    found, status = check(conn, listing_rows, detail_rows)
+    found = sorted(found, key=lambda f: f.field)
+    assert [f.field for f in found] == ["energimerke", "info_primary_area"]
     assert found[0].baseline_rate == pytest.approx(1.0)
     assert found[0].batch_rate == 0.0
+    assert found[1].baseline_rate == pytest.approx(1.0)
+    assert found[1].batch_rate == 0.0
+    assert status == {"eiendom": "checked", "listing_details": "checked"}
 
 
 def test_check_clean_run_reports_nothing(conn):
@@ -182,7 +212,9 @@ def test_check_clean_run_reports_nothing(conn):
         )
     conn.commit()
     listing_rows = [{"Primærrom": "100"} for _ in range(MIN_BATCH)]
-    assert check(conn, listing_rows, []) == []
+    found, status = check(conn, listing_rows, [])
+    assert found == []
+    assert status == {"eiendom": "checked", "listing_details": "skipped:batch"}
 
 
 def test_each_table_judged_on_its_own_sample_size(conn):
@@ -202,7 +234,7 @@ def test_each_table_judged_on_its_own_sample_size(conn):
         )
     conn.commit()
 
-    found = check(
+    found, status = check(
         conn,
         [{"Primærrom": ""} for _ in range(MIN_BATCH)],       # judged
         [{"energimerke": None} for _ in range(MIN_BATCH - 1)],  # too small
@@ -210,3 +242,52 @@ def test_each_table_judged_on_its_own_sample_size(conn):
 
     assert [f.field for f in found] == ["info_primary_area"]
     assert found[0].sample_size == MIN_BATCH
+    assert status == {"eiendom": "checked", "listing_details": "skipped:batch"}
+
+
+# --- per-table status (Fix 2) ------------------------------------------------
+
+
+def test_status_skipped_batch_when_batch_too_small(conn):
+    """A batch below MIN_BATCH is reported "skipped:batch" even against a
+    fully-trusted baseline -- a quiet night must not be confused with a
+    healthy check."""
+    for i in range(BASELINE_ROWS):
+        conn.execute(
+            "INSERT INTO eiendom (finnkode, url, info_primary_area) VALUES (?,?,100)",
+            (str(i), f"u{i}"),
+        )
+    conn.commit()
+    _, status = check(conn, [{"Primærrom": "100"}], [])
+    assert status["eiendom"] == "skipped:batch"
+
+
+def test_status_skipped_baseline_when_stored_table_too_small(conn):
+    """A batch that clears MIN_BATCH against an untrusted (too-small)
+    baseline is reported "skipped:baseline", not "checked"."""
+    listing_rows = [{"Primærrom": "100"} for _ in range(MIN_BATCH)]
+    _, status = check(conn, listing_rows, [])
+    assert status["eiendom"] == "skipped:baseline"
+
+
+def test_status_checked_when_batch_and_baseline_both_clear(conn):
+    for i in range(BASELINE_ROWS):
+        conn.execute(
+            "INSERT INTO eiendom (finnkode, url, info_primary_area) VALUES (?,?,100)",
+            (str(i), f"u{i}"),
+        )
+    conn.commit()
+    listing_rows = [{"Primærrom": "100"} for _ in range(MIN_BATCH)]
+    _, status = check(conn, listing_rows, [])
+    assert status["eiendom"] == "checked"
+
+
+def test_status_skipped_baseline_for_missing_table(conn):
+    """A missing table (pre-migration-010 DB) yields ({}, 0) from
+    `baseline_rates`, which the row-count guard reports as "skipped:baseline",
+    not a crash."""
+    conn.execute("DROP TABLE listing_details")
+    conn.commit()
+    detail_rows = [{"energimerke": "C"} for _ in range(MIN_BATCH)]
+    _, status = check(conn, [], detail_rows)
+    assert status["listing_details"] == "skipped:baseline"

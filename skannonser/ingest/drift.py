@@ -80,8 +80,9 @@ def compare(
     """Fields whose batch rate collapsed against the stored baseline.
 
     Returns [] -- not an error -- when either sample is too small to judge.
-    The caller distinguishes "checked, clean" from "skipped" by the guards,
-    not by the return value.
+    `compare` itself still can't tell "checked, clean" from "skipped" apart
+    from its return value alone; `check`'s per-table status dict is what
+    lets the caller make that distinction.
     """
     if sample_size < MIN_BATCH or baseline_rows < BASELINE_ROWS:
         return []
@@ -137,7 +138,11 @@ def baseline_rates(
     columns = list(columns)
     if not columns:
         return {}, 0
-    selects = ", ".join(f'COUNT("{c}")' for c in columns)
+    # NULLIF(...) -> NULL, not COUNT("col")'s bare NULL-only exclusion:
+    # `eiendom`'s TEXT columns store "" for a missing value (`is_present`'s
+    # docstring), and without this a column reading 100% "" would be
+    # misreported as 100% present, masking a real collapse (Fix 3).
+    selects = ", ".join(f'COUNT(NULLIF("{c}", \'\'))' for c in columns)
     try:
         row = conn.execute(f"SELECT COUNT(*), {selects} FROM {table}").fetchone()
     except sqlite3.Error:
@@ -152,17 +157,25 @@ def check(
     conn: sqlite3.Connection,
     listing_rows: list[dict],
     detail_rows: list[dict],
-) -> list[DriftFinding]:
-    """Every drifted field across both tables.
+) -> tuple[list[DriftFinding], dict[str, str]]:
+    """Every drifted field across both tables, plus a per-table status so the
+    caller can tell "checked, clean" apart from "skipped" -- an empty
+    findings list alone is ambiguous between healthy, skipped (batch too
+    small, or baseline not yet trusted), and a crashed canary; the status
+    dict removes that ambiguity.
 
     MUST be called BEFORE the batch is upserted, or tonight's rows are
     already folded into the baseline it is compared against.
 
     `eiendom` and `listing_details` are judged independently, each on its own
     sample size: detail parsing is best-effort (`pipeline.py` swallows detail
-    failures by design) so the two batches can differ in size.
+    failures by design) so the two batches can differ in size. Each table's
+    status is one of "checked", "skipped:batch" (fewer than `MIN_BATCH` rows
+    parsed tonight), or "skipped:baseline" (fewer than `BASELINE_ROWS` stored
+    -- including a missing table, which `baseline_rates` reports as 0 rows).
     """
     findings: list[DriftFinding] = []
+    status: dict[str, str] = {}
     for table, field_columns, rows in (
         ("eiendom", LISTING_FIELD_COLUMNS, listing_rows),
         ("listing_details", DETAIL_FIELD_COLUMNS, detail_rows),
@@ -170,6 +183,12 @@ def check(
         baseline, baseline_row_count = baseline_rates(
             conn, table, list(field_columns.values())
         )
+        if len(rows) < MIN_BATCH:
+            status[table] = "skipped:batch"
+        elif baseline_row_count < BASELINE_ROWS:
+            status[table] = "skipped:baseline"
+        else:
+            status[table] = "checked"
         findings.extend(
             compare(
                 batch_rates(rows, field_columns),
@@ -178,4 +197,4 @@ def check(
                 baseline_row_count,
             )
         )
-    return findings
+    return findings, status

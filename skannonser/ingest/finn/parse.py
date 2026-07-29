@@ -3,7 +3,10 @@
 Direct port of every field extractor in
 `main/extractors/parsing_helpers_common.py` plus the assembly logic of
 `main/extractors/extraction_eiendom.py:extract_eiendom_data` (lines 13-56).
-Output is byte-identical to legacy's for the same HTML.
+Output is byte-identical to legacy's for the same HTML EXCEPT `Primærrom`,
+which adds a documented GAM-targeting fallback for ads whose FINN markup no
+longer carries a `data-testid="info-primary-area"` block (post NS 3940:2023)
+-- see `_get_primary_area`.
 
 `finnkode` and `url` are NOT re-derived from the HTML (legacy pulled
 `Finnkode` out of its own `url` argument via `url.split('finnkode=')[1]`,
