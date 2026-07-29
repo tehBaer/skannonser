@@ -8,7 +8,15 @@
 // re-open reflects the saved values.
 
 import { saveAnnotation } from "./annotations.js";
-import { isNew, fmtDate, premiumPct, fmtPremium, travelMinutes } from "./listingmeta.js";
+import {
+  isNew,
+  fmtDate,
+  premiumPct,
+  fmtPremium,
+  travelMinutes,
+  mapsUrl,
+  earthUrl,
+} from "./listingmeta.js";
 import { colorForTag } from "./tagcolors.js";
 import { attachTagList } from "./tagoptions.js";
 
@@ -225,20 +233,17 @@ export function buildPopupContent(item, destinations, tagColors) {
   if (dl.childNodes.length) body.appendChild(dl);
 
   const links = el("div", "links");
-  if (item.url) {
-    const finn = el("a", null, "Finn");
-    finn.href = item.url;
-    finn.target = "_blank";
-    finn.rel = "noopener";
-    links.appendChild(finn);
+  function addExternalLink(label, href) {
+    if (!href) return; // un-geocoded listing: no link beats a link to nowhere
+    const a = el("a", null, label);
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    links.appendChild(a);
   }
-  if (item.lat != null && item.lng != null) {
-    const gmap = el("a", null, "Google Maps");
-    gmap.href = "https://www.google.com/maps?q=" + item.lat + "," + item.lng;
-    gmap.target = "_blank";
-    gmap.rel = "noopener";
-    links.appendChild(gmap);
-  }
+  addExternalLink("Finn", item.url);
+  addExternalLink("Google Maps", mapsUrl(item));
+  addExternalLink("Google Earth", earthUrl(item));
   const tbl = el("a", null, "Tabell");
   // Same-tab on purpose: Kart -> Tabell is in-app navigation, unlike the
   // external Finn/Maps links.

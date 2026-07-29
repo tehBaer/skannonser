@@ -244,7 +244,9 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 }
 .sk-popup dt { color: var(--muted); }
 .sk-popup dd { margin: 0; text-align: right; }
-.sk-popup .links { display: flex; gap: 10px; margin: 8px 0; }
+/* wrap: four buttons (Finn / Google Maps / Google Earth / Tabell) overflow the
+   280px popup on one line, and flex does not wrap by default. */
+.sk-popup .links { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
 .sk-popup .links a {
   display: inline-block;
   padding: 4px 12px;

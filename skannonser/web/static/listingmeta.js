@@ -64,6 +64,43 @@ export function travelMinutes(item, key) {
   return Number.isFinite(n) ? n : null;
 }
 
+// --- External map links -----------------------------------------------------
+// Built from the geocode rather than `adresse`, because `adresse` is
+// street-only ("Vinterkroken 75") -- no city, no postcode -- so handing it to
+// Google's geocoder would be ambiguous nationwide. We already hold a precise
+// lat/lng for ~93% of listings; the rest get no link at all.
+
+// Earth Web's camera syntax, appended after the coordinates: 0a ground
+// altitude, 300d range from target, 35y field of view, 0h north-up heading,
+// 60t tilt off vertical, 0r roll. Close enough to read the building, tilted
+// enough to show the terrain and neighbours a flat map cannot.
+const EARTH_CAMERA = "0a,300d,35y,0h,60t,0r";
+
+// [lat, lng] as finite numbers, or null when this listing was never geocoded.
+// Both the empty string and null coerce to 0 through Number(), so the check
+// has to be "is it finite" applied to a value we already know is non-blank --
+// otherwise an un-geocoded row plots the Gulf of Guinea.
+function coords(item) {
+  const rawLat = item.lat;
+  const rawLng = item.lng;
+  if (rawLat === null || rawLat === undefined || rawLat === "") return null;
+  if (rawLng === null || rawLng === undefined || rawLng === "") return null;
+  const lat = Number(rawLat);
+  const lng = Number(rawLng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return [lat, lng];
+}
+
+export function mapsUrl(item) {
+  const c = coords(item);
+  return c && "https://www.google.com/maps?q=" + c[0] + "," + c[1];
+}
+
+export function earthUrl(item) {
+  const c = coords(item);
+  return c && "https://earth.google.com/web/@" + c[0] + "," + c[1] + "," + EARTH_CAMERA;
+}
+
 // Percent over/under prisantydning for a sold item, or null when either the
 // tinglyst price or the asking price is missing.
 export function premiumPct(item) {
