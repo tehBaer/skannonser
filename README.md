@@ -331,6 +331,25 @@ HERE in the same commit that discovers it — never only in chat.)*
   once (~5,900 local parses from already-cached ad HTML, no network, ~1 min) to
   populate `listing_details`/`listing_facilities` for existing rows; new rows
   fill in automatically on the next ingest/refresh.
+- **Deploy note (salgsoppgave extraction, migration 015):** deployed 2026-07-29.
+  The sequence was `git pull` → `skannonser db backup` → `skannonser db migrate`
+  → `skannonser tools backfill-details --wipe` (migration 015 adds
+  `eiendomsskatt_kr`/`verditakst` to `listing_details`, so existing rows need a
+  rebuild to pick them up) → `skannonser tools backfill-salgsoppgave`
+  (6,023 local parses, no network, ~2 min) → `docker compose up -d --build`.
+  **The `--build` is load-bearing:** application code and `web/static/` are baked
+  into the image, not bind-mounted, so a plain `restart` deploys nothing.
+  New rows fill in automatically on the next ingest/refresh — `parse_salgsoppgave`
+  is wired into both paths as best-effort enrichment.
+- **Phase 2 (tilstandsrapport classifier) is not built.** `listing_tg_findings`,
+  `listing_egenerklaering` and five columns on `listing_salgsoppgave`
+  (`tg2_count`, `tg3_count`, `tilstandsrapport_dato`,
+  `tilstandsrapport_utsteder`, `egenerklaering_antall`) ship empty by design.
+  Two traps for whoever builds it, detailed in
+  `docs/superpowers/plans/2026-07-27-salgsoppgave-extraction.md`: `upsert` uses
+  `INSERT OR REPLACE`, so a Phase-1 re-parse nulls those five columns; and
+  `wipe()` deletes both Phase-2 tables, while `--wipe` is documented as routine
+  Phase-1 maintenance.
 
 ## History
 
