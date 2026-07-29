@@ -31,6 +31,13 @@ _REMIX = re.compile(r"window\.__remixContext\s*=\s*(\{.*\})", re.S)
 _BREAK = re.compile(r"<br\s*/?>|</p>|</li>|</h\d>", re.I)
 _TAG = re.compile(r"<[^>]+>")
 
+# `seen` only stops cyclic references (the same index revisited); a plain
+# chain of ~5000 distinct nested lists/dicts never revisits an index, so it
+# sails past that guard and blows the interpreter's call stack instead. Cap
+# recursion depth explicitly -- deeper than this is not a payload FINN would
+# ever produce, only a hostile or corrupt one.
+_MAX_DEPTH = 500
+
 
 class Section(NamedTuple):
     heading: str
@@ -47,13 +54,16 @@ def _largest_script(html: str) -> str:
     return max(bodies, key=len) if bodies else ""
 
 
-def _resolve(arr: list, index, seen: frozenset) -> object:
+def _resolve(arr: list, index, seen: frozenset, depth: int = 0) -> object:
     """Walk the turbo-stream index graph into ordinary Python values."""
-    if not isinstance(index, int):
+    # bool is a subclass of int; True/False are never valid indices.
+    if isinstance(index, bool) or not isinstance(index, int):
         return None
     if index < 0:
         return _NEGATIVE.get(index)
     if index in seen or index >= len(arr):
+        return None
+    if depth >= _MAX_DEPTH:
         return None
     value = arr[index]
     if isinstance(value, dict):
@@ -64,13 +74,13 @@ def _resolve(arr: list, index, seen: frozenset) -> object:
                 key_index = int(str(raw_key).lstrip("_"))
             except ValueError:
                 continue
-            key = _resolve(arr, key_index, seen)
+            key = _resolve(arr, key_index, seen, depth + 1)
             if key is not None:
-                out[str(key)] = _resolve(arr, raw_val, seen)
+                out[str(key)] = _resolve(arr, raw_val, seen, depth + 1)
         return out
     if isinstance(value, list):
         seen = seen | {index}
-        return [_resolve(arr, i, seen) for i in value]
+        return [_resolve(arr, i, seen, depth + 1) for i in value]
     return value
 
 
@@ -145,7 +155,7 @@ def sections(ad: dict | None) -> list[Section]:
     for item in raw_sections:
         if not isinstance(item, dict):
             continue
-        body = item.get("textUnsafe") or ""
+        body = str(item.get("textUnsafe") or "")
         body = _BREAK.sub("\n", body)
         body = _TAG.sub(" ", body)
         body = html_mod.unescape(body)

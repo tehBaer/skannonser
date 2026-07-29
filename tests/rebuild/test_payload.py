@@ -1,9 +1,10 @@
 """Decoding the app-state payload FINN ships on every ad page, both formats."""
+import json
 from pathlib import Path
 
 import pytest
 
-from skannonser.ingest.finn.payload import Section, decode_ad, sections
+from skannonser.ingest.finn.payload import Section, _resolve, decode_ad, sections
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finn"
 
@@ -76,3 +77,52 @@ def test_sections_tolerates_garbage_ad():
     assert sections({}) == []
     assert sections({"generalText": None}) == []
     assert sections({"generalText": ["not-a-dict"]}) == []
+
+
+def test_sections_tolerates_non_string_text_unsafe():
+    """textUnsafe of the wrong type must degrade like heading already does,
+    not raise TypeError out of the regex substitutions."""
+    secs = sections({"generalText": [{"textUnsafe": 123, "heading": "h"}]})
+    assert secs == [Section("h", "123")]
+
+    secs = sections({"generalText": [{"textUnsafe": ["x"], "heading": "h"}]})
+    assert secs == [Section("h", "['x']")]
+
+    secs = sections({"generalText": [{"textUnsafe": None, "heading": "h"}]})
+    assert secs == [Section("h", "")]
+
+
+def test_resolve_cycle_protection_returns_none_not_infinite_loop():
+    """Pin the existing `seen` guard: a self-referential list resolves its
+    cyclic slot to None instead of recursing forever."""
+    arr = [[0]]  # index 0 is a list containing a reference to itself
+    assert _resolve(arr, 0, frozenset()) == [None]
+
+
+def test_resolve_bounds_chain_depth_without_recursion_error():
+    """A turbo-stream payload with a long chain of distinct nested lists never
+    revisits an index, so the cycle-detecting `seen` set does not stop it --
+    only an explicit depth bound does. Reproduces the RecursionError."""
+    n = 5000
+    arr = [[i + 1] for i in range(n - 1)] + [[]]
+    result = _resolve(arr, 0, frozenset())  # must not raise RecursionError
+    assert result is None or isinstance(result, list)
+
+
+def test_decode_ad_survives_deeply_nested_turbostream_payload():
+    """End-to-end: decode_ad must degrade to None, never raise, on a
+    pathologically deep turbo-stream payload."""
+    n = 5000
+    arr = [[i + 1] for i in range(n - 1)] + [[]]
+    inner = json.dumps(arr)
+    script = f"window.__reactRouterContext.streamController.enqueue({json.dumps(inner)})"
+    html = f"<html><body><script>{script}</script></body></html>"
+    assert decode_ad(html) is None
+
+
+def test_resolve_rejects_boolean_index():
+    """bool is an int subclass in Python; True/False must not be accepted as
+    turbo-stream array indices even though isinstance(True, int) is True."""
+    arr = [10, 20, 30]
+    assert _resolve(arr, True, frozenset()) is None
+    assert _resolve(arr, False, frozenset()) is None
