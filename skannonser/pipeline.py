@@ -55,6 +55,7 @@ from skannonser.http import browser_get
 from skannonser.ingest.dnb import crawl as dnb_crawl
 from skannonser.ingest.dnb import load as dnb_load
 from skannonser.ingest.dnb import parse as dnb_parse
+from skannonser.ingest.drift import check as drift_check
 from skannonser.ingest.finn import crawl as finn_crawl
 from skannonser.ingest.finn import html_cache
 from skannonser.ingest.finn import parse as finn_parse
@@ -94,7 +95,8 @@ def run_finn_ingest(
     fixtures.
 
     Returns counts: `crawled`, `parsed`, `failed`, `upserted`, `deactivated`,
-    `details_upserted`.
+    `details_upserted`, plus `drift` (a list of `DriftFinding`; see
+    `skannonser/ingest/drift.py`).
     """
     project_dir = Path(project_dir)
 
@@ -132,6 +134,22 @@ def run_finn_ingest(
             pass
 
     repo = ListingsRepo(conn)
+
+    # Parser-drift canary (2026-07-27 design spec). MUST run before upsert --
+    # afterwards tonight's rows are part of the baseline it compares against,
+    # and a same-night collapse becomes invisible. Diagnostic only: it never
+    # alters ingest, and a failure here is swallowed exactly like the details
+    # parse above, for the same reason.
+    drift_findings = []
+    try:
+        drift_findings = drift_check(
+            conn,
+            [listing.to_row() for listing in listings],
+            [detail.model_dump() for detail in details],
+        )
+    except Exception:
+        pass
+
     upsert_stats = repo.upsert(listings)
 
     details_upserted = 0
@@ -152,6 +170,7 @@ def run_finn_ingest(
         "upserted": upsert_stats["inserted"] + upsert_stats["updated"],
         "deactivated": deactivated,
         "details_upserted": details_upserted,
+        "drift": drift_findings,
     }
 
 
