@@ -1586,4 +1586,18 @@ Committing a migration does not deploy it: merge → pull on the server → `ska
 > guarantee ordering within a wipe cycle. This is not a Task 5 defect — it is
 > correct for Phase 1's own fields — but it is a live trap for Phase 2.
 
+> ⚠️ **Second hazard Phase 2 must handle, found in pre-merge review.**
+> `SalgsoppgaveRepo.wipe()` deletes `listing_tg_findings` and
+> `listing_egenerklaering` outright — both Phase-2-owned tables — alongside
+> `listing_salgsoppgave`. And `--wipe` is documented on the
+> `backfill-salgsoppgave` CLI command as the thing to run "after a parser
+> change": ordinary, routine Phase-1 maintenance, not a rare or deliberate
+> reset. So the everyday Phase-1 workflow (re-running the backfill with
+> `--wipe` after tweaking a regex) destroys all of Phase 2's output as a side
+> effect. `salgsoppgave_llm_cache` survives `wipe()` untouched, so the loss is
+> replayable — but only by re-running Phase 2's classifier again, at whatever
+> cost (API calls not already cache-hit) that implies. Phase 2 needs to either
+> exclude its own tables from `wipe()`, or treat "was `--wipe` run since I last
+> classified" as a condition it checks and recovers from automatically.
+
 **Phase 2 — the classifier** gets its own plan once this ships and stage 1 has settled the model choice. It fills `listing_tg_findings`, `listing_egenerklaering`, and the five currently-NULL rollup columns on `listing_salgsoppgave` (`tg2_count`, `tg3_count`, `tilstandsrapport_dato`, `tilstandsrapport_utsteder`, `egenerklaering_antall`), using `salgsoppgave_llm_cache` so rebuilds stay free.

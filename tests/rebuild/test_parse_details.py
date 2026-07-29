@@ -283,8 +283,7 @@ def test_parse_details_matches_fixture(expected_path):
 def test_eiendomsskatt_from_pricing_dl():
     html = (FIXTURES / "463763329.html").read_text(encoding="utf-8")
     d = parse_details(html, "463763329")
-    assert d.eiendomsskatt_kr is not None
-    assert d.eiendomsskatt_kr > 0
+    assert d.eiendomsskatt_kr == 3948
 
 
 def test_verditakst_from_pricing_dl():

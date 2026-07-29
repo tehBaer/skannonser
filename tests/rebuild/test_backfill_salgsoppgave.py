@@ -42,6 +42,7 @@ def test_backfill_parses_cached_html(conn, tmp_path):
         "parsed": 1,
         "missing_html": 1,
         "upserted": 1,
+        "skipped": 0,
     }
     row = conn.execute(
         "SELECT finnkode, parsed_at FROM listing_salgsoppgave WHERE finnkode='448347467'"
@@ -64,6 +65,40 @@ def test_backfill_handles_both_payload_formats(conn, tmp_path):
     stats = backfill_salgsoppgave(conn, project)
     assert stats["parsed"] == 2
     assert conn.execute("SELECT COUNT(*) FROM listing_salgsoppgave").fetchone()[0] == 2
+
+
+def test_a_failing_listing_is_skipped_not_fatal(conn, tmp_path, monkeypatch):
+    """Finding 1: a single bad listing must not abort a batch run, nor
+    discard the other rows already buffered in `batch` when it hits. Two
+    good listings bracket the failing one so the assertion actually
+    exercises resuming after the exception, not just tolerating a trailing
+    failure."""
+    import skannonser.ingest.finn.backfill_salgsoppgave as mod
+
+    project = _project(tmp_path, "448347467", "432672475", "451631591")
+    _seed(conn, "448347467")
+    _seed(conn, "432672475")
+    _seed(conn, "451631591")
+
+    real_parse = mod.parse_salgsoppgave
+
+    def flaky_parse(html, finnkode):
+        if finnkode == "432672475":
+            raise RecursionError("simulated pathological turbo-stream payload")
+        return real_parse(html, finnkode)
+
+    monkeypatch.setattr(mod, "parse_salgsoppgave", flaky_parse)
+
+    stats = backfill_salgsoppgave(conn, project)
+    assert stats == {
+        "eiendom_rows": 3,
+        "parsed": 2,
+        "missing_html": 0,
+        "upserted": 2,
+        "skipped": 1,
+    }
+    codes = {r[0] for r in conn.execute("SELECT finnkode FROM listing_salgsoppgave")}
+    assert codes == {"448347467", "451631591"}
 
 
 def test_wipe_clears_before_rebuilding(conn, tmp_path):

@@ -23,15 +23,26 @@ def backfill_salgsoppgave(
         repo.wipe()
 
     finnkodes = [str(r[0]) for r in conn.execute("SELECT finnkode FROM eiendom")]
-    parsed = missing = upserted = 0
+    parsed = missing = upserted = skipped = 0
     batch = []
     for finnkode in finnkodes:
         path = Path(project_dir) / "html_extracted" / f"{finnkode}.html"
         if not path.is_file():
             missing += 1
             continue
-        html = path.read_text(encoding="utf-8", errors="replace")
-        batch.append(parse_salgsoppgave(html, finnkode))
+        # `parse_salgsoppgave` is itself exception-safe, but the file read
+        # is not, and a hostile/corrupt payload could in principle still
+        # surface as something other than the exceptions it already
+        # swallows. Either way, one bad listing must not discard the up to
+        # `_BATCH_SIZE - 1` already-parsed rows sitting in `batch` -- skip it
+        # and keep going rather than let the whole run abort.
+        try:
+            html = path.read_text(encoding="utf-8", errors="replace")
+            row = parse_salgsoppgave(html, finnkode)
+        except Exception:
+            skipped += 1
+            continue
+        batch.append(row)
         parsed += 1
         if len(batch) >= _BATCH_SIZE:
             upserted += repo.upsert(batch)["upserted"]
@@ -44,4 +55,5 @@ def backfill_salgsoppgave(
         "parsed": parsed,
         "missing_html": missing,
         "upserted": upserted,
+        "skipped": skipped,
     }

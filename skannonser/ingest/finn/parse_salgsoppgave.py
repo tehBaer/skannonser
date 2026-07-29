@@ -256,11 +256,13 @@ _VEDLEGG_HEADING = re.compile(r"vedlegg", re.I)
 
 
 def _ferdigattest_scope(secs: list[Section]) -> str:
-    """Body-only text to classify `ferdigattest` from -- never headings."""
+    """Body-only text to classify `ferdigattest` from -- never headings.
+    Falls back to `_body_only_text` (minus any attachment-list section) when
+    no dedicated topic section exists."""
     topic = [s.text for s in secs if _FERDIGATTEST_TOPIC_HEADING.search(s.heading)]
     if topic:
         return "\n".join(topic)
-    return "\n".join(s.text for s in secs if not _VEDLEGG_HEADING.search(s.heading))
+    return _body_only_text([s for s in secs if not _VEDLEGG_HEADING.search(s.heading)])
 
 
 _UTLEIE_EGEN = re.compile(r"egen (?:utleie|hybel)|utleiedel|hybelleilighet", re.I)
@@ -309,12 +311,45 @@ _HEFTELSER = re.compile(r"servitutt|heftelse|pengeheftelse", re.I)
 _RADON = re.compile(r"\bradon\b", re.I)
 
 
+def _body_only_text(secs: list[Section]) -> str:
+    """Every section's body, joined -- never headings. Shared scope for any
+    extractor doing a bare topic-word search, where a heading alone (a fixed
+    label, not an assertion) would otherwise false-positive. Same idea as
+    `_ferdigattest_scope`, generalised: that one additionally prefers a
+    topically-headed section's body when one exists; this is the plain
+    fallback shape it falls back to."""
+    return "\n".join(s.text for s in secs)
+
+
+def _heftelser(secs: list[Section]) -> bool:
+    """Body-only -- never headings. Standard section headings ("Heftelser /
+    Rettigheter", "Servitutter / tinglyste rettigheter og forpliktelser")
+    name the topic regardless of whether the property actually has anything
+    under it; a bare `bool(search)` over `_flat_text` (heading glued to
+    body) read that label itself as an assertion. Measured over 300 ads
+    (seed 5): 6/169 positives (3.5%) were heading-only false positives
+    before this fix."""
+    return bool(_HEFTELSER.search(_body_only_text(secs)))
+
+
 def _flat_text(secs: list[Section]) -> str:
     return "\n".join(f"{s.heading}\n{s.text}" for s in secs)
 
 
 def parse_salgsoppgave(html: str, finnkode: str) -> Salgsoppgave:
-    """Never raises. An unrecognisable page yields an all-NULL row."""
+    """Never raises. An unrecognisable page -- or one that blows the
+    extraction up, e.g. a pathologically nested turbo-stream payload that
+    exhausts the recursion budget `payload._MAX_DEPTH` only bounds `_resolve`'s
+    own frames, not the ambient stack already spent getting here -- yields an
+    all-NULL row rather than propagating. A single bad page must never abort
+    a batch of thousands."""
+    try:
+        return _parse_salgsoppgave(html, finnkode)
+    except Exception:
+        return Salgsoppgave(finnkode=finnkode)
+
+
+def _parse_salgsoppgave(html: str, finnkode: str) -> Salgsoppgave:
     ad = decode_ad(html)
     if ad is None:
         return Salgsoppgave(finnkode=finnkode)
@@ -334,5 +369,5 @@ def parse_salgsoppgave(html: str, finnkode: str) -> Salgsoppgave:
         radon_omtalt=bool(_RADON.search(text)),
         utleie=_utleie(text),
         husdyr=_husdyr(text),
-        heftelser=bool(_HEFTELSER.search(text)),
+        heftelser=_heftelser(secs),
     )

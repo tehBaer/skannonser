@@ -54,6 +54,24 @@ def test_never_raises_on_arbitrary_input(junk):
     assert parse_salgsoppgave(junk, "1").finnkode == "1"
 
 
+def test_parse_never_propagates_when_internal_extraction_raises(monkeypatch):
+    """Finding 1: `payload._MAX_DEPTH` bounds `_resolve`'s own recursion but
+    not the ambient stack already spent getting here -- inside an ordinary
+    Typer/FastAPI call chain, a sufficiently nested turbo-stream payload can
+    still raise RecursionError out of `_resolve` -> `_from_turbostream` ->
+    `decode_ad` -> `parse_salgsoppgave`. Any exception reaching that last
+    hop must degrade to the all-NULL row for this finnkode, not propagate
+    and abort the caller's batch of thousands."""
+    import skannonser.ingest.finn.parse_salgsoppgave as mod
+
+    def boom(html):
+        raise RecursionError("simulated: ambient stack + nested payload")
+
+    monkeypatch.setattr(mod, "decode_ad", boom)
+    result = parse_salgsoppgave("<html><script>irrelevant</script></html>", "42")
+    assert result == Salgsoppgave(finnkode="42")
+
+
 def test_enum_fields_only_emit_known_values():
     """No free text: every enum column is a member of its vocabulary or None."""
     allowed = {
