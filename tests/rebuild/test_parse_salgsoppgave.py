@@ -8,6 +8,7 @@ from skannonser.ingest.finn.parse_salgsoppgave import (
     Salgsoppgave,
     parse_salgsoppgave,
 )
+from skannonser.ingest.finn.payload import Section
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finn"
 
@@ -251,3 +252,101 @@ def test_husdyr_negation_handling(prose, expected):
     from skannonser.ingest.finn.parse_salgsoppgave import _husdyr
 
     assert _husdyr(prose) == expected
+
+
+# Regressions for the heading/list misclassification (measured over 300
+# cached ads, seed 77: 132/300 classified "midlertidig", 90 of those with a
+# body that explicitly asserted a full certificate exists). Root cause: the
+# old `_flat_text` glued section HEADINGS onto bodies and searched the
+# result for bare word presence. Norwegian brokers use a fixed heading that
+# names both documents regardless of which the property actually has
+# ("Midlertidig brukstillatelse og ferdigattest" / "Ferdigattest/
+# midlertidig brukstillatelse"), so that heading alone short-circuited the
+# field to "midlertidig" even when the body underneath clearly said
+# otherwise. These exercise `_ferdigattest_scope` + `_ferdigattest` together
+# via `parse_salgsoppgave`-shaped `Section` lists, since the bug was
+# structural (which text reaches the classifier), not a phrasing gap.
+def _ferdigattest_from_sections(sections):
+    from skannonser.ingest.finn.parse_salgsoppgave import (
+        _ferdigattest,
+        _ferdigattest_scope,
+    )
+
+    return _ferdigattest(_ferdigattest_scope(sections))
+
+
+def test_ferdigattest_ignores_the_standard_dual_heading():
+    """Corpus case (464524286-style): the heading names both documents, but
+    the body underneath unambiguously says a certificate was issued -- the
+    heading must not be read as its own assertion."""
+    secs = [
+        Section(
+            "Midlertidig brukstillatelse og ferdigattest",
+            "Det foreligger ferdigattest datert 27.11.1974 som omhandler nybygg.",
+        ),
+    ]
+    assert _ferdigattest_from_sections(secs) == "ferdigattest"
+
+
+def test_ferdigattest_none_when_only_named_in_an_attachment_list():
+    """Corpus case (405235986-style): 'Vedlegg til salgsoppgaven' sections
+    enumerate document *names* the salgsoppgave includes, one per line, no
+    verb -- not a statement about which document the property has."""
+    secs = [
+        Section(
+            "Vedlegg til salgsoppgaven",
+            "Vedtekter og eventuelle husordensregler\n"
+            "Ferdigattest/midlertidig brukstillatelse\n"
+            "Arealbekreftelse",
+        ),
+    ]
+    assert _ferdigattest_from_sections(secs) is None
+
+
+def test_ferdigattest_prefers_unnegated_certificate_over_historical_midlertidig():
+    """Corpus case (449531664): a historical, superseded 'midlertidig
+    brukstillatelse' from years earlier must not preempt a later, un-negated,
+    repeated assertion that a full certificate now exists."""
+    secs = [
+        Section(
+            "Midlertidig brukstillatelse og ferdigattest",
+            "Det foreligger ferdigattest for boligblokk (hus A+B) datert 12.08.2025\n"
+            "Det foreligger midlertidig brukstillatelse datert 05.07.2007. "
+            "Og ferdigattesten kom 12.08.2025.\n"
+            "Det foreligger ferdigattest for rehabilitering av fasader 02.02.2024.",
+        ),
+    ]
+    assert _ferdigattest_from_sections(secs) == "ferdigattest"
+
+
+def test_ferdigattest_scope_falls_back_when_no_dedicated_section():
+    """Not every ad has a section headed about the topic; the field must
+    still fire from a scattered mention rather than going permanently None,
+    as long as it isn't inside an attachment list."""
+    secs = [
+        Section("Innhold", "Boligen er et rekkehus med ferdigattest datert 10.04.1957."),
+        Section("Vedlegg til salgsoppgaven", "Ferdigattest/midlertidig brukstillatelse"),
+    ]
+    assert _ferdigattest_from_sections(secs) == "ferdigattest"
+
+
+@pytest.mark.parametrize(
+    "prose, expected",
+    [
+        # Must-not-break cases from the brief, re-asserted directly against
+        # `_ferdigattest` (independent of the section-scoping fix above).
+        (
+            "Det foreligger ikke ferdigattest, men midlertidig brukstillatelse.",
+            "midlertidig",
+        ),
+        (
+            "Vi har dessverre ikke mottatt ferdigattest fra kommunen ennå.",
+            "ingen",
+        ),
+        ("Ferdigattest er utstedt 12.05.2019.", "ferdigattest"),
+    ],
+)
+def test_ferdigattest_must_not_break_cases(prose, expected):
+    from skannonser.ingest.finn.parse_salgsoppgave import _ferdigattest
+
+    assert _ferdigattest(prose) == expected

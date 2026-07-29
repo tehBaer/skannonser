@@ -108,7 +108,14 @@ _FERDIGATTEST_NEG = re.compile(
 #     exist; "ingen"/"ikke" both refer to something else entirely.
 #   - "Rommet er ikke godkjent ..., se punktet Ferdigattest for mer
 #     informasjon" -- a cross-reference to a document heading, not an
-#     assertion about the room or the property.
+#     assertion about the room or the property. The heading itself is
+#     often the compound "Ferdigattest/midlertidig brukstillatelse", so the
+#     exclusion also swallows an immediately-following "/midlertidig
+#     brukstillatelse" (or the mirrored "Midlertidig brukstillatelse/
+#     ferdigattest") -- otherwise a bare cross-reference like "Se punkt
+#     ferdigattest/midlertidig brukstillatelse for mer info" left
+#     "midlertidig brukstillatelse" unstripped and got misread as an
+#     assertion that a temporary permit exists.
 #   - "Ferdigattesten omfatter ikke <tiltak X>" -- almost always preceded a
 #     few sentences earlier by "Det foreligger ferdigattest ... datert ...":
 #     a certificate exists, it just doesn't cover a later, separate addition.
@@ -129,7 +136,9 @@ _FERDIGATTEST_NEG = re.compile(
 # were a systematic false-inversion source, not a rare edge case.
 _FERDIGATTEST_NON_ASSERTION = re.compile(
     r"ferdigattest\w*\s+(?:eksisterer|foreligger\s+er\s+likevel)\b[^.!?\n]*\bingen\s+garanti"
-    r"|\bse\b[^.!?\n]{0,20}\bpunktet?\b[^.!?\n]{0,15}[\"']?ferdigattest"
+    r"|\bse\b[^.!?\n]{0,20}\bpunkt(?:et)?\b[^.!?\n]{0,15}[\"']?"
+    r"(?:ferdigattest\w*(?:\s*(?:/|,|og)\s*midlertidig brukstillatelse)?"
+    r"|midlertidig brukstillatelse(?:\s*(?:/|,|og)\s*ferdigattest\w*)?)"
     r"|ferdigattest\w*\s+omfatter\s+ikke"
     r"|ferdigattest\w*[^.!?\n]{0,60}\b(?:for|på)\s+(?:[\w-]+\s+){0,2}"
     r"(?:tiltak\w*|bygg\w*|bygning\w*|byggesak\w*|byggemelding\w*)\b[^.!?\n]{0,50}"
@@ -141,17 +150,95 @@ _FERDIGATTEST_NON_ASSERTION = re.compile(
 )
 
 
+# Second-round fix (2026-07-29, corpus-verified over 300 ads, seed 77): the
+# un-negated branch used to return "midlertidig" the instant "midlertidig
+# brukstillatelse" appeared anywhere in the text, even when the SAME text
+# also affirmatively asserted a full certificate elsewhere ("Det foreligger
+# ferdigattest ... datert 2025", with "midlertidig brukstillatelse" only
+# naming a superseded, historical permit from years earlier). 68% of ads
+# that landed on "midlertidig" in the sample had a body that explicitly
+# asserted a certificate exists. Per the spec: an un-negated certificate
+# assertion always wins ("does not negate it -> ferdigattest"); "midlertidig"
+# only applies when nothing affirms a certificate. Both directions of
+# "foreligger" are covered since Norwegian word order varies ("Ferdigattest
+# foreligger ..." / "... foreligger ferdigattest").
+_FERDIGATTEST_ASSERT = re.compile(
+    r"\bforeligger\b[^.!?\n]{0,20}\bferdigattest\w*\b"
+    r"|\bferdigattest\w*\b[^.!?\n]{0,20}\bforeligger\b"
+    r"|\bferdigattest\w*\b[^.!?\n]{0,20}\b(?:er\s+)?(?:utstedt|datert|gitt)\b"
+    r"|\bferdigattest\w*\s+kom\b"
+    r"|\bferdigattest\w*[^.!?\n]{0,20}\bp[åa]\s+eiendommen\b",
+    re.I,
+)
+
+
 def _ferdigattest(text: str) -> str | None:
     """Order matters: many ads say 'foreligger ikke ferdigattest, men
-    midlertidig brukstillatelse', which is 'midlertidig', not 'ingen'."""
+    midlertidig brukstillatelse', which is 'midlertidig', not 'ingen'.
+
+    `negation_text` (boilerplate/cross-reference spans blanked out) feeds
+    every check except the last: a bare "ferdigattest" mention surviving
+    only in the *unstripped* text is the deliberate fallback for boilerplate
+    that talks *around* the topic without asserting anything either way
+    (e.g. "se punktet Ferdigattest for mer informasjon") -- there is no
+    positive signal to prefer, so the plain mention wins by default. But
+    "midlertidig brukstillatelse" appearing *only* inside one of those same
+    blanked spans (e.g. a cross-reference literally named "Ferdigattest/
+    midlertidig brukstillatelse") must not be credited as an assertion that
+    a temporary permit exists -- corpus case: an ad whose only mention was
+    "Se punkt ferdigattest/midlertidig brukstillatelse for mer info" wrongly
+    came out "midlertidig" when the bare presence check ran on unstripped
+    text.
+    """
     negation_text = _FERDIGATTEST_NON_ASSERTION.sub(" ", text)
     if _FERDIGATTEST_NEG.search(negation_text):
-        return "midlertidig" if _MIDLERTIDIG.search(text) else "ingen"
-    if _MIDLERTIDIG.search(text):
+        return "midlertidig" if _MIDLERTIDIG.search(negation_text) else "ingen"
+    if _FERDIGATTEST_ASSERT.search(negation_text):
+        return "ferdigattest"
+    if _MIDLERTIDIG.search(negation_text):
         return "midlertidig"
     if _FERDIGATTEST.search(text):
         return "ferdigattest"
     return None
+
+
+# Root cause of the heading/list misclassification (corpus-verified, same
+# sample): `_flat_text` glues EVERY section's heading onto its body with no
+# distinguishing marker. Norwegian brokers use a fixed section heading that
+# names both documents regardless of which the property actually has --
+# "Midlertidig brukstillatelse og ferdigattest", "Ferdigattest/midlertidig
+# brukstillatelse" -- so scanning headings as if they were assertions made
+# 59/132 sampled ads misclassify as "midlertidig" purely because of their
+# own section heading, while the body underneath asserted a full
+# ferdigattest. A further 24/132 came from "Vedlegg til salgsoppgaven"
+# (attachment list) sections, which enumerate document *names* one per
+# line -- "Ferdigattest/midlertidig brukstillatelse", "Arealbekreftelse" --
+# not a statement about which the property has.
+#
+# Fix: classify from the BODY of the section(s) actually about the topic
+# (heading contains "ferdigattest" or "brukstillatelse"), never from any
+# heading text. This also incidentally fixed two more corpus-found sources
+# of noise for free, since neither is topically headed: cross-references to
+# the section by name from unrelated sections ("... se punktet Midlertidig
+# brukstillatelse og ferdigattest", differently phrased from the reference
+# `_FERDIGATTEST_NON_ASSERTION` already excludes), and mentions of
+# "midlertidig brukstillatelse" in a "Regulering"/zoning section describing
+# an unrelated municipal construction project in the area, not the
+# property's own permit status.
+#
+# Falls back to every section's body (still never headings, still never a
+# "Vedlegg..." list) when no dedicated section exists, so ads that only
+# mention it in passing (e.g. within "Innhold") aren't silently dropped.
+_FERDIGATTEST_TOPIC_HEADING = re.compile(r"ferdigattest|brukstillatelse", re.I)
+_VEDLEGG_HEADING = re.compile(r"vedlegg", re.I)
+
+
+def _ferdigattest_scope(secs: list[Section]) -> str:
+    """Body-only text to classify `ferdigattest` from -- never headings."""
+    topic = [s.text for s in secs if _FERDIGATTEST_TOPIC_HEADING.search(s.heading)]
+    if topic:
+        return "\n".join(topic)
+    return "\n".join(s.text for s in secs if not _VEDLEGG_HEADING.search(s.heading))
 
 
 _UTLEIE_EGEN = re.compile(r"egen (?:utleie|hybel)|utleiedel|hybelleilighet", re.I)
@@ -217,7 +304,7 @@ def parse_salgsoppgave(html: str, finnkode: str) -> Salgsoppgave:
         finnkode=finnkode,
         boligselgerforsikring=_boligselgerforsikring(text),
         eiendomsskatt_kr=_eiendomsskatt(text),
-        ferdigattest=_ferdigattest(text),
+        ferdigattest=_ferdigattest(_ferdigattest_scope(secs)),
         # bool(...), NOT `bool(...) or None`: reaching this branch means we
         # DID read a salgsoppgave, so "radon not mentioned" is False, not
         # unknown. NULL stays reserved for "no salgsoppgave text at all",
