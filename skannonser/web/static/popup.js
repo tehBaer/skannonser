@@ -1,13 +1,19 @@
-// Popup DOM builder + inline kommentar/tag editor (Phase 5 Task 6).
+// Popup DOM builder + inline kommentar/tag editor.
 //
-// buildPopupContent(item, destinations, tagColors) returns a DOM node for
+// buildPopupContent(item, destinations, getTagColors) returns a DOM node for
 // MapLibre's Popup.setDOMContent(). The node carries a self-contained
-// annotation editor that PUTs /api/annotations/{finnkode} on save (via the
-// shared ./annotations.js helper -- table.js's inline cells use the same
-// one) and mutates `item` (the shared per-listing object) in place so a
-// re-open reflects the saved values.
+// annotation editor with no save button: the kommentar commits on blur/Enter,
+// a tag commits the moment its chip is clicked, and app.js calls the node's
+// skFlush() when the popup is torn down (see openPopup for why blur alone is
+// not enough). Saves go through annotations.js's commitAnnotation -- the same
+// helper table.js's inline cells use -- and mutate `item` (the shared
+// per-listing object) in place so a re-open reflects the saved values.
+//
+// getTagColors is a FUNCTION, not a Map: app.js rebuilds state.tagColors on
+// every recompute, and a tag invented in this editor has no colour until that
+// rebuild has run.
 
-import { saveAnnotation } from "./annotations.js";
+import { commitAnnotation } from "./annotations.js";
 import {
   isNew,
   fmtDate,
@@ -18,7 +24,7 @@ import {
   earthUrl,
 } from "./listingmeta.js";
 import { colorForTag } from "./tagcolors.js";
-import { attachTagList } from "./tagoptions.js";
+import { buildTagPicker } from "./tagpicker.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -129,9 +135,10 @@ function buildNabolagSection(item) {
 }
 
 // destinations: [{key,label}] from /api/meta (for the travel-minute rows).
-// tagColors: Map from tagcolors.js's assignTagColors, kept in sync with the
-// table/map's palette so the popup chip matches the ring/cell accent.
-export function buildPopupContent(item, destinations, tagColors) {
+// getTagColors: () => Map from tagcolors.js's assignTagColors, kept in sync
+// with the table/map's palette so the popup chip matches the cell accent.
+export function buildPopupContent(item, destinations, getTagColors) {
+  const colors = () => (getTagColors && getTagColors()) || new Map();
   const root = el("div", "sk-popup");
 
   // Thumbnail (hidden on load error -- no broken-image icon).
@@ -162,12 +169,22 @@ export function buildPopupContent(item, destinations, tagColors) {
   addr.appendChild(tag);
   if (isNew(item)) addr.appendChild(el("span", "ny-badge", "Ny"));
 
-  const tagColor = colorForTag(item.tag, tagColors || new Map());
-  if (tagColor) {
-    const chip = el("span", "tag-chip-mini", String(item.tag).trim());
-    chip.style.background = tagColor;
-    addr.appendChild(chip);
+  // Rebuilt rather than built once: the editor below can change the tag while
+  // the popup is open, and a header chip still showing the old tag reads as a
+  // bug. Declared here so buildEditor's save can call it.
+  let miniChip = null;
+  function refreshMiniChip() {
+    if (miniChip) {
+      miniChip.remove();
+      miniChip = null;
+    }
+    const tagColor = colorForTag(item.tag, colors());
+    if (!tagColor) return;
+    miniChip = el("span", "tag-chip-mini", String(item.tag).trim());
+    miniChip.style.background = tagColor;
+    addr.appendChild(miniChip);
   }
+  refreshMiniChip();
   body.appendChild(addr);
 
   const prisText = fmtPris(item.pris);
@@ -254,11 +271,15 @@ export function buildPopupContent(item, destinations, tagColors) {
   root.appendChild(body);
   const nabolagSection = buildNabolagSection(item);
   if (nabolagSection) root.appendChild(nabolagSection);
-  root.appendChild(buildEditor(item));
+  const editor = buildEditor(item, colors, refreshMiniChip);
+  root.appendChild(editor);
+  // app.js calls this on both teardown paths -- see openPopup.
+  root.skFlush = editor.skFlush;
   return root;
 }
 
-function buildEditor(item) {
+// `colors` is () => Map; `onSaved` repaints the header chip.
+function buildEditor(item, colors, onSaved) {
   const editor = el("div", "sk-editor");
 
   editor.appendChild(el("label", null, "Kommentar"));
@@ -268,49 +289,83 @@ function buildEditor(item) {
   editor.appendChild(komInput);
 
   editor.appendChild(el("label", null, "Tag"));
-  const tagInput = el("input");
-  tagInput.type = "text";
-  tagInput.value = item.tag || "";
-  attachTagList(tagInput); // suggests the tags that already exist
-  editor.appendChild(tagInput);
+  const picker = buildTagPicker({
+    current: item.tag,
+    vocabulary: [...colors().keys()],
+    colorFor: (tag) => colorForTag(tag, colors()),
+    onPick: (value) => save({ tag: value }, null),
+  });
+  editor.appendChild(picker.node);
 
-  const row = el("div", "row");
-  const saveBtn = el("button", null, "Lagre");
-  saveBtn.type = "button";
-  const feedback = el("span");
-  row.appendChild(saveBtn);
-  row.appendChild(feedback);
-  editor.appendChild(row);
+  // Saves are SERIALIZED, not guarded by an "is one in flight?" boolean.
+  // Clicking a chip blurs the kommentar field first, so a chip click routinely
+  // arrives while the kommentar's own PUT is still in flight -- and a guard
+  // that drops the second call would silently lose the tag the user just
+  // clicked. Chaining runs them in order instead.
+  let chain = Promise.resolve();
 
-  saveBtn.addEventListener("click", async () => {
-    saveBtn.disabled = true;
-    komInput.disabled = true;
-    tagInput.disabled = true;
-    feedback.className = "";
-    feedback.textContent = "Lagrer …";
+  function save(patch, control) {
+    chain = chain.then(() => runSave(patch, control));
+    return chain;
+  }
+
+  // The kommentar ALWAYS travels with whatever the field currently shows.
+  // Both controls are visible and auto-saving, so the visible state is the
+  // intent; taking it off `item` instead would let a chip click overwrite
+  // text the user had typed but not yet blurred. Only the tag comes from
+  // `patch`, and only when the caller set one.
+  //
+  // `control` is the input to flash, or null when there is nothing to flash
+  // (a chip click, or a flush on a popup that is already gone).
+  async function runSave(patch, control) {
+    if (control) control.classList.remove("saved", "error");
     try {
-      const saved = await saveAnnotation(item.finnkode, komInput.value, tagInput.value);
-      // Reflect the server's normalized values back into the shared item
-      // so a re-open (and any table view) sees the saved state.
-      item.kommentar = saved.kommentar;
-      item.tag = saved.tag;
+      const saved = await commitAnnotation(item, {
+        kommentar: komInput.value,
+        tag: "tag" in patch ? patch.tag : item.tag,
+      });
+      if (!saved) return; // nothing changed; no PUT was sent
       komInput.value = saved.kommentar || "";
-      tagInput.value = saved.tag || "";
-      feedback.className = "saved";
-      feedback.textContent = "Lagret ✓";
-      // Let app.js refresh tag-dependent UI (tag filter list, tag rings).
+      if (control) {
+        control.classList.add("saved");
+        setTimeout(() => control.classList.remove("saved"), 1500);
+      }
+      // Order matters: app.js rebuilds state.tagColors inside this handler, so
+      // a brand-new tag has no colour until it has run. Repainting first would
+      // paint the new chip grey.
       document.dispatchEvent(
         new CustomEvent("sk-annotation-saved", { detail: { finnkode: item.finnkode } })
       );
+      const before = picker.chipCount();
+      picker.repaint(item.tag, [...colors().keys()]);
+      onSaved();
+      // A new chip can wrap the row onto another line; the popup grew, so ask
+      // for the same re-pan the async nabolag section uses.
+      if (picker.chipCount() !== before) {
+        editor.dispatchEvent(new CustomEvent("sk-popup-resized", { bubbles: true }));
+      }
     } catch (err) {
-      feedback.className = "error";
-      feedback.textContent = "Feil: " + err.message;
-    } finally {
-      saveBtn.disabled = false;
-      komInput.disabled = false;
-      tagInput.disabled = false;
+      if (control) control.classList.add("error");
+      // The flush path has no control to mark and no popup left to show it in.
+      else console.warn("skannonser: lagring av notat feilet", err);
+    }
+  }
+
+  komInput.addEventListener("blur", () => save({}, komInput));
+  komInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      komInput.blur(); // triggers the blur listener above
     }
   });
+
+  // Last chance to save before the DOM goes away. Browsers do not reliably
+  // fire blur on a focused element that is removed from the document, so
+  // neither listener above can be trusted to have run.
+  editor.skFlush = () => {
+    const pending = picker.pendingNewTag();
+    return save(pending ? { tag: pending } : {}, null);
+  };
 
   return editor;
 }
