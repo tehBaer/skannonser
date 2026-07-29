@@ -53,7 +53,15 @@ def _client(tmp_path):
 #  * www.finn.no -- the missing-coords panel's "open the Finn ad" hyperlink
 #    (Task 7). Like the Google Maps link it is a user-navigation `href`
 #    (click-only), NOT a passive resource load -- see the NO-CDN ALLOWLIST NOTE.
-_ALLOWED_HTTP_HOSTS = {"tile.openstreetmap.org", "www.google.com", "www.finn.no"}
+#  * earth.google.com -- the popup's "Google Earth" hyperlink. Same click-only
+#    `href` category as the two above; it stays out of _ALLOWED_RESOURCE_HOSTS
+#    so the no-CDN rule still bites if anyone ever tries to LOAD from it.
+_ALLOWED_HTTP_HOSTS = {
+    "tile.openstreetmap.org",
+    "www.google.com",
+    "www.finn.no",
+    "earth.google.com",
+}
 # Hosts allowed in a *resource* position (script/link/@import/url()).
 _ALLOWED_RESOURCE_HOSTS = {"tile.openstreetmap.org"}
 
