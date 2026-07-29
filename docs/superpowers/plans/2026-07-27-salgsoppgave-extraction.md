@@ -27,6 +27,13 @@ This plan covers **Phase 1 only: the deterministic path.** It ships working, ind
   It is gitignored, so this worktree does not have it. Read from that absolute
   path; never write to it, and never `cd` into the main clone.
 - **Baseline is 662 passing tests.** No task may reduce it.
+- **Always run tests as `PYTHONPATH=. ./.venv/bin/pytest`.** A bare `pytest`
+  silently tests the MAIN CLONE's code, not this worktree's: `tests/rebuild/`
+  is a package but `tests/` is not, so pytest puts `tests/` on `sys.path`
+  rather than the repo root, and the venv's editable-install finder then
+  resolves `skannonser` to `/Users/tehbaer/kode/skannonser`. Verified
+  2026-07-27 — this contradicts CLAUDE.md's claim that cwd wins. A green bare
+  `pytest` run is NOT evidence your change works.
 - `listing_details` keeps migration 010's full-row REPLACE semantics — **no fill-only columns, ever.**
 
 ---
@@ -90,7 +97,7 @@ def test_migration_015_tg_findings_dedupes(tmp_path):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_migrations.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_migrations.py -v`
 Expected: FAIL — `test_migrate_fresh_db_creates_full_schema` asserts `ran == ALL_MIGRATIONS` and `015_salgsoppgave` does not exist yet.
 
 - [ ] **Step 3: Write the migration**
@@ -153,12 +160,12 @@ ALTER TABLE listing_details ADD COLUMN verditakst INTEGER;
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_migrations.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_migrations.py -v`
 Expected: PASS, all tests in the file.
 
 - [ ] **Step 5: Run the full suite**
 
-Run: `./.venv/bin/pytest`
+Run: `PYTHONPATH=. ./.venv/bin/pytest`
 Expected: `664 passed` (662 baseline + 2 new).
 
 - [ ] **Step 6: Commit**
@@ -238,7 +245,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "finn"
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_parse_details.py -k "eiendomsskatt or verditakst or missing_dl" -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_parse_details.py -k "eiendomsskatt or verditakst or missing_dl" -v`
 Expected: FAIL with `AttributeError: 'ListingDetails' object has no attribute 'eiendomsskatt_kr'`.
 
 - [ ] **Step 4: Add the fields and labels**
@@ -285,12 +292,12 @@ _SCALAR_COLS = (
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_parse_details.py tests/rebuild/test_details_repo.py tests/rebuild/test_backfill_details.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_parse_details.py tests/rebuild/test_details_repo.py tests/rebuild/test_backfill_details.py -v`
 Expected: PASS.
 
 - [ ] **Step 7: Run the full suite**
 
-Run: `./.venv/bin/pytest`
+Run: `PYTHONPATH=. ./.venv/bin/pytest`
 Expected: `667 passed`.
 
 - [ ] **Step 8: Commit**
@@ -409,7 +416,7 @@ def test_sections_tolerates_garbage_ad():
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_payload.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_payload.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'skannonser.ingest.finn.payload'`.
 
 - [ ] **Step 4: Write the implementation**
@@ -577,7 +584,7 @@ def sections(ad: dict | None) -> list[Section]:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_payload.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_payload.py -v`
 Expected: PASS, all 12 tests (5 of them parametrized).
 
 - [ ] **Step 6: Sanity-check decoder reach across the real cache**
@@ -734,7 +741,7 @@ def test_kr_amounts_are_ints_not_strings():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_parse_salgsoppgave.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_parse_salgsoppgave.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'skannonser.ingest.finn.parse_salgsoppgave'`.
 
 - [ ] **Step 3: Write the implementation**
@@ -910,7 +917,7 @@ def parse_salgsoppgave(html: str, finnkode: str) -> Salgsoppgave:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_parse_salgsoppgave.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_parse_salgsoppgave.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Measure real-world field coverage**
@@ -1040,7 +1047,7 @@ def test_coverage_counts(conn):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_salgsoppgave_repo.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_salgsoppgave_repo.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'skannonser.store.repositories.salgsoppgave'`.
 
 - [ ] **Step 3: Write the implementation**
@@ -1128,7 +1135,7 @@ class SalgsoppgaveRepo:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_salgsoppgave_repo.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_salgsoppgave_repo.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1238,7 +1245,7 @@ def test_wipe_clears_before_rebuilding(conn, tmp_path):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_backfill_salgsoppgave.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_backfill_salgsoppgave.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'skannonser.ingest.finn.backfill_salgsoppgave'`.
 
 - [ ] **Step 3: Write the backfill**
@@ -1297,7 +1304,7 @@ def backfill_salgsoppgave(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_backfill_salgsoppgave.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_backfill_salgsoppgave.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Add the CLI command**
@@ -1352,7 +1359,7 @@ Expected: the command's help text, including `--wipe` and `--status`.
 
 - [ ] **Step 7: Run the full suite**
 
-Run: `./.venv/bin/pytest`
+Run: `PYTHONPATH=. ./.venv/bin/pytest`
 Expected: all green, count increased by this task's new tests.
 
 - [ ] **Step 8: Commit**
@@ -1465,7 +1472,7 @@ Then extend the exact key set in `test_listing_shape_and_donor_resolved_travel` 
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_web_api.py -k salgsoppgave -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_web_api.py -k salgsoppgave -v`
 Expected: FAIL with `KeyError: 'ferdigattest'` (and the exact-key-set assertion in `test_listing_shape_and_donor_resolved_travel` failing too).
 
 - [ ] **Step 4: Add the fields to the query and the record**
@@ -1509,12 +1516,12 @@ def _as_bool(value):
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `./.venv/bin/pytest tests/rebuild/test_web_api.py -v`
+Run: `PYTHONPATH=. ./.venv/bin/pytest tests/rebuild/test_web_api.py -v`
 Expected: PASS.
 
 - [ ] **Step 6: Run the full suite**
 
-Run: `./.venv/bin/pytest`
+Run: `PYTHONPATH=. ./.venv/bin/pytest`
 Expected: all green.
 
 - [ ] **Step 7: Verify in the browser**
@@ -1536,7 +1543,7 @@ git commit -m "feat(web): expose salgsoppgave fields, preferring the <dl> eiendo
 
 ## Done criteria
 
-- [ ] `./.venv/bin/pytest` green, count ≥ 662 + new tests
+- [ ] `PYTHONPATH=. ./.venv/bin/pytest` green, count ≥ 662 + new tests
 - [ ] `tools backfill-salgsoppgave --status` reports non-zero `with_ferdigattest` after a real run
 - [ ] Field-coverage script (Task 4 Step 5) shows no field stuck at 0%
 - [ ] Decoder reach (Task 3 Step 6) shows `undecodable` in low single digits
