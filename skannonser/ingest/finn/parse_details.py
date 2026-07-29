@@ -31,6 +31,8 @@ class ListingDetails(BaseModel):
     fellesformue: int | None = None
     formuesverdi: int | None = None
     kommunale_avg_aar: int | None = None
+    eiendomsskatt_kr: int | None = None
+    verditakst: int | None = None
     # Group C -- condition / identity
     energimerke: str | None = None
     energifarge: str | None = None
@@ -156,6 +158,8 @@ _PRICING_LABELS = {
     "Fellesformue": "fellesformue",
     "Formuesverdi": "formuesverdi",
     "Kommunale avg.": "kommunale_avg_aar",
+    "Eiendomsskatt": "eiendomsskatt_kr",
+    "Verditakst": "verditakst",
 }
 
 

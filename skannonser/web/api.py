@@ -189,7 +189,10 @@ def _sold_records(conn: sqlite3.Connection) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Listing-details enrichment (migration 010; Task 9)
+# Listing-details enrichment (migration 010; Task 9) + salgsoppgave
+# enrichment (migration 015) -- the SQL side of both lives in
+# ``publish.rows``'s shared ``_EIE_SELECT_TAIL``/``_EIE_JOINS`` fragments;
+# these are the record-shaping helpers each needs.
 # ---------------------------------------------------------------------------
 
 def _facilities_by_finnkode(conn: sqlite3.Connection) -> dict[str, list[str]]:
@@ -229,6 +232,15 @@ def _maanedskost(rec: dict) -> int | None:
     except (TypeError, ValueError):
         kommunale_mnd = 0
     return felleskost + kommunale_mnd
+
+
+def _as_bool(value: Any) -> bool | None:
+    """SQLite stores BOOLEAN as 0/1/NULL; the API contract is True/False/None.
+    ``None`` stays ``None`` -- distinct from ``False`` -- see
+    listing_salgsoppgave's docstring: no salgsoppgave text existed for this
+    listing (``None``) vs. text existed and didn't mention the topic
+    (``False``)."""
+    return None if value is None else bool(value)
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +351,19 @@ def _eie_item(
         "facilities": facilities or [],
         "pris_kvm_totalpris": _pris_kvm_totalpris(rec),
         "maanedskost": _maanedskost(rec),
+        # Pricing-<dl> money fields added alongside migration 015 -- these come
+        # from listing_details, not listing_salgsoppgave. `eiendomsskatt_kr` is
+        # COALESCEd in rows.py, preferring the deterministic <dl> value over the
+        # prose one; `verditakst` has only the <dl> source.
+        "eiendomsskatt_kr": rec.get("EIENDOMSSKATT_KR"),
+        "verditakst": rec.get("VERDITAKST"),
+        # Salgsoppgave enrichment (migration 015; None when unparsed).
+        "boligselgerforsikring": _as_bool(rec.get("BOLIGSELGERFORSIKRING")),
+        "ferdigattest": rec.get("FERDIGATTEST"),
+        "radon_omtalt": _as_bool(rec.get("RADON_OMTALT")),
+        "utleie": rec.get("UTLEIE"),
+        "husdyr": rec.get("HUSDYR"),
+        "heftelser": _as_bool(rec.get("HEFTELSER")),
     }
     if closed:
         # Whole closed bucket ships the keys (Solgt/Inaktiv/Trukket alike);

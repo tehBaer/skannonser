@@ -133,6 +133,7 @@ def test_finn_mark_inactive_skipped_when_crawl_yields_zero_urls(conn, domain, tm
         "upserted": 0,
         "deactivated": 0,
         "details_upserted": 0,
+        "salgsoppgave_upserted": 0,
         "drift": [],
         "drift_status": {"eiendom": "skipped:batch", "listing_details": "skipped:batch"},
     }
@@ -438,6 +439,7 @@ def test_finn_parse_failure_is_counted_and_not_upserted(tmp_path):
         "upserted": 0,
         "deactivated": 0,
         "details_upserted": 0,
+        "salgsoppgave_upserted": 0,
         "drift": [],
         "drift_status": {"eiendom": "skipped:batch", "listing_details": "skipped:batch"},
     }
@@ -754,3 +756,69 @@ def test_drift_baseline_is_read_before_upsert(monkeypatch, tmp_path):
     monkeypatch.setattr("skannonser.pipeline.drift_check", spy)
     _ingest_over_fixtures(tmp_path)
     assert seen["rows_at_call"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 8: salgsoppgave capture during FINN ingest (best-effort, mirrors
+# details -- never fails the listing upsert).
+# ---------------------------------------------------------------------------
+
+
+def test_finn_ingest_writes_listing_salgsoppgave(tmp_path):
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    fixture_dir = FINN_FIXTURES
+    cases = [fixture_dir / "448347467.html"]
+    (proj / "html_extracted").mkdir(parents=True)
+    for c in cases:
+        shutil.copy(c, proj / "html_extracted" / c.name)
+    urls = [
+        (c.stem, f"https://www.finn.no/realestate/homes/ad.html?finnkode={c.stem}")
+        for c in cases
+    ]
+
+    stats = run_finn_ingest(
+        load_domain(), conn, proj, fetch=_fail_if_called, skip_crawl_urls=urls
+    )
+
+    assert stats["salgsoppgave_upserted"] == stats["parsed"]
+    row = conn.execute(
+        "SELECT parsed_at FROM listing_salgsoppgave WHERE finnkode = '448347467'"
+    ).fetchone()
+    assert row is not None and row["parsed_at"] is not None
+
+
+def test_finn_ingest_salgsoppgave_failure_never_fails_listing_upsert(tmp_path, monkeypatch):
+    from skannonser.ingest.finn import parse_salgsoppgave as ps_mod
+
+    monkeypatch.setattr(
+        ps_mod, "parse_salgsoppgave", lambda *a, **k: (_ for _ in ()).throw(RuntimeError)
+    )
+
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    proj = tmp_path / "proj"
+    fixture_dir = FINN_FIXTURES
+    cases = [fixture_dir / "448347467.html"]
+    (proj / "html_extracted").mkdir(parents=True)
+    for c in cases:
+        shutil.copy(c, proj / "html_extracted" / c.name)
+    urls = [
+        (c.stem, f"https://www.finn.no/realestate/homes/ad.html?finnkode={c.stem}")
+        for c in cases
+    ]
+
+    stats = run_finn_ingest(
+        load_domain(), conn, proj, fetch=_fail_if_called, skip_crawl_urls=urls
+    )
+
+    assert stats["parsed"] >= 1
+    assert stats["salgsoppgave_upserted"] == 0
+    # The sibling details enrichment and the eiendom/listing upsert must be
+    # entirely unaffected by the salgsoppgave failure.
+    assert stats["details_upserted"] == stats["parsed"]
+    assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] >= 1
+    assert (
+        conn.execute("SELECT COUNT(*) FROM listing_salgsoppgave").fetchone()[0] == 0
+    )

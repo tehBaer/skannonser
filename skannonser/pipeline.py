@@ -60,9 +60,11 @@ from skannonser.ingest.finn import crawl as finn_crawl
 from skannonser.ingest.finn import html_cache
 from skannonser.ingest.finn import parse as finn_parse
 from skannonser.ingest.finn import parse_details as finn_parse_details
+from skannonser.ingest.finn import parse_salgsoppgave as finn_parse_salgsoppgave
 from skannonser.store.repositories.details import DetailsRepo
 from skannonser.store.repositories.dnb import DnbRepo
 from skannonser.store.repositories.listings import ListingsRepo
+from skannonser.store.repositories.salgsoppgave import SalgsoppgaveRepo
 
 # Shared with skannonser/commands/run_cmd.py (imported from here, single
 # source of truth). See module docstring guard 2.
@@ -95,10 +97,10 @@ def run_finn_ingest(
     fixtures.
 
     Returns counts: `crawled`, `parsed`, `failed`, `upserted`, `deactivated`,
-    `details_upserted`, plus `drift` (a list of `DriftFinding`) and
-    `drift_status` (per-table "checked"/"skipped:.../"error" -- disambiguates
-    an empty `drift` list between healthy, skipped, and a crashed canary; see
-    `skannonser/ingest/drift.py`).
+    `details_upserted`, `salgsoppgave_upserted`, plus `drift` (a list of
+    `DriftFinding`) and `drift_status` (per-table "checked"/"skipped:.../"error"
+    -- disambiguates an empty `drift` list between healthy, skipped, and a
+    crashed canary; see `skannonser/ingest/drift.py`).
     """
     project_dir = Path(project_dir)
 
@@ -118,6 +120,7 @@ def run_finn_ingest(
     failed = 0
     listings = []
     details = []
+    salgsoppgaver = []
     for finnkode, url in pairs:
         try:
             html = html_cache.load_or_fetch(
@@ -132,6 +135,14 @@ def run_finn_ingest(
         # markup drift) must never fail the listing itself.
         try:
             details.append(finn_parse_details.parse_details(html, finnkode))
+        except Exception:
+            pass
+        # Salgsoppgave is the same kind of best-effort enrichment as details
+        # above -- a failure here must never fail the listing itself.
+        try:
+            salgsoppgaver.append(
+                finn_parse_salgsoppgave.parse_salgsoppgave(html, finnkode)
+            )
         except Exception:
             pass
 
@@ -162,6 +173,12 @@ def run_finn_ingest(
     except Exception:
         pass  # derived cache only -- never blocks ingest
 
+    salgsoppgave_upserted = 0
+    try:
+        salgsoppgave_upserted = SalgsoppgaveRepo(conn).upsert(salgsoppgaver)["upserted"]
+    except Exception:
+        pass  # derived cache only -- never blocks ingest
+
     deactivated = 0
     if crawled > 0 and not _failure_rate_too_high(crawled, failed):
         active_finnkodes = [listing.Finnkode for listing in listings]
@@ -173,6 +190,7 @@ def run_finn_ingest(
         "failed": failed,
         "upserted": upsert_stats["inserted"] + upsert_stats["updated"],
         "deactivated": deactivated,
+        "salgsoppgave_upserted": salgsoppgave_upserted,
         "details_upserted": details_upserted,
         "drift": drift_findings,
         "drift_status": drift_status,
