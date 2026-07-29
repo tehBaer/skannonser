@@ -351,10 +351,14 @@ def _eie_item(
         "facilities": facilities or [],
         "pris_kvm_totalpris": _pris_kvm_totalpris(rec),
         "maanedskost": _maanedskost(rec),
-        # Salgsoppgave enrichment (migration 015; None when unparsed).
-        "boligselgerforsikring": _as_bool(rec.get("BOLIGSELGERFORSIKRING")),
+        # Pricing-<dl> money fields added alongside migration 015 -- these come
+        # from listing_details, not listing_salgsoppgave. `eiendomsskatt_kr` is
+        # COALESCEd in rows.py, preferring the deterministic <dl> value over the
+        # prose one; `verditakst` has only the <dl> source.
         "eiendomsskatt_kr": rec.get("EIENDOMSSKATT_KR"),
         "verditakst": rec.get("VERDITAKST"),
+        # Salgsoppgave enrichment (migration 015; None when unparsed).
+        "boligselgerforsikring": _as_bool(rec.get("BOLIGSELGERFORSIKRING")),
         "ferdigattest": rec.get("FERDIGATTEST"),
         "radon_omtalt": _as_bool(rec.get("RADON_OMTALT")),
         "utleie": rec.get("UTLEIE"),
