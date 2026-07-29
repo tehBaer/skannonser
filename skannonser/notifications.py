@@ -106,6 +106,18 @@ def format_sold_progress(p: dict) -> str:
     )
 
 
+def format_drift_message(findings: list) -> str:
+    """One line per drifted field, for the parser-drift canary alert.
+    `findings` are `skannonser.ingest.drift.DriftFinding`."""
+    lines = [f"Parser drift: {len(findings)} field(s)"]
+    for f in findings:
+        lines.append(
+            f"{f.field}  {f.baseline_rate:.1%} -> {f.batch_rate:.1%}  "
+            f"(n={f.sample_size})"
+        )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # DB accessors outside the ported ListingsRepo range (db.py:690-727)
 # ---------------------------------------------------------------------------
