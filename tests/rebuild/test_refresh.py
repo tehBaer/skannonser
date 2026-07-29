@@ -506,3 +506,78 @@ def test_refresh_reparses_details(conn, domain, tmp_path):
         "SELECT totalpris FROM listing_details WHERE finnkode = ?", (fk,)
     ).fetchone()
     assert row is not None and row["totalpris"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Task 8: refresh re-parses salgsoppgave off the freshly-fetched HTML too
+# (mirrors Task 7's details re-parse -- best-effort, never fails the run).
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_reparses_salgsoppgave(conn, domain, tmp_path):
+    repo = ListingsRepo(conn)
+    fk = "448347467"
+    repo.upsert([_listing(fk, Tilgjengelighet="Til salgs")])
+    assert repo.active_finnkodes() == {fk}
+
+    html = (FINN_FIXTURES / "448347467.html").read_text(encoding="utf-8", errors="replace")
+
+    def fake_fetch(url):
+        class FakeResponse:
+            content = html.encode("utf-8")
+
+            def raise_for_status(self):
+                pass
+
+        return FakeResponse()
+
+    refresh_listings(
+        conn, domain, tmp_path / "proj", mode="all", fetch=fake_fetch, fetch_delay=lambda: None
+    )
+
+    row = conn.execute(
+        "SELECT parsed_at FROM listing_salgsoppgave WHERE finnkode = ?", (fk,)
+    ).fetchone()
+    assert row is not None and row["parsed_at"] is not None
+
+
+def test_refresh_salgsoppgave_failure_never_fails_run(conn, domain, tmp_path, monkeypatch):
+    from skannonser.ingest.finn import parse_salgsoppgave as ps_mod
+
+    monkeypatch.setattr(
+        ps_mod, "parse_salgsoppgave", lambda *a, **k: (_ for _ in ()).throw(RuntimeError)
+    )
+
+    repo = ListingsRepo(conn)
+    fk = "448347467"
+    repo.upsert([_listing(fk, Tilgjengelighet="Til salgs")])
+
+    html = (FINN_FIXTURES / "448347467.html").read_text(encoding="utf-8", errors="replace")
+
+    def fake_fetch(url):
+        class FakeResponse:
+            content = html.encode("utf-8")
+
+            def raise_for_status(self):
+                pass
+
+        return FakeResponse()
+
+    stats = refresh_listings(
+        conn, domain, tmp_path / "proj", mode="all", fetch=fake_fetch, fetch_delay=lambda: None
+    )
+
+    assert stats["errors"] == 0
+    assert stats["refreshed"] == 1
+    # The sibling details re-parse and the status update must be entirely
+    # unaffected by the salgsoppgave failure.
+    row = conn.execute(
+        "SELECT totalpris FROM listing_details WHERE finnkode = ?", (fk,)
+    ).fetchone()
+    assert row is not None and row["totalpris"] is not None
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM listing_salgsoppgave WHERE finnkode = ?", (fk,)
+        ).fetchone()[0]
+        == 0
+    )

@@ -241,6 +241,8 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
         # Salgsoppgave enrichment (migration 015).
         "boligselgerforsikring", "eiendomsskatt_kr", "ferdigattest",
         "radon_omtalt", "utleie", "husdyr", "heftelser",
+        # verditakst (migration 015 listing_details column; Task 8).
+        "verditakst",
     }
     assert item["finnkode"] == "A"
     assert item["adresse"] == "Gata 1"
@@ -850,6 +852,30 @@ def test_unparsed_listing_has_null_salgsoppgave_fields(db_path, client):
     assert item["ferdigattest"] is None
     assert item["radon_omtalt"] is None
     assert item["eiendomsskatt_kr"] is None
+
+
+# ---------------------------------------------------------------------------
+# /api/listings -- verditakst (listing_details column, migration 015; Task 8)
+# ---------------------------------------------------------------------------
+
+def test_listing_exposes_verditakst(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    _seed_details(conn, "A", verditakst=4_200_000)
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["verditakst"] == 4_200_000
+
+
+def test_unparsed_listing_has_null_verditakst(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["verditakst"] is None
 
 
 # ---------------------------------------------------------------------------

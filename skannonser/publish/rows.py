@@ -123,6 +123,7 @@ _EIE_SELECT_TAIL = """
     ld.borettslag_orgnr AS "BORETTSLAG_ORGNR",
     ld.borettslag_andelsnr AS "BORETTSLAG_ANDELSNR",
     COALESCE(ld.eiendomsskatt_kr, s.eiendomsskatt_kr) AS "EIENDOMSSKATT_KR",
+    ld.verditakst AS "VERDITAKST",
     s.boligselgerforsikring AS "BOLIGSELGERFORSIKRING",
     s.ferdigattest AS "FERDIGATTEST",
     s.radon_omtalt AS "RADON_OMTALT",

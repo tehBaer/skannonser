@@ -354,6 +354,7 @@ def _eie_item(
         # Salgsoppgave enrichment (migration 015; None when unparsed).
         "boligselgerforsikring": _as_bool(rec.get("BOLIGSELGERFORSIKRING")),
         "eiendomsskatt_kr": rec.get("EIENDOMSSKATT_KR"),
+        "verditakst": rec.get("VERDITAKST"),
         "ferdigattest": rec.get("FERDIGATTEST"),
         "radon_omtalt": _as_bool(rec.get("RADON_OMTALT")),
         "utleie": rec.get("UTLEIE"),

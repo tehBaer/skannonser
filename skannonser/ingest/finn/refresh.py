@@ -45,8 +45,10 @@ from skannonser.http import browser_get
 from skannonser.ingest.finn import html_cache
 from skannonser.ingest.finn import parse as finn_parse
 from skannonser.ingest.finn import parse_details as finn_parse_details
+from skannonser.ingest.finn import parse_salgsoppgave as finn_parse_salgsoppgave
 from skannonser.store.repositories.details import DetailsRepo
 from skannonser.store.repositories.listings import ListingsRepo
+from skannonser.store.repositories.salgsoppgave import SalgsoppgaveRepo
 
 MODES: tuple[str, ...] = ("all", "inactive", "stale-open")
 
@@ -123,6 +125,7 @@ def refresh_listings(
     rows = _select_rows(conn, domain, mode)
     repo = ListingsRepo(conn)
     details_repo = DetailsRepo(conn)
+    salgsoppgave_repo = SalgsoppgaveRepo(conn)
 
     candidates = len(rows)
     refreshed = 0
@@ -153,6 +156,15 @@ def refresh_listings(
             try:
                 details_repo.upsert_details(
                     [finn_parse_details.parse_details(html, finnkode)]
+                )
+            except Exception:
+                pass
+
+            # Same for salgsoppgave -- best-effort, must never fail the
+            # refresh for this listing or the run.
+            try:
+                salgsoppgave_repo.upsert(
+                    [finn_parse_salgsoppgave.parse_salgsoppgave(html, finnkode)]
                 )
             except Exception:
                 pass

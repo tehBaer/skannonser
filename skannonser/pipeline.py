@@ -59,9 +59,11 @@ from skannonser.ingest.finn import crawl as finn_crawl
 from skannonser.ingest.finn import html_cache
 from skannonser.ingest.finn import parse as finn_parse
 from skannonser.ingest.finn import parse_details as finn_parse_details
+from skannonser.ingest.finn import parse_salgsoppgave as finn_parse_salgsoppgave
 from skannonser.store.repositories.details import DetailsRepo
 from skannonser.store.repositories.dnb import DnbRepo
 from skannonser.store.repositories.listings import ListingsRepo
+from skannonser.store.repositories.salgsoppgave import SalgsoppgaveRepo
 
 # Shared with skannonser/commands/run_cmd.py (imported from here, single
 # source of truth). See module docstring guard 2.
@@ -94,7 +96,7 @@ def run_finn_ingest(
     fixtures.
 
     Returns counts: `crawled`, `parsed`, `failed`, `upserted`, `deactivated`,
-    `details_upserted`.
+    `details_upserted`, `salgsoppgave_upserted`.
     """
     project_dir = Path(project_dir)
 
@@ -114,6 +116,7 @@ def run_finn_ingest(
     failed = 0
     listings = []
     details = []
+    salgsoppgaver = []
     for finnkode, url in pairs:
         try:
             html = html_cache.load_or_fetch(
@@ -130,6 +133,14 @@ def run_finn_ingest(
             details.append(finn_parse_details.parse_details(html, finnkode))
         except Exception:
             pass
+        # Salgsoppgave is the same kind of best-effort enrichment as details
+        # above -- a failure here must never fail the listing itself.
+        try:
+            salgsoppgaver.append(
+                finn_parse_salgsoppgave.parse_salgsoppgave(html, finnkode)
+            )
+        except Exception:
+            pass
 
     repo = ListingsRepo(conn)
     upsert_stats = repo.upsert(listings)
@@ -137,6 +148,12 @@ def run_finn_ingest(
     details_upserted = 0
     try:
         details_upserted = DetailsRepo(conn).upsert_details(details)["upserted"]
+    except Exception:
+        pass  # derived cache only -- never blocks ingest
+
+    salgsoppgave_upserted = 0
+    try:
+        salgsoppgave_upserted = SalgsoppgaveRepo(conn).upsert(salgsoppgaver)["upserted"]
     except Exception:
         pass  # derived cache only -- never blocks ingest
 
@@ -151,6 +168,7 @@ def run_finn_ingest(
         "failed": failed,
         "upserted": upsert_stats["inserted"] + upsert_stats["updated"],
         "deactivated": deactivated,
+        "salgsoppgave_upserted": salgsoppgave_upserted,
         "details_upserted": details_upserted,
     }
 
