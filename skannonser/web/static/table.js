@@ -5,7 +5,7 @@
 // "Kart" link that hands off to `/#finnkode=...` (index.html/app.js's
 // existing hash-focus handling).
 
-import { saveAnnotation } from "./annotations.js";
+import { commitAnnotation } from "./annotations.js";
 import { isNew, fmtDate, premiumPct, fmtPremium, travelMinutes } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
@@ -333,43 +333,22 @@ function renderHead() {
   });
 }
 
-// Server-side normalization mirrored here (see annotations.js's
-// saveAnnotation payload) so the dirty-check below compares like with like:
-// "" and null and "  " must all be treated as the same (unset) value.
-function normalizeAnnotationValue(v) {
-  return (v || "").trim() || null;
-}
-
 // Wires blur/Enter-commit for one inline kommentar/tag <input>. `field` is
 // "kommentar" or "tag"; the OTHER field's current value always comes off
-// `item` (already-saved state), so a save only ever changes the one field
-// the user actually edited.
+// `item` (already-saved state), so a save only ever changes the one field the
+// user actually edited. The skip-when-unchanged guard lives in
+// commitAnnotation -- it returns null when it sent nothing.
 function wireCellEdit(input, item, field) {
   let saving = false;
   const commit = async () => {
     if (saving) return;
     const kommentar = field === "kommentar" ? input.value : item.kommentar;
     const tag = field === "tag" ? input.value : item.tag;
-    // Skip the PUT when the edited field didn't actually change from the
-    // last-saved item state (e.g. tabbing/clicking through a cell without
-    // typing, which still fires `blur`). WHY this matters: every PUT bumps
-    // the row's updated_at even when the payload is byte-identical, and a
-    // bumped updated_at is exactly the signal sheet-import protection uses
-    // to treat an import-created row as "user has edited this, don't
-    // overwrite it" -- so a no-op blur was silently and permanently
-    // flipping that protection on for rows nobody actually touched.
-    if (
-      normalizeAnnotationValue(kommentar) === normalizeAnnotationValue(item.kommentar) &&
-      normalizeAnnotationValue(tag) === normalizeAnnotationValue(item.tag)
-    ) {
-      return;
-    }
     saving = true;
     input.classList.remove("saved", "error");
     try {
-      const saved = await saveAnnotation(item.finnkode, kommentar, tag);
-      item.kommentar = saved.kommentar;
-      item.tag = saved.tag;
+      const saved = await commitAnnotation(item, { kommentar, tag });
+      if (!saved) return; // nothing changed; no PUT was sent
       input.value = saved[field] || "";
       input.classList.add("saved");
       setTimeout(() => input.classList.remove("saved"), 1500);
