@@ -133,6 +133,8 @@ def test_finn_mark_inactive_skipped_when_crawl_yields_zero_urls(conn, domain, tm
         "upserted": 0,
         "deactivated": 0,
         "details_upserted": 0,
+        "drift": [],
+        "drift_status": {"eiendom": "skipped:batch", "listing_details": "skipped:batch"},
     }
     # The previously-active listing must NOT have been deactivated by an
     # empty crawl.
@@ -436,6 +438,8 @@ def test_finn_parse_failure_is_counted_and_not_upserted(tmp_path):
         "upserted": 0,
         "deactivated": 0,
         "details_upserted": 0,
+        "drift": [],
+        "drift_status": {"eiendom": "skipped:batch", "listing_details": "skipped:batch"},
     }
     assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] == 0
 
@@ -681,3 +685,72 @@ def test_finn_ingest_details_failure_never_fails_listing_upsert(tmp_path, monkey
     assert stats["parsed"] >= 1
     assert stats["details_upserted"] == 0
     assert conn.execute("SELECT COUNT(*) FROM eiendom").fetchone()[0] >= 1
+
+
+# --- parser-drift canary ----------------------------------------------------
+
+
+def _ingest_over_fixtures(tmp_path, n=2):
+    """Offline FINN ingest over `n` golden fixtures."""
+    proj = tmp_path / "proj"
+    cases = sorted(FINN_FIXTURES.glob("*.html"))[:n]
+    (proj / "html_extracted").mkdir(parents=True)
+    for c in cases:
+        shutil.copy(c, proj / "html_extracted" / c.name)
+    urls = [
+        (c.stem, f"https://www.finn.no/realestate/homes/ad.html?finnkode={c.stem}")
+        for c in cases
+    ]
+    conn = connection.connect(tmp_path / "p.db")
+    migrations.migrate(conn)
+    return run_finn_ingest(
+        load_domain(), conn, proj, fetch=_fail_if_called, skip_crawl_urls=urls
+    )
+
+
+def test_finn_ingest_reports_drift_in_stats(monkeypatch, tmp_path):
+    """The canary's verdict rides along in the stats dict."""
+    from skannonser.ingest import drift
+
+    sentinel = [
+        drift.DriftFinding(
+            field="info_primary_area",
+            baseline_rate=0.19,
+            batch_rate=0.0,
+            sample_size=1000,
+        )
+    ]
+    status = {"eiendom": "checked", "listing_details": "checked"}
+    monkeypatch.setattr("skannonser.pipeline.drift_check", lambda *a, **k: (sentinel, status))
+    stats = _ingest_over_fixtures(tmp_path)
+    assert stats["drift"] == sentinel
+    assert stats["drift_status"] == status
+
+
+def test_finn_ingest_survives_drift_failure(monkeypatch, tmp_path):
+    """A bug in the canary must never fail the ingest it only observes."""
+    def boom(*a, **k):
+        raise RuntimeError("canary exploded")
+
+    monkeypatch.setattr("skannonser.pipeline.drift_check", boom)
+    stats = _ingest_over_fixtures(tmp_path)
+    assert stats["drift"] == []
+    assert stats["drift_status"] == {"error": "drift check raised"}
+    assert stats["parsed"] > 0
+    assert stats["upserted"] > 0
+
+
+def test_drift_baseline_is_read_before_upsert(monkeypatch, tmp_path):
+    """If the baseline were read after upsert, tonight's rows would already
+    be folded into it and a same-night collapse would be invisible."""
+    seen = {}
+
+    def spy(conn, listing_rows, detail_rows):
+        seen["rows_at_call"] = conn.execute(
+            "SELECT COUNT(*) FROM eiendom"
+        ).fetchone()[0]
+        return [], {}
+
+    monkeypatch.setattr("skannonser.pipeline.drift_check", spy)
+    _ingest_over_fixtures(tmp_path)
+    assert seen["rows_at_call"] == 0

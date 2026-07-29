@@ -551,3 +551,20 @@ def test_daily_summary_appends_sold_line_when_active(conn, repo):
     assert "Today:" in msg                          # normal daily line still there
     assert "Sold prices:" in msg                    # sold line appended
     assert "+1 today" in msg and "1/2" in msg
+
+
+def test_format_drift_message():
+    from skannonser.ingest.drift import DriftFinding
+    from skannonser.notifications import format_drift_message
+
+    message = format_drift_message(
+        [
+            DriftFinding("info_primary_area", 0.192, 0.0, 1043),
+            DriftFinding("energimerke", 0.854, 0.011, 1043),
+        ]
+    )
+    assert message.splitlines() == [
+        "Parser drift: 2 field(s)",
+        "info_primary_area  19.2% -> 0.0%  (n=1043)",
+        "energimerke  85.4% -> 1.1%  (n=1043)",
+    ]

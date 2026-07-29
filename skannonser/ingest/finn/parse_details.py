@@ -7,11 +7,12 @@ new. Every field is optional and every extractor is null-tolerant -- a
 parse failure on any field yields None for that field, and `parse_details`
 itself never raises on arbitrary HTML (worst case: an all-NULL row).
 """
-import json
 import re
 
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
+
+from skannonser.ingest.finn.gam import gam_targeting
 
 
 class ListingDetails(BaseModel):
@@ -41,25 +42,6 @@ class ListingDetails(BaseModel):
     borettslag_orgnr: str | None = None
     borettslag_andelsnr: str | None = None
     facilities: list[str] = Field(default_factory=list)
-
-
-def _gam_targeting(soup) -> dict[str, list]:
-    """The GAM ad-targeting key/value pairs from the
-    `advertising-initial-state` JSON blob -- typed data FINN itself ships on
-    every ad page. `{}` on any structural surprise."""
-    script = soup.find("script", {"id": "advertising-initial-state"})
-    if script is None or not script.string:
-        return {}
-    try:
-        data = json.loads(script.string)
-        targeting = data["config"]["adServer"]["gam"]["targeting"]
-        return {
-            t["key"]: t["value"]
-            for t in targeting
-            if isinstance(t, dict) and "key" in t and isinstance(t.get("value"), list)
-        }
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return {}
 
 
 # GAM ownership_type enum -> Norwegian display value, used only when the
@@ -257,7 +239,7 @@ def _cadastre(soup) -> dict:
 
 def parse_details(html: str, finnkode: str) -> ListingDetails:
     soup = BeautifulSoup(html, "html.parser")
-    targeting = _gam_targeting(soup)
+    targeting = gam_targeting(soup)
     energimerke, energifarge = _energy(soup)
     return ListingDetails(
         finnkode=finnkode,

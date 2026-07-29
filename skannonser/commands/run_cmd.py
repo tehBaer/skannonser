@@ -18,7 +18,7 @@ from skannonser.enrich.sold import (
 )
 from skannonser.enrich.travel import VALID_TARGETS, run_enrich
 from skannonser.http import jittered_delay
-from skannonser.notifications import default_send
+from skannonser.notifications import default_send, format_drift_message
 from skannonser.enrich.validate import validate_travel
 from skannonser.gateway import BudgetExceeded, Gateway
 from skannonser.ingest.finn.refresh import MODES as REFRESH_MODES
@@ -50,6 +50,22 @@ def _failure_rate_ok(source: str, stats: dict) -> bool:
         )
         return False
     return True
+
+
+def _drift_ok(source: str, stats: dict, send=default_send) -> bool:
+    """Report parser drift for operator visibility and send an alert.
+
+    Purely an alert -- unlike guard 2 there is nothing to protect by
+    stopping, because silent field loss degrades data rather than destroying
+    the active set. Returns False only so the CLI exits non-zero.
+    """
+    findings = stats.get("drift") or []
+    if not findings:
+        return True
+    message = format_drift_message(findings)
+    typer.echo(f"ERROR: {source} {message}", err=True)
+    send("Parser drift", message, 1)
+    return False
 
 
 def _crawled_ok(source: str, stats: dict) -> bool:
@@ -119,6 +135,8 @@ def ingest(
         if not _crawled_ok("finn", stats):
             ok = False
         if not _failure_rate_ok("finn", stats):
+            ok = False
+        if not _drift_ok("finn", stats):
             ok = False
 
     if source in ("dnb", "all"):
@@ -565,5 +583,12 @@ def nightly(
         typer.echo(
             "nightly: budget exhausted on: " + ", ".join(result["budget_exhausted"]), err=True
         )
-    if result["failed"]:
+    # Fix 1: `run ingest` surfaces drift via `_drift_ok`, but production's
+    # cron runs `run nightly`, not `run ingest` -- without this, drift is
+    # never actually observed on the path that matters. `ingest_finn`'s step
+    # record carries no "stats" key at all on a hard failure (see
+    # `nightly.py`'s `_record_failure`), hence the two `or {}` guards.
+    finn_stats = (result["steps"].get("ingest_finn") or {}).get("stats") or {}
+    drift_ok = _drift_ok("finn", finn_stats)
+    if result["failed"] or not drift_ok:
         raise typer.Exit(code=1)
