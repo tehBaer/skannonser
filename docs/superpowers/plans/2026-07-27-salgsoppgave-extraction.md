@@ -949,7 +949,22 @@ for field, count in hits.most_common():
 PY
 ```
 
-Expected, from the spec's measurements: `heftelser` ~58%, `ferdigattest` ~68%, `utleie` high, `radon_omtalt` ~32%, `eiendomsskatt_kr` ~32%, `husdyr` ~29%, `boligselgerforsikring` ~43%. A field at 0% means its regex never matches — fix it before moving on rather than shipping a dead column.
+Measured on 2026-07-27 after implementation (200 ads, seed=2):
+`ferdigattest` 65%, `utleie` 41%, `boligselgerforsikring` 39%, `husdyr` 17%,
+`eiendomsskatt_kr` 11%; `radon_omtalt` and `heftelser` are True on 26% / 52%
+(their not-None rate is ~98% by design — NULL means "no salgsoppgave text at
+all", so use the True rate for those two, not not-None).
+
+**The spec's percentages are MENTION rates, not extraction rates** — the share
+of ads whose prose contains the topic at all. Extraction is necessarily lower,
+because a mention is often not a rule: `husdyr` mentions include a neighbouring
+farm's animals and passing list items like "husdyrhold, dugnader, trappevask",
+neither of which states a pet policy. Verified: of 51 husdyr mentions in 200
+ads, 34 classify and most of the 17 misses are correct non-classifications. The
+one genuinely-missed form, a `Husdyr: Ja/Nei` key-value line, occurs in 1 of 400
+ads — not worth a regex.
+
+Only a field at or near **0%** indicates a dead regex worth fixing.
 
 - [ ] **Step 6: Commit**
 
