@@ -11,11 +11,11 @@
 ## Global Constraints
 
 - **Test command is `node --test tests/web/*.test.mjs`** — the directory form is broken on node v25 (this machine runs v25.8.0).
-- Python tests: `pytest tests/rebuild/test_web_static.py -q`.
+- Python tests: `.venv/bin/python -m pytest tests/rebuild/test_web_static.py -q`. Use the worktree's own venv — the other worktrees' venvs resolve `skannonser` to the main checkout, which would test the wrong `STATIC_DIR`.
 - No build step. Every static file is served as authored; imports are relative and end in `.js`.
 - **No external resources.** `tests/rebuild/test_web_static.py` fails the build if any authored static file references a third-party host in a resource position (`<script src>`, `<link href>`, `@import`, `url(...)`).
 - Norwegian (Bokmål) for all user-visible copy, matching the existing popup ("Kommentar", "Tag", "Lagre").
-- Branch is `master`. Commit after every task.
+- Branch is `worktree-ui+popup-tag-picker`, in the worktree at `.claude/worktrees/ui+popup-tag-picker`. Commit after every task.
 - `main/database/properties.db` and the dev-server ports are shared across worktrees — see CLAUDE.md. Use port 8011 for manual checks.
 
 ---
