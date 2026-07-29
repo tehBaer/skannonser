@@ -14,6 +14,7 @@ _SCALAR_COLS = (
     "bedrooms", "rooms", "floor", "eieform", "nabolag",
     "totalpris", "omkostninger", "fellesgjeld", "felleskost_mnd",
     "fellesformue", "formuesverdi", "kommunale_avg_aar",
+    "eiendomsskatt_kr", "verditakst",
     "energimerke", "energifarge",
     "kommunenr", "gardsnr", "bruksnr", "seksjonsnr",
     "borettslag_navn", "borettslag_orgnr", "borettslag_andelsnr",

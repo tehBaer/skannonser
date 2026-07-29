@@ -278,3 +278,24 @@ def test_parse_details_matches_fixture(expected_path):
     expected = json.loads(expected_path.read_text())
     got = parse_details(html, finnkode).model_dump()
     assert got == expected
+
+
+def test_eiendomsskatt_from_pricing_dl():
+    html = (FIXTURES / "463763329.html").read_text(encoding="utf-8")
+    d = parse_details(html, "463763329")
+    assert d.eiendomsskatt_kr is not None
+    assert d.eiendomsskatt_kr > 0
+
+
+def test_verditakst_from_pricing_dl():
+    html = (FIXTURES / "447401579.html").read_text(encoding="utf-8")
+    d = parse_details(html, "447401579")
+    assert d.verditakst == 4200000
+
+
+def test_missing_dl_labels_stay_none():
+    """An ad without either label yields None, not 0."""
+    html = (FIXTURES / "448347467.html").read_text(encoding="utf-8")
+    d = parse_details(html, "448347467")
+    assert d.eiendomsskatt_kr is None
+    assert d.verditakst is None
