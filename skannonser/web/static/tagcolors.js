@@ -8,11 +8,19 @@
 // "maybe" and "definitivt" collide under djb2 mod 10.)
 
 // Chosen to be visually distinct from map.js's TYPE_COLOR_PALETTE (boligtype
-// dots) so a tag ring is never confusable with its own dot color; all carry
-// white text.
+// dots) so a tag chip is never confusable with a boligtype chip in the filter
+// panel; all carry white text.
+//
+// Fourteen rather than ten because the live vocabulary reached 11 tags, and
+// past palette size assignTagColors stops probing -- which collapsed 11 tags
+// onto 7 colours. The last four entries were picked as the Material colours
+// at least 16 ΔE (CIE Lab) from every entry above them AND from every
+// boligtype colour, so the closest pair in this array sits at ΔE 17.2. Adding
+// more is not free: see the design doc for why 18 was measured and rejected.
 export const TAG_PALETTE = [
   "#c2185b", "#7b1fa2", "#303f9f", "#0277bd", "#00695c",
   "#558b2f", "#ff8f00", "#d84315", "#5d4037", "#455a64",
+  "#1b5e20", "#311b92", "#263238", "#1565c0",
 ];
 
 export function normalizeTag(tag) {
