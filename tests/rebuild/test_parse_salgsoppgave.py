@@ -94,3 +94,160 @@ def test_kr_amounts_are_ints_not_strings():
     for name in ("448347467", "432672475"):
         value = _parse(name).eiendomsskatt_kr
         assert value is None or isinstance(value, int)
+
+
+@pytest.mark.parametrize(
+    "prose, expected",
+    [
+        # Brief's own flagged precedence case: an unlisted negation phrasing
+        # ('foreligger ikke') co-occurring with 'midlertidig brukstillatelse'
+        # must still resolve to 'midlertidig', not 'ingen'.
+        (
+            "Det foreligger ikke ferdigattest, men midlertidig brukstillatelse foreligger.",
+            "midlertidig",
+        ),
+        # Bug: this negation isn't one of the three allowlisted phrasings
+        # ('foreligger ikke ferdigattest', 'ingen ferdigattest', 'ferdigattest
+        # foreligger ikke'), so it fell through to the bare 'ferdigattest'
+        # match and came out as the opposite of what the text says.
+        (
+            "Vi har dessverre ikke mottatt ferdigattest fra kommunen ennå.",
+            "ingen",
+        ),
+        # Positive case, to prove the fix hasn't inverted the field.
+        ("Ferdigattest foreligger for eiendommen.", "ferdigattest"),
+        ("Ingenting relevant her.", None),
+        # Regression: a common boilerplate disclaimer asserts the
+        # certificate EXISTS ("ferdigattest eksisterer") but happens to
+        # share a sentence with "ingen"/"ikke" about something unrelated
+        # (that existence gives no guarantee about undocumented work). A
+        # naive same-sentence negation search inverts this to 'ingen'.
+        (
+            "At ferdigattest eksisterer, gir ingen garanti for at det ikke "
+            "er utført arbeid på boligen som ikke er byggemeldt eller godkjent.",
+            "ferdigattest",
+        ),
+        # Regression: "Ferdigattesten omfatter ikke <X>" means a certificate
+        # exists but its scope excludes a later addition -- not that no
+        # certificate exists. This phrasing recurs across many ads, almost
+        # always a few sentences after an explicit "Det foreligger
+        # ferdigattest ... datert ...". Also exercises that the suffixed
+        # form ("ferdigattesten", definite) is recognised as the same word.
+        (
+            "Ferdigattesten omfatter ikke endringer utført i etterkant.",
+            "ferdigattest",
+        ),
+        # Regression: a cross-reference to a document heading ("se punktet
+        # Ferdigattest") is not an assertion about the property; the nearby
+        # "ikke" describes something else (the room), not the certificate.
+        (
+            "Rommet er ikke godkjent som rom for varig opphold, se punktet "
+            "Ferdigattest for mer informasjon.",
+            "ferdigattest",
+        ),
+        # Regression: a fixed statutory-citation disclaimer ("no completion
+        # certificates are issued any more for pre-1998 construction, per
+        # law") recurs near-verbatim across ads regardless of this specific
+        # property's status, usually right after an explicit "Ferdigattest
+        # er utstedt: <date>" for the property itself.
+        (
+            "Ferdigattest er utstedt: 19.10.2021. Ferdigattest utstedes "
+            "ikke lenger for tiltak det er søkt om før 01.01.1998, jf. "
+            "plan og bygningsloven § 21-10 femte ledd.",
+            "ferdigattest",
+        ),
+        # Contrast: a property-specific negation that also happens to
+        # mention 1998 must NOT be caught by the statutory-disclaimer
+        # exclusion above -- the negated subject here is "Eiendommen", not
+        # a generic "tiltak"/"bygg" class. (Resolves to 'midlertidig', not
+        # 'ingen', because the sentence also names 'midlertidig
+        # brukstillatelse' -- same precedence rule as the brief's case.)
+        (
+            "Eiendommen er oppført før 1998 og har ikke ferdigattest "
+            "eller midlertidig brukstillatelse for eiendommen.",
+            "midlertidig",
+        ),
+        # Regression: the same statutory disclaimer also appears in mirrored
+        # word order ("På bygg ... ikke lenger utstedes ferdigattest").
+        (
+            "Boligen er godkjent 28.03.1989. På bygg som er oppført "
+            "tidligere enn 1998, vil det ikke lenger utstedes ferdigattest, "
+            "jfr. nye bestemmelser i plan- og bygningsloven fra 01.07.2015.",
+            "ferdigattest",
+        ),
+        # Regression: "eller ikke" ('or not') is an indifference idiom, not
+        # an assertion that no certificate exists.
+        (
+            "Boligen kan brukes som den fremstår i dag uansett om det "
+            "foreligger ferdigattest eller ikke.",
+            "ferdigattest",
+        ),
+        # Regression: sections are joined as "heading\ntext\nheading\ntext"
+        # with no sentence-ending punctuation between them. A short negation
+        # window ('uten' + up to 25 chars) must not leak across that
+        # boundary and misattribute an unrelated 'uten samtykke' to a
+        # 'Ferdigattest' heading that starts the very next section.
+        (
+            "Bruksrett til 6 bilparkeringsplasser\n"
+            "Kan ikke endres uten samtykke fra Oslo kommune\n"
+            "Ferdigattest / brukstillatelse\n"
+            'Det foreligger ferdigattest for "Oppføring av kvartalsbebyggelse" datert 15.09.2017.',
+            "ferdigattest",
+        ),
+    ],
+)
+def test_ferdigattest_negation_handling(prose, expected):
+    from skannonser.ingest.finn.parse_salgsoppgave import _ferdigattest
+
+    assert _ferdigattest(prose) == expected
+
+
+@pytest.mark.parametrize(
+    "prose, expected",
+    [
+        # Positive case, to prove the fix hasn't inverted the field.
+        ("Utleie er tillatt for hele boligen.", "tillatt"),
+        # Genuine negation must still be caught.
+        (
+            "Det er ikke tillatt med utleie av sokkelleiligheten i boligen.",
+            "ikke_tillatt",
+        ),
+        # Bug: 'ei' is the feminine indefinite article ('a/an') in modern
+        # Norwegian, not a negation. This sentence permits the rental; the
+        # old '(?:ikke|ei)' alternation misread 'ei' as 'not' and returned
+        # ikke_tillatt.
+        (
+            "Det er ei tillatt utleie av sokkelleiligheten i boligen.",
+            None,
+        ),
+        ("Boligen har egen utleiedel i kjelleren.", "egen_enhet"),
+    ],
+)
+def test_utleie_negation_handling(prose, expected):
+    from skannonser.ingest.finn.parse_salgsoppgave import _utleie
+
+    assert _utleie(prose) == expected
+
+
+@pytest.mark.parametrize(
+    "prose, expected",
+    [
+        # Bug: 'ikke tillatt uten styrets samtykke' is a conditional permit
+        # (allowed with board consent), but _HUSDYR_NOT ('ikke tillatt') was
+        # tested before _HUSDYR_GODKJENNING and matched first, collapsing
+        # this common housing-co-op phrasing to a bare prohibition.
+        (
+            "Dyrehold er ikke tillatt uten styrets samtykke.",
+            "krever_godkjenning",
+        ),
+        # Genuine prohibition must still be caught -- the precedence fix
+        # must not make every 'ikke tillatt' resolve to godkjenning.
+        ("Dyrehold er ikke tillatt i bygget.", "ikke_tillatt"),
+        # Positive case, to prove the fix hasn't inverted the field.
+        ("Dyrehold er tillatt.", "tillatt"),
+    ],
+)
+def test_husdyr_negation_handling(prose, expected):
+    from skannonser.ingest.finn.parse_salgsoppgave import _husdyr
+
+    assert _husdyr(prose) == expected
