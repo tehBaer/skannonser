@@ -126,25 +126,37 @@ _FERDIGATTEST_NEG = re.compile(
 #     after an explicit "Ferdigattest er utstedt: <date>" for this specific
 #     property, or in the mirrored order "På bygg ... ikke lenger utstedes
 #     ferdigattest"). Distinguished from a genuine property-specific
-#     negation ("Eiendommen ... har ikke ferdigattest") by its grammar: the
-#     negated object is the generic class ("tiltak"/"bygg(ninger)"/
-#     "byggesak") dated by a "søkt/omsøkt/oppført ... før <year>" clause,
-#     not "eiendommen" or "boligen".
+#     negation ("Eiendommen ... har ikke ferdigattest") NOT by the wording
+#     of the negated noun ("tiltak"/"bygg(ninger)"/"byggesak" vs.
+#     "eiendommen"/"boligen") -- "bygget" is ambiguous between that generic
+#     class and the ordinary definite form of "building" ("the building"),
+#     so a word-class heuristic here swallowed genuine property-specific
+#     negations too (e.g. "Ferdigattest foreligger ikke for bygget, som ble
+#     oppført i 2015" was misread as boilerplate and inverted to
+#     "ferdigattest"). Instead, key off the statutory citation itself
+#     ("plan- og bygningsloven" / "§ 21-10"), which per this same comment is
+#     present in every real occurrence of this specific boilerplate --
+#     narrower (a property-specific sentence never cites the statute) and
+#     more robust (survives rewording of the surrounding prose) than
+#     guessing from the negated noun. The gap to the citation is matched
+#     with a plain `.` (any char but newline), not `[^.!?\n]`, because the
+#     boilerplate's own date ("før 01.01.1998") and abbreviation ("jf.")
+#     periods sit between "ferdigattest" and the citation -- a
+#     sentence-bounded gap would stop at the first one and never reach it.
+#     Still bounded (200 chars) and still confined to one section (no `\n`
+#     crossing), so it can't reach past the boilerplate's own sentence(s).
 #   - "... uansett om det foreligger ferdigattest eller ikke" -- explicitly
 #     indifferent to whether one exists, not an assertion either way.
 # All recur across many ads (same boilerplate text), so left unhandled they
 # were a systematic false-inversion source, not a rare edge case.
 _FERDIGATTEST_NON_ASSERTION = re.compile(
-    r"ferdigattest\w*\s+(?:eksisterer|foreligger\s+er\s+likevel)\b[^.!?\n]*\bingen\s+garanti"
+    r"ferdigattest\w*\s+eksisterer\b[^.!?\n]*\bingen\s+garanti"
     r"|\bse\b[^.!?\n]{0,20}\bpunkt(?:et)?\b[^.!?\n]{0,15}[\"']?"
     r"(?:ferdigattest\w*(?:\s*(?:/|,|og)\s*midlertidig brukstillatelse)?"
     r"|midlertidig brukstillatelse(?:\s*(?:/|,|og)\s*ferdigattest\w*)?)"
     r"|ferdigattest\w*\s+omfatter\s+ikke"
-    r"|ferdigattest\w*[^.!?\n]{0,60}\b(?:for|på)\s+(?:[\w-]+\s+){0,2}"
-    r"(?:tiltak\w*|bygg\w*|bygning\w*|byggesak\w*|byggemelding\w*)\b[^.!?\n]{0,50}"
-    r"(?:\b(?:søkt|omsøkt|oppført|bygget|etablert)\b|\bfør\s+(?:19|20)?\d{2}\b)"
-    r"|\b(?:tiltak\w*|bygg\w*|bygning\w*|byggesak\w*|byggemelding\w*)\b[^.!?\n]{0,60}"
-    r"\bikke\s+(?:lenger\s+)?(?:utsted\w*|bli\w*\s+gitt|gis)\s+ferdigattest\w*"
+    r"|ferdigattest\w*.{0,200}?(?:plan-?\s*og\s*bygningsloven|§\s*21-10)"
+    r"|(?:plan-?\s*og\s*bygningsloven|§\s*21-10).{0,200}?ferdigattest\w*"
     r"|ferdigattest\w*\s+eller\s+ikke\b",
     re.I,
 )
@@ -173,8 +185,18 @@ _FERDIGATTEST_ASSERT = re.compile(
 
 
 def _ferdigattest(text: str) -> str | None:
-    """Order matters: many ads say 'foreligger ikke ferdigattest, men
-    midlertidig brukstillatelse', which is 'midlertidig', not 'ingen'.
+    """Order matters, and not only for the reason below: `_FERDIGATTEST_NEG`
+    must be checked before `_FERDIGATTEST_ASSERT`, because ASSERT's
+    'foreligger...ferdigattest' pattern also matches negated text --
+    'foreligger ikke ferdigattest' satisfies both regexes ('ikke' within
+    NEG's window of 'ferdigattest', and 'foreligger' within 20 chars of
+    'ferdigattest' for ASSERT). Checking ASSERT first would read every such
+    sentence as an assertion and silently flip real negations to
+    'ferdigattest'. NEG must win when both match.
+
+    Given that ordering, many ads then say 'foreligger ikke ferdigattest,
+    men midlertidig brukstillatelse', which is 'midlertidig', not 'ingen' --
+    handled inside the NEG branch below rather than by ASSERT.
 
     `negation_text` (boilerplate/cross-reference spans blanked out) feeds
     every check except the last: a bare "ferdigattest" mention surviving

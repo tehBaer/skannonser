@@ -195,12 +195,46 @@ def test_kr_amounts_are_ints_not_strings():
             'Det foreligger ferdigattest for "Oppføring av kvartalsbebyggelse" datert 15.09.2017.',
             "ferdigattest",
         ),
+        # Regression (finding 1, third round): the statutory-disclaimer
+        # exclusion used to key off the negated noun's word class
+        # ("tiltak"/"bygg\w*"), but "bygget" is ALSO the ordinary definite
+        # form of "the building" -- a genuine, property-specific negation,
+        # not the generic class the heuristic meant to catch. That
+        # swallowed real negations and inverted them to "ferdigattest".
+        # Only the sibling sentence naming "boligen" escaped, proving the
+        # bug was the word class, not the surrounding grammar.
+        (
+            "Ferdigattest foreligger ikke for bygget, som ble oppført i 2015.",
+            "ingen",
+        ),
+        (
+            "Ferdigattest foreligger ikke for boligen, som ble oppført i 2015.",
+            "ingen",
+        ),
     ],
 )
 def test_ferdigattest_negation_handling(prose, expected):
     from skannonser.ingest.finn.parse_salgsoppgave import _ferdigattest
 
     assert _ferdigattest(prose) == expected
+
+
+def test_ferdigattest_neg_checked_before_assert():
+    """Pins the ordering (finding 2): '_FERDIGATTEST_NEG' must run before
+    '_FERDIGATTEST_ASSERT' because ASSERT's 'foreligger...ferdigattest'
+    pattern also matches negated text -- 'foreligger ikke ferdigattest'
+    satisfies both regexes. If a future reorder checked ASSERT first, this
+    would silently flip to 'ferdigattest' instead of 'ingen'."""
+    from skannonser.ingest.finn.parse_salgsoppgave import (
+        _FERDIGATTEST_ASSERT,
+        _FERDIGATTEST_NEG,
+        _ferdigattest,
+    )
+
+    prose = "Det foreligger ikke ferdigattest for eiendommen."
+    assert _FERDIGATTEST_NEG.search(prose)
+    assert _FERDIGATTEST_ASSERT.search(prose)
+    assert _ferdigattest(prose) == "ingen"
 
 
 @pytest.mark.parametrize(
