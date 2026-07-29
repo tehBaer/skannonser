@@ -1023,7 +1023,7 @@ In `tests/rebuild/test_web_static.py`, replace line 136:
 
 - [ ] **Step 2: Run the Python static tests**
 
-Run: `pytest tests/rebuild/test_web_static.py -q`
+Run: `.venv/bin/python -m pytest tests/rebuild/test_web_static.py -q`
 Expected: PASS. The no-CDN check globs `STATIC_DIR/*.js` and already covers the new module.
 
 - [ ] **Step 3: Restyle the editor**
@@ -1067,13 +1067,56 @@ Expected: only the rules written in Step 3. No `button`, no `.row`.
 Run: `grep -rn "sk-editor .row\|sk-editor button" skannonser/web/static/`
 Expected: no output.
 
-- [ ] **Step 5: Serve the app and verify in a browser**
+- [ ] **Step 5: Give the worktree its own database, with tags to render**
+
+A worktree has no `main/database/properties.db` — that path is gitignored, so it exists only in the main checkout. Copy it rather than pointing at the original: CLAUDE.md warns that worktrees share that file, and the browser pass below writes annotations to it.
+
+Use SQLite's backup API rather than `cp`, so an active WAL cannot leave the copy torn:
 
 ```bash
-skannonser web --port 8011
+mkdir -p main/database
+.venv/bin/python -c "
+import sqlite3
+src = sqlite3.connect('file:/Users/tehbaer/kode/skannonser/main/database/properties.db?mode=ro', uri=True)
+dst = sqlite3.connect('main/database/properties.db')
+src.backup(dst)
+print('eiendom rows:', dst.execute('SELECT COUNT(*) FROM eiendom').fetchone()[0])
+"
 ```
 
-Open `http://localhost:8011/` and click a marker that has coordinates. Check each of these:
+The `annotations` table in that copy is **empty**, so the chip row would render zero chips and checks 1-3 below could not be performed at all. Seed it through the real API rather than by direct INSERT, so the seeding exercises the same PUT path the editor uses.
+
+Start the server (leave it running):
+
+```bash
+.venv/bin/skannonser web --port 8011 --db main/database/properties.db
+```
+
+Then, in a second shell, put the live vocabulary onto the first eleven listings that actually carry coordinates — only those get map markers:
+
+```bash
+.venv/bin/python -c "
+import json, urllib.request
+TAGS = ['nei','joda','nja','tja','nice','wow','fin','veldig fin','too far','fin, men nær veg','fake?']
+raw = json.load(urllib.request.urlopen('http://localhost:8011/api/listings'))
+rows = raw['listings'] if isinstance(raw, dict) else raw
+withxy = [r for r in rows if r.get('lat') and r.get('lng')][:len(TAGS)]
+assert len(withxy) >= 4, f'only {len(withxy)} listings have coordinates'
+for row, tag in zip(withxy, TAGS):
+    body = json.dumps({'kommentar': None, 'tag': tag}).encode()
+    req = urllib.request.Request(
+        'http://localhost:8011/api/annotations/' + str(row['finnkode']),
+        data=body, method='PUT', headers={'Content-Type': 'application/json'})
+    urllib.request.urlopen(req)
+    print(row['finnkode'], '->', tag)
+"
+```
+
+Fewer than eleven geocoded listings is survivable — the checks below need at least four distinct tags to be meaningful — but note how many were seeded, because check 1 counts chips.
+
+- [ ] **Step 6: Verify in a browser**
+
+Open `http://localhost:8011/` and click one of the markers seeded above. Check each of these:
 
 1. The Tag section shows one coloured chip per existing tag; the listing's own tag is filled, the rest outlined.
 2. Clicking an outlined chip fills it, the header mini-chip updates to match, and no reload is needed. Re-opening the popup shows the new tag.
@@ -1085,16 +1128,17 @@ Open `http://localhost:8011/` and click a marker that has coordinates. Check eac
 8. Typing a Kommentar and then clicking a **different marker** saves it — this is the path that fires no `close` event.
 9. The browser console is free of errors throughout.
 
-- [ ] **Step 6: Confirm the table view still saves**
+- [ ] **Step 7: Confirm the table view still saves**
 
 Open `http://localhost:8011/table`, edit a Kommentar cell and a Tag cell, and confirm each flashes and persists after a reload. Task 2 rewired this path; nothing about it should have changed.
 
-- [ ] **Step 7: Run the full test suite**
+- [ ] **Step 8: Run the full test suite**
 
-Run: `node --test tests/web/*.test.mjs && pytest tests/rebuild -q`
-Expected: both PASS.
+Run: `node --test tests/web/*.test.mjs && .venv/bin/python -m pytest tests/rebuild -q`
 
-- [ ] **Step 8: Commit**
+Expected: JS all pass. Pytest passes **except** the two pre-existing `tests/rebuild/test_dnb.py` failures — both `FileNotFoundError` on `data/dnbeiendom/html_crawled/page1.html`, a gitignored crawl artifact that no fresh worktree has. They fail identically at the branch point and are unrelated to this work. Any *other* failure is a regression.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add skannonser/web/static/style.css tests/rebuild/test_web_static.py
