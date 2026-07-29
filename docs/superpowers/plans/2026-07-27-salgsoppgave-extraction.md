@@ -22,6 +22,11 @@ This plan covers **Phase 1 only: the deterministic path.** It ships working, ind
 - **Parsers never raise on arbitrary input.** Every field is optional; a parse failure yields `None` for that field only. This mirrors `parse_details.py`.
 - **Migration 015 is the only migration number available to this work.** A parallel session has claimed 016+.
 - **Fully offline.** No network access in parsing, backfill, or tests.
+- **Use ABSOLUTE paths for every file operation.** A relative path resolves
+  against the main clone `/Users/tehbaer/kode/skannonser`, not this worktree —
+  verified 2026-07-27, when a subagent silently read an unrelated task brief
+  left over in the main clone's `.superpowers/sdd/`. Confirm `pwd` before any
+  relative-path write.
 - **The ad-HTML cache lives ONLY in the main clone**, at
   `/Users/tehbaer/kode/skannonser/data/eiendom/html_extracted` (7,731 files).
   It is gitignored, so this worktree does not have it. Read from that absolute
