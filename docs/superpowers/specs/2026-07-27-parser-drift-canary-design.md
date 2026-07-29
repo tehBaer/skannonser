@@ -26,6 +26,15 @@ layout change that lets the crawl phase succeed while nearly every ad fails to
 parse". It catches the loud failure mode — parses that *throw*. It cannot see
 the quiet one — parses that *succeed, emptily*. This canary is its sibling.
 
+### Baseline dilution after a parser fix
+
+A freshly fixed field is not watched immediately. `baseline_rates` measures
+every stored row, but only rows re-parsed after the fix carry the value, so
+the baseline starts diluted: for P-ROM, roughly `0.20 × 1142/5863 ≈ 3.9%` on
+night one — under `MIN_BASELINE` — crossing the 5% threshold after ~2 weeks
+of listing turnover. This is deliberate, conservative behaviour: a diluted
+baseline can only suppress alerts, never manufacture them.
+
 ### What this does not catch
 
 It detects **regressions from a working state**. A field that has read 0%
@@ -189,11 +198,20 @@ automatically.
 
 ## Surfacing
 
-- `run_finn_ingest` returns findings in its stats dict under `drift`.
+- `run_finn_ingest` returns findings in its stats dict under `drift`, plus a
+  per-table `drift_status` (`checked` / `skipped:batch` / `skipped:baseline`,
+  or `{"error": ...}` when the canary itself raised) so an empty findings
+  list is never ambiguous between healthy, skipped, and crashed — the canary
+  must not itself be able to fail silently for months.
 - `run_cmd.py` exits non-zero when findings are non-empty, mirroring how guard
-  2's operational alert is layered on top of the pipeline.
-- `nightly.py`'s `_run_step` records the step result; findings ride along in
-  the step report.
+  2's operational alert is layered on top of the pipeline. **Both** CLI entry
+  points carry the check: `run ingest` AND `run nightly` — the production
+  cron runs `run nightly`, so wiring only `ingest` would mean the alert never
+  fires on the path that actually executes at 01:00. (The original draft of
+  this section missed that; the final whole-branch review caught it.)
+- `nightly.py` itself stays untouched: its `_run_step` records each step's
+  whole stats dict, and the nightly CLI command reads
+  `steps["ingest_finn"]["stats"]["drift"]` out of the result.
 - `notifications.default_send(title, message, priority=1)` sends the alert.
   Priority 1 rather than the daily summary's 0: rare, and actionable.
 

@@ -894,7 +894,7 @@ Expected: a P-ROM rate near 0.19, and exactly one `DriftFinding` for `info_prima
 ## Notes for the implementer
 
 - **Do not add a migration.** This design adds no schema. `015` is claimed by the salgsoppgave work on another branch.
-- **`nightly.py` needs no change.** `_run_step` already records each step's whole stats dict, so the `drift` key rides into the step report for free once Task 3 lands. If you find yourself editing `nightly.py`, stop and re-read Task 3.
+- **`nightly.py` needs no change** — but the nightly **CLI command** in `run_cmd.py` does. The original version of this note stopped at "no change" and the final whole-branch review caught the consequence: production cron runs `skannonser run nightly`, so wiring `_drift_ok` only into `run ingest` (Task 4 as originally written) left the alert dead on the path that actually executes. The fix wave added the `_drift_ok` call to the nightly command, reading `result["steps"]["ingest_finn"]["stats"]["drift"]` — `nightly.py` itself stays untouched.
 - `drift.py` imports `_SCALAR_COLS`, `_INT_COLUMNS` and `_TEXT_COLUMNS` — module-private names in their home modules. This is deliberate and spec'd (decision 6): they are the single source of truth for field-to-column mapping, and a second hand-maintained copy is exactly the rot this canary exists to catch. If a reviewer objects, the fix is to make those names public in their home modules, not to duplicate them.
 - The 12 golden fixtures in `tests/rebuild/fixtures/finn/` cannot test drift — they are frozen and parse identically forever. All drift tests use synthetic batches.
 - Expected suite counts assume a 665 baseline. Re-run `./ops/setup-worktree.sh` if yours differs before assuming you broke something.
