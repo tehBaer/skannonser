@@ -1575,4 +1575,15 @@ Committing a migration does not deploy it: merge → pull on the server → `ska
 
 ## Follow-on
 
+> ⚠️ **Hazard Phase 2 must handle, found in Task 5's review.**
+> `SalgsoppgaveRepo.upsert` uses `INSERT OR REPLACE`, which deletes and
+> reinserts the whole row — so any column not in `_SCALAR_COLS` reverts to its
+> default. The five Phase-2 columns (`tg2_count`, `tg3_count`,
+> `tilstandsrapport_dato`, `tilstandsrapport_utsteder`,
+> `egenerklaering_antall`) are not in that list, so a routine Phase-1 re-parse
+> of an already-classified listing will silently null out its classifier
+> results. Phase 2 must either write those columns in the same statement or
+> guarantee ordering within a wipe cycle. This is not a Task 5 defect — it is
+> correct for Phase 1's own fields — but it is a live trap for Phase 2.
+
 **Phase 2 — the classifier** gets its own plan once this ships and stage 1 has settled the model choice. It fills `listing_tg_findings`, `listing_egenerklaering`, and the five currently-NULL rollup columns on `listing_salgsoppgave` (`tg2_count`, `tg3_count`, `tilstandsrapport_dato`, `tilstandsrapport_utsteder`, `egenerklaering_antall`), using `salgsoppgave_llm_cache` so rebuilds stay free.
