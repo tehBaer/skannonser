@@ -238,6 +238,9 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
         "energifarge", "totalpris", "omkostninger", "fellesgjeld",
         "felleskost_mnd", "fellesformue", "formuesverdi", "kommunale_avg_aar",
         "facilities", "pris_kvm_totalpris", "maanedskost",
+        # Salgsoppgave enrichment (migration 015).
+        "boligselgerforsikring", "eiendomsskatt_kr", "ferdigattest",
+        "radon_omtalt", "utleie", "husdyr", "heftelser",
     }
     assert item["finnkode"] == "A"
     assert item["adresse"] == "Gata 1"
@@ -782,6 +785,71 @@ def test_detail_endpoint_exposes_matrikkel(db_path, client):
     data = client.get("/api/listings/111").json()
     assert data["KOMMUNENR"] == "3301"
     assert data["BORETTSLAG_NAVN"] == "X"
+
+
+# ---------------------------------------------------------------------------
+# /api/listings -- listing_salgsoppgave enrichment (migration 015)
+# ---------------------------------------------------------------------------
+
+def test_listing_exposes_salgsoppgave_fields(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.execute(
+        "INSERT INTO listing_salgsoppgave "
+        "(finnkode, ferdigattest, radon_omtalt, eiendomsskatt_kr, utleie) "
+        "VALUES ('A', 'midlertidig', 1, 1827, 'tillatt')"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["ferdigattest"] == "midlertidig"
+    assert item["radon_omtalt"] is True
+    assert item["eiendomsskatt_kr"] == 1827
+    assert item["utleie"] == "tillatt"
+
+
+def test_eiendomsskatt_prefers_the_deterministic_dl_source(db_path, client):
+    """listing_details comes from the pricing <dl>; listing_salgsoppgave from
+    prose. Where both fire, the <dl> wins."""
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.execute(
+        "INSERT INTO listing_details (finnkode, eiendomsskatt_kr) VALUES ('A', 5000)"
+    )
+    conn.execute(
+        "INSERT INTO listing_salgsoppgave (finnkode, eiendomsskatt_kr) VALUES ('A', 1827)"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["eiendomsskatt_kr"] == 5000
+
+
+def test_eiendomsskatt_falls_back_to_prose_when_dl_is_absent(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.execute(
+        "INSERT INTO listing_salgsoppgave (finnkode, eiendomsskatt_kr) VALUES ('A', 1827)"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["eiendomsskatt_kr"] == 1827
+
+
+def test_unparsed_listing_has_null_salgsoppgave_fields(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["ferdigattest"] is None
+    assert item["radon_omtalt"] is None
+    assert item["eiendomsskatt_kr"] is None
 
 
 # ---------------------------------------------------------------------------

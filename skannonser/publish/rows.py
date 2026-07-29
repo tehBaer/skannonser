@@ -21,6 +21,14 @@ none of that changed, only *where* the code lives.
 (migration 010, aliased ``ld``) to carry its columns (SOVEROM/ROM/ETASJE/
 EIEFORM/... through BORETTSLAG_ANDELSNR) onto every eie-shaped query built
 from these fragments, ``NULL`` when a listing has no details row yet.
+
+Also LEFT JOIN ``listing_salgsoppgave`` (migration 015, aliased ``s``) for the
+prose-extracted fields (BOLIGSELGERFORSIKRING/FERDIGATTEST/RADON_OMTALT/
+UTLEIE/HUSDYR/HEFTELSER). ``EIENDOMSSKATT_KR`` exists on both ``ld`` (the
+deterministic pricing-``<dl>`` value) and ``s`` (regex-extracted from prose);
+the SELECT coalesces with ``ld`` taking precedence -- see migration 015's
+comment on why the two stay separate columns rather than one written into the
+other.
 """
 
 from __future__ import annotations
@@ -113,7 +121,14 @@ _EIE_SELECT_TAIL = """
     ld.seksjonsnr AS "SEKSJONSNR",
     ld.borettslag_navn AS "BORETTSLAG_NAVN",
     ld.borettslag_orgnr AS "BORETTSLAG_ORGNR",
-    ld.borettslag_andelsnr AS "BORETTSLAG_ANDELSNR"
+    ld.borettslag_andelsnr AS "BORETTSLAG_ANDELSNR",
+    COALESCE(ld.eiendomsskatt_kr, s.eiendomsskatt_kr) AS "EIENDOMSSKATT_KR",
+    s.boligselgerforsikring AS "BOLIGSELGERFORSIKRING",
+    s.ferdigattest AS "FERDIGATTEST",
+    s.radon_omtalt AS "RADON_OMTALT",
+    s.utleie AS "UTLEIE",
+    s.husdyr AS "HUSDYR",
+    s.heftelser AS "HEFTELSER"
 """
 
 _EIE_JOINS = """
@@ -121,6 +136,7 @@ _EIE_JOINS = """
     LEFT JOIN eiendom_processed ep ON e.finnkode = ep.finnkode
     LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
     LEFT JOIN listing_details ld ON ld.finnkode = e.finnkode
+    LEFT JOIN listing_salgsoppgave s ON s.finnkode = e.finnkode
 """
 
 
