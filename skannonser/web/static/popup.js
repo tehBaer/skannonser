@@ -319,6 +319,7 @@ function buildEditor(item, colors, onSaved) {
   // (a chip click, or a flush on a popup that is already gone).
   async function runSave(patch, control) {
     if (control) control.classList.remove("saved", "error");
+    picker.node.classList.remove("error");
     try {
       const saved = await commitAnnotation(item, {
         kommentar: komInput.value,
@@ -345,8 +346,11 @@ function buildEditor(item, colors, onSaved) {
         editor.dispatchEvent(new CustomEvent("sk-popup-resized", { bubbles: true }));
       }
     } catch (err) {
+      // A chip click has no input to flash, but the popup is still on screen --
+      // mark the picker itself. The flush path is the only case with genuinely
+      // nowhere to show anything, because the popup is already gone.
       if (control) control.classList.add("error");
-      // The flush path has no control to mark and no popup left to show it in.
+      else if (editor.isConnected) picker.node.classList.add("error");
       else console.warn("skannonser: lagring av notat feilet", err);
     }
   }
