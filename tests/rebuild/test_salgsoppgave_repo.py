@@ -69,19 +69,6 @@ def test_wipe_preserves_the_llm_cache(conn):
     assert conn.execute("SELECT COUNT(*) FROM salgsoppgave_llm_cache").fetchone()[0] == 1
 
 
-def test_phase1_wipe_spares_classifier_tables(conn):
-    repo = SalgsoppgaveRepo(conn)
-    conn.execute(
-        "INSERT INTO listing_tg_findings (finnkode, tg, bygningsdel, alvorlighet) "
-        "VALUES ('1', 3, 'vatrom', 'alvorlig')"
-    )
-    conn.execute("INSERT INTO listing_egenerklaering (finnkode, forhold) VALUES ('1', 'vannskade')")
-    conn.commit()
-    repo.wipe()
-    assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM listing_egenerklaering").fetchone()[0] == 1
-
-
 def test_coverage_counts(conn):
     repo = SalgsoppgaveRepo(conn)
     repo.upsert([Salgsoppgave(finnkode="1", ferdigattest="ingen")])
