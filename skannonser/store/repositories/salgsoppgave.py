@@ -5,9 +5,12 @@ cache of parser output over cached ad HTML, never hand-curated data. The
 rebuild path is `tools backfill-salgsoppgave --wipe`, so there is deliberately
 no fill-only or partial-update logic.
 
-`wipe()` deliberately spares `salgsoppgave_llm_cache` -- that cache is keyed by
-content hash and is precisely what lets a rebuild replay Phase 2's classifier
-results for free. Clearing it would turn every rebuild back into a paid run.
+`wipe()` deletes only `listing_salgsoppgave`. Phase-2 tables (`listing_tilstand`,
+`listing_tg_findings`, `listing_egenerklaering`) are now owned by TilstandRepo
+(migration 016) and are spared. The cache `salgsoppgave_llm_cache` is also spared
+-- that cache is keyed by content hash and is precisely what lets a rebuild
+replay Phase 2's classifier results for free. Clearing it would turn every
+rebuild back into a paid run.
 """
 import sqlite3
 
@@ -49,12 +52,10 @@ class SalgsoppgaveRepo:
         return {"upserted": len(items)}
 
     def wipe(self) -> None:
-        """Clear the derived tables. Leaves salgsoppgave_llm_cache intact."""
+        """Clear listing_salgsoppgave only. Phase-2 tables are owned by TilstandRepo."""
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute("DELETE FROM listing_tg_findings")
-            conn.execute("DELETE FROM listing_egenerklaering")
             conn.execute("DELETE FROM listing_salgsoppgave")
             conn.commit()
         except Exception:
@@ -72,5 +73,4 @@ class SalgsoppgaveRepo:
             "with_ferdigattest": one(
                 "SELECT COUNT(*) FROM listing_salgsoppgave WHERE ferdigattest IS NOT NULL"
             ),
-            "tg_findings_rows": one("SELECT COUNT(*) FROM listing_tg_findings"),
         }

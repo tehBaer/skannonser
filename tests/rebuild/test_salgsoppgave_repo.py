@@ -41,7 +41,8 @@ def test_upsert_empty_list_is_a_noop(conn):
     assert SalgsoppgaveRepo(conn).upsert([]) == {"upserted": 0}
 
 
-def test_wipe_clears_all_four_tables(conn):
+def test_wipe_clears_only_salgsoppgave_spares_classifier_tables(conn):
+    """Phase-2 tables are now owned by TilstandRepo and must be spared during wipe."""
     repo = SalgsoppgaveRepo(conn)
     repo.upsert([Salgsoppgave(finnkode="1", ferdigattest="ingen")])
     conn.execute(
@@ -50,8 +51,11 @@ def test_wipe_clears_all_four_tables(conn):
     conn.execute("INSERT INTO listing_egenerklaering (finnkode, forhold) VALUES ('1','tvist')")
     conn.commit()
     repo.wipe()
-    for table in ("listing_salgsoppgave", "listing_tg_findings", "listing_egenerklaering"):
-        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    # Phase-1 table is cleared
+    assert conn.execute("SELECT COUNT(*) FROM listing_salgsoppgave").fetchone()[0] == 0
+    # Phase-2 tables are spared
+    assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM listing_egenerklaering").fetchone()[0] == 1
 
 
 def test_wipe_preserves_the_llm_cache(conn):
@@ -63,6 +67,19 @@ def test_wipe_preserves_the_llm_cache(conn):
     conn.commit()
     SalgsoppgaveRepo(conn).wipe()
     assert conn.execute("SELECT COUNT(*) FROM salgsoppgave_llm_cache").fetchone()[0] == 1
+
+
+def test_phase1_wipe_spares_classifier_tables(conn):
+    repo = SalgsoppgaveRepo(conn)
+    conn.execute(
+        "INSERT INTO listing_tg_findings (finnkode, tg, bygningsdel, alvorlighet) "
+        "VALUES ('1', 3, 'vatrom', 'alvorlig')"
+    )
+    conn.execute("INSERT INTO listing_egenerklaering (finnkode, forhold) VALUES ('1', 'vannskade')")
+    conn.commit()
+    repo.wipe()
+    assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM listing_egenerklaering").fetchone()[0] == 1
 
 
 def test_coverage_counts(conn):
