@@ -18,7 +18,6 @@ import {
   DEFAULT_UNKNOWN_TYPE_COLOR,
 } from "./map.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
-import { syncTagOptions } from "./tagoptions.js";
 import { buildPopupContent } from "./popup.js";
 import { isNew, parseScrapedAt, premiumPct } from "./listingmeta.js";
 import {
@@ -105,6 +104,9 @@ const state = {
   popup: null,
   colorByType: {},
   tagColors: new Map(),
+  // The DOM node currently inside state.popup, so it can be flushed when the
+  // popup closes or its content is swapped out from under it.
+  popupContent: null,
   groups: [],
   validGroupIds: new Set(),
   newSinceLast: 0,
@@ -410,16 +412,46 @@ function renderSourceLegend() {
 function openPopup(finnkode, coordinates) {
   const item = state.itemsById.get(finnkode);
   if (!item) return;
-  const content = buildPopupContent(item, state.destinations, state.tagColors);
-  // Sections that fill in asynchronously (Solgt i nabolaget) grow the popup
-  // after the pan below has measured it -- re-pan when they say so.
+  // Marker -> marker reuses the ONE Popup instance below, so setDOMContent
+  // replaces the previous editor's node. Flush it BEFORE that happens, or a
+  // kommentar typed and abandoned by clicking the next marker dies with the
+  // node. (What does or doesn't fire `close` is covered where the handler is
+  // registered, below.)
+  flushPopupEditor();
+  // A function, not a snapshot: a tag invented in the editor only gains a
+  // colour once applyAll() has rebuilt state.tagColors.
+  const content = buildPopupContent(item, state.destinations, () => state.tagColors);
+  // Sections that fill in asynchronously (Solgt i nabolaget) and the tag chip
+  // row both grow the popup after the pan below has measured it -- re-pan when
+  // they say so.
   content.addEventListener("sk-popup-resized", () => panPopupIntoView());
-  if (!state.popup) state.popup = new maplibregl.Popup({ maxWidth: "300px" });
+  if (!state.popup) {
+    state.popup = new maplibregl.Popup({ maxWidth: "300px" });
+    // The close button, a click on the map and Escape all route through
+    // remove(), which fires this. addTo() below ALSO fires it on every
+    // marker -> marker swap (addTo re-adds an already-added popup by calling
+    // remove() first) -- that path is instead covered by the explicit flush
+    // at the top of this function, which must run before the outgoing node
+    // is replaced.
+    state.popup.on("close", flushPopupEditor);
+  }
   state.popup
     .setLngLat(coordinates || [item.lng, item.lat])
     .setDOMContent(content)
     .addTo(state.map);
+  // addTo() re-adds an existing popup by calling remove() first, which fires
+  // `close` -- assign after that, or the handler nulls the handle we just set.
+  state.popupContent = content;
   panPopupIntoView();
+}
+
+// Commit whatever the outgoing editor was holding. Cleared first so the two
+// teardown paths cannot both flush the same node; skFlush is idempotent
+// anyway, since commitAnnotation skips a PUT that would change nothing.
+function flushPopupEditor() {
+  const content = state.popupContent;
+  state.popupContent = null;
+  if (content && typeof content.skFlush === "function") content.skFlush();
 }
 
 // MapLibre popups don't auto-pan: a tall popup (thumbnail + editor) opened
@@ -797,11 +829,6 @@ function onFilterChange() {
 // reset, cross-tab storage event, sold-load, annotation-save.
 function rebuildFilterUIs() {
   const vocabs = deriveVocabs(vocabItems());
-  // The popup's tag input suggests these. Refreshed here rather than at popup
-  // build time because this runs on exactly the events that can change the tag
-  // set -- init, reset, cross-tab storage, sold-load, annotation-save -- so a
-  // tag invented on one listing is offered on the next one without a reload.
-  syncTagOptions(vocabs.tags.map((o) => o.key));
   if (pruneFilterSets(state.ui.filters, vocabs, vocabIsComplete())) saveUi();
   buildFilterPanelUI(document.getElementById("filter-panel-body"), {
     meta: state.meta,
@@ -872,6 +899,14 @@ async function init() {
   wireDrawer();
   loadMissingCoords();
   document.addEventListener("sk-annotation-saved", () => {
+    // The popup repaints its chip row the instant this returns, so the colour
+    // map has to be current NOW. applyAll() below also rebuilds it, but only
+    // inside a requestAnimationFrame -- a frame too late for that repaint, and
+    // a brand-new tag would render with no chip at all. Same inputs as
+    // featureCollectionsByGroup uses, so the rAF's rebuild is a no-op repeat.
+    state.tagColors = assignTagColors(
+      [...state.itemsById.values()].map((i) => i.tag)
+    );
     rebuildFilterUIs(); // tag vocab may have changed
     applyAll(); // tag rings / tag-visibility may have changed
   });

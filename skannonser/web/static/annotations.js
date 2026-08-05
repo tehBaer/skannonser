@@ -20,3 +20,37 @@ export async function saveAnnotation(finnkode, kommentar, tag) {
   if (!resp.ok) throw new Error("HTTP " + resp.status);
   return resp.json(); // {finnkode, kommentar, tag} -- server-normalized
 }
+
+// Server-side normalization mirrored here (see saveAnnotation's payload above)
+// so the dirty-check compares like with like: "", null and "  " are all the
+// same (unset) value.
+export function normalizeAnnotationValue(v) {
+  return (v || "").trim() || null;
+}
+
+export function annotationChanged(item, kommentar, tag) {
+  return (
+    normalizeAnnotationValue(kommentar) !== normalizeAnnotationValue(item.kommentar) ||
+    normalizeAnnotationValue(tag) !== normalizeAnnotationValue(item.tag)
+  );
+}
+
+// The one way to save an annotation. Returns the server-normalized object, or
+// null when the values matched what `item` already held and no PUT was sent.
+//
+// WHY the skip matters: every PUT bumps the row's updated_at even when the
+// payload is byte-identical, and a bumped updated_at is exactly the signal
+// sheet-import protection uses to treat an import-created row as "the user has
+// edited this, don't overwrite it". A no-op blur was silently and permanently
+// flipping that protection on for rows nobody actually touched. Both callers
+// (table cells, popup editor) fire on blur, so both would hit it.
+//
+// `item` is mutated only on success: a failed PUT must leave it dirty so the
+// next blur retries.
+export async function commitAnnotation(item, { kommentar, tag }) {
+  if (!annotationChanged(item, kommentar, tag)) return null;
+  const saved = await saveAnnotation(item.finnkode, kommentar, tag);
+  item.kommentar = saved.kommentar;
+  item.tag = saved.tag;
+  return saved;
+}
