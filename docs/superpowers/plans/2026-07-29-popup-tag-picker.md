@@ -984,6 +984,57 @@ function flushPopupEditor() {
 }
 ```
 
+- [ ] **Step 3b: Make the colour map current before the popup repaints (Task 4 review finding)**
+
+Task 4's editor dispatches `sk-annotation-saved` and then immediately repaints its chip row, on the premise that this handler refreshes `state.tagColors` synchronously. **It does not.** `applyAll()` defers all of its work into a `requestAnimationFrame`, and `state.tagColors` is assigned only inside that callback, in `featureCollectionsByGroup()`. The repaint therefore reads a colour map that is a frame stale.
+
+For an existing tag that is harmless. For a **brand-new** tag it is not: the picker paints chips strictly from the vocabulary it is handed, so the new tag gets no chip while the selection points at it, `colorForTag` returns null so the header mini-chip stays hidden, and `chipCount()` is unchanged so no re-pan fires. The save succeeds and the popup shows nothing — the exact failure the dispatch-then-repaint ordering was meant to prevent.
+
+Rebuild the map synchronously in the handler. Replace the `sk-annotation-saved` listener:
+
+```js
+  document.addEventListener("sk-annotation-saved", () => {
+    // The popup repaints its chip row the instant this returns, so the colour
+    // map has to be current NOW. applyAll() below also rebuilds it, but only
+    // inside a requestAnimationFrame -- a frame too late for that repaint, and
+    // a brand-new tag would render with no chip at all. Same inputs as
+    // featureCollectionsByGroup uses, so the rAF's rebuild is a no-op repeat.
+    state.tagColors = assignTagColors(
+      [...state.itemsById.values()].map((i) => i.tag)
+    );
+    rebuildFilterUIs(); // tag vocab may have changed
+    applyAll(); // tag rings / tag-visibility may have changed
+  });
+```
+
+`assignTagColors` is already imported in `app.js` — confirm the import line covers it rather than adding a duplicate.
+
+- [ ] **Step 3c: Give a failed tag save somewhere to show (Task 4 review finding)**
+
+In `popup.js`'s `runSave`, `control` is null on the chip-click path, so a rejected PUT only reaches `console.warn`. The picker repaints only on success, so the chip row keeps showing the previous selection: the click looks like it did nothing and the user is told nothing. The flush path genuinely has no popup left to draw in, but a chip click does.
+
+In `skannonser/web/static/popup.js`, replace the `catch` block in `runSave`:
+
+```js
+    } catch (err) {
+      // A chip click has no input to flash, but the popup is still on screen --
+      // mark the picker itself. The flush path is the only case with genuinely
+      // nowhere to show anything, because the popup is already gone.
+      if (control) control.classList.add("error");
+      else if (editor.isConnected) picker.node.classList.add("error");
+      else console.warn("skannonser: lagring av notat feilet", err);
+    }
+```
+
+and clear it alongside the input's classes at the top of `runSave`:
+
+```js
+    if (control) control.classList.remove("saved", "error");
+    picker.node.classList.remove("error");
+```
+
+Task 6 styles `.sk-tagpicker.error`.
+
 - [ ] **Step 4: Verify the dead import is gone and the accessor is in place**
 
 Run: `grep -n "syncTagOptions\|buildPopupContent\|skFlush" skannonser/web/static/app.js`
@@ -1055,6 +1106,9 @@ In `skannonser/web/static/style.css`, replace the `.sk-editor` block at lines 29
 .sk-editor .tag-chip-row { margin: 2px 0 0; gap: 4px; }
 .sk-editor .tag-chip { font-size: 11px; padding: 1px 8px; border-radius: 10px; }
 .sk-newtag { margin-top: 6px; }
+/* A chip click has no input to flash, so a failed tag save marks the picker.
+   Without this the click would look like it simply did nothing. */
+.sk-tagpicker.error { outline: 1px solid #a2392e; border-radius: 6px; }
 ```
 
 This drops `.sk-editor .row`, `.sk-editor button`, `.sk-editor button:disabled` and the two span-based `.saved` / `.error` rules — all of which belonged to the deleted Lagre row.
