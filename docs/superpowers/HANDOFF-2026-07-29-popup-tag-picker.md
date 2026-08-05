@@ -1,6 +1,6 @@
 # Handoff — coloured tag picker + auto-save in the map popup
 
-**Status:** merged to `master` as `f1cb939` and pushed to origin. Not deployed.
+**Status:** merged, deployed, and verified. Server is on `5fc460c` (container healthy). The closeOnClick bug found during verification is fixed — see §3.
 **Spec:** `docs/superpowers/specs/2026-07-29-popup-tag-picker-design.md`
 **Plan:** `docs/superpowers/plans/2026-07-29-popup-tag-picker.md`
 
@@ -47,25 +47,31 @@ different** in the sidebar filter chips, the table's Tag cell accents, and the p
 This was a deliberate, approved trade: it is the cost of getting 11 distinct colours.
 It happens once, on deploy.
 
-## 3. Check this first, before trusting the feature
+## 3. The closeOnClick bug — found, fixed, verified (`5fc460c`)
 
-There is a **pre-existing** MapLibre interaction that this branch neither caused nor fixed,
-but which could make its main new path unreachable.
+**Resolved. Recorded here because the mechanism is worth not rediscovering.**
 
-`state.popup` is created with `closeOnClick` defaulting to true, so `addTo` registers
-`map.on("click", _onClose)`. The marker layer delegates register earlier, and MapLibre's
-`fire` iterates a snapshot of the listener array — so an old popup's `_onClose` may run
-*after* `openPopup` returns and remove the popup that was just opened.
+The three-marker check reproduced it: markers 1 and 3 opened a popup, marker 2 did not.
 
-**Repro:** open the map and click **three markers in a row**.
+`state.popup` is a **single reused Popup instance**, and `closeOnClick` (defaulting to
+true) registered a map-level `click` handler bound to that instance. A marker click is
+dispatched over a *snapshot* of the listener list: the layer delegate runs first and calls
+`openPopup(B)`, whose `addTo()` re-adds the same instance — and then the snapshot's
+now-stale handler still runs and removes the popup that was just opened. Marker 3 works
+because the handler was unregistered when the popup was removed.
 
-- Popup appears every time → no problem, nothing to do.
-- Popup appears only on alternating clicks → the bug is real. It means the marker→marker
-  editor flush (the thing that replaces the Lagre button's safety net) **cannot be
-  exercised by a user at all**, and it needs its own fix: `closeOnClick: false` plus an
-  explicit map-click close that ignores clicks landing on a listing layer.
+Pre-existing, but it also meant the marker→marker editor flush added in `81a14b8` — the
+thing replacing the Lagre button's safety net — could never actually run.
 
-A two-marker test passes either way. You need three.
+Fix: `closeOnClick: false`, plus closing on a map click by hand, but only when
+`queryRenderedFeatures` finds nothing under the cursor, so a click aimed at a dot, a tag
+ring or a cluster leaves the popup alone. Verified on the deployed build: all three
+markers open, and bare map still closes.
+
+One deliberate behaviour change: **clicking a cluster now leaves the popup open**, where
+`closeOnClick` used to close it.
+
+A two-marker test passes even when this bug is present. It takes three.
 
 ## 4. What was verified, and what was not
 
@@ -75,16 +81,26 @@ real colour rather than the grey fallback; kommentar blur flashes and persists; 
 typed-but-unblurred kommentar **plus** a chip click both persist from that single click;
 `skFlush` saves unblurred text and is idempotent.
 
-**Not verified in a browser** — the sandbox blocked `tile.openstreetmap.org`, so the GL map
-never initialised and there were no markers to click:
+Verified by hand on the deployed build: the three-marker sequence in §3, and bare-map
+click still closing the popup.
 
-- real marker→marker teardown flush
-- MapLibre close via the X, Escape, or a map click
+**Still resting on code reading alone:**
+
+- MapLibre close via the X and Escape
 - the `sk-popup-resized` re-pan when a new chip wraps the row
-- the `closeOnClick` interaction in §3
 
-These rest on code reading alone. `popup.js` and `app.js` have **no automated coverage** —
-no test imports them — so §3's manual pass is the real gate.
+`popup.js` and `app.js` have **no automated coverage** — no test imports them — so manual
+passes are the only gate on those two.
+
+**Note for whoever automates this.** Claude's sandboxed browser cannot run these checks:
+MapLibre GL never initialises in it. A minimal map built with an *empty* style — no
+sources, no layers, zero network — never fires `load` and emits no error; it just hangs.
+Two plausible-sounding explanations were tried and are both **wrong**: tiles are not
+blocked (`fetch('https://tile.openstreetmap.org/...')` succeeds from the page), and it is
+not ES-module caching (a fresh origin behaves identically). Do not spend time re-deriving
+this — either test on a real browser, or drive the modules directly, which does work:
+`import('/popup.js')`, build a popup node against a live `/api/listings` row, and interact
+with it. That path verified the whole editor end to end, including real PUTs.
 
 Tests on merged master: JS **104/104**, pytest **792 passed, 0 failed**.
 
