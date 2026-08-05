@@ -149,7 +149,10 @@ def _energy(soup) -> tuple[str | None, str | None]:
 
 
 # dt label -> ListingDetails field, exactly as they appear in the
-# pricing-details <dl> (verified against the 12 golden fixtures).
+# pricing-details <dl>. The first seven were verified against the 12 golden
+# fixtures; `Eiendomsskatt` (8% of ads) and `Verditakst` (3%) were added later
+# and are covered by fixtures 463763329 and 447401579, since no ad among the
+# original 12 carries either label.
 _PRICING_LABELS = {
     "Totalpris": "totalpris",
     "Omkostninger": "omkostninger",

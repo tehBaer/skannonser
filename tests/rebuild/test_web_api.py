@@ -1393,3 +1393,62 @@ def test_nabolag_caps_at_15(client, db_path):
     conn.close()
 
     assert len(client.get("/api/listings/111/nabolag").json()["sales"]) == 15
+
+
+# ---------------------------------------------------------------------------
+# Salgsoppgave fields reach every bucket, not just active listings.
+#
+# `_EIE_SELECT_TAIL`/`_EIE_JOINS` are shared SQL fragments consumed by the
+# active bucket, the sold bucket and the detail endpoint, and all three shape
+# their rows through `_eie_item` -- so the keys structurally cannot diverge.
+# These pin that: a future refactor that special-cased one bucket would
+# otherwise ship a silently field-less sold view or detail pane.
+# ---------------------------------------------------------------------------
+
+_SALGSOPPGAVE_KEYS = {
+    "ferdigattest", "radon_omtalt", "heftelser", "utleie", "husdyr",
+    "boligselgerforsikring", "eiendomsskatt_kr", "verditakst",
+}
+
+
+def test_sold_bucket_carries_the_salgsoppgave_fields(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "sold-one", tilgjengelighet="Solgt", active=0)
+    _ins_processed(conn, "sold-one")
+    conn.execute(
+        "INSERT INTO listing_salgsoppgave (finnkode, ferdigattest, radon_omtalt) "
+        "VALUES ('sold-one', 'midlertidig', 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(
+        client.get("/api/listings", params={"bucket": "sold"}).json()["listings"],
+        "sold-one",
+    )
+    assert _SALGSOPPGAVE_KEYS <= set(item)
+    assert item["ferdigattest"] == "midlertidig"
+    assert item["radon_omtalt"] is True
+
+
+def test_detail_endpoint_carries_the_salgsoppgave_fields(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "77")
+    _ins_processed(conn, "77")
+    conn.execute(
+        "INSERT INTO listing_salgsoppgave (finnkode, utleie, heftelser) "
+        "VALUES ('77', 'egen_enhet', 0)"
+    )
+    conn.execute(
+        "INSERT INTO listing_details (finnkode, verditakst) VALUES ('77', 4200000)"
+    )
+    conn.commit()
+    conn.close()
+
+    body = client.get("/api/listings/77").json()
+    assert _SALGSOPPGAVE_KEYS <= set(body)
+    assert body["utleie"] == "egen_enhet"
+    # False, not None: the salgsoppgave was read and said nothing about
+    # encumbrances. Collapsing the two would lose that distinction.
+    assert body["heftelser"] is False
+    assert body["verditakst"] == 4200000
