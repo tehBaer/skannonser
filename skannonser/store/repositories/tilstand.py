@@ -34,9 +34,6 @@ class TilstandRepo:
     ) -> None:
         """Replace one ad's classifier output atomically."""
         conn = self.conn
-        # Commit any pending transaction to avoid "cannot start a transaction within a transaction"
-        if conn.in_transaction:
-            conn.commit()
         conn.execute("BEGIN IMMEDIATE")
         try:
             conn.execute("DELETE FROM listing_tg_findings WHERE finnkode = ?", (finnkode,))

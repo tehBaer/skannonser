@@ -51,6 +51,7 @@ def test_wipe_spares_llm_cache(tmp_path):
         "INSERT INTO salgsoppgave_llm_cache (content_sha256, response_json, model, created_at) "
         "VALUES ('abc', '{}', 'm', datetime('now'))"
     )
+    conn.commit()
     repo = TilstandRepo(conn)
     repo.upsert_ad("42", FINDINGS, ["vannskade"], ROLLUP)
     repo.wipe()
