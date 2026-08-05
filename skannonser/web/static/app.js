@@ -426,14 +426,33 @@ function openPopup(finnkode, coordinates) {
   // they say so.
   content.addEventListener("sk-popup-resized", () => panPopupIntoView());
   if (!state.popup) {
-    state.popup = new maplibregl.Popup({ maxWidth: "300px" });
-    // The close button, a click on the map and Escape all route through
-    // remove(), which fires this. addTo() below ALSO fires it on every
+    // closeOnClick is OFF on purpose; closing on a map click is done by hand
+    // below instead. WHY: we reuse ONE Popup instance for every listing, and
+    // closeOnClick registers a map-level `click` handler bound to that
+    // instance. Clicking marker B while A's popup is open dispatches a single
+    // click over a SNAPSHOT of the listener list: the layer delegate runs
+    // first and calls openPopup(B), whose addTo() re-adds the same instance --
+    // and then the snapshot's now-stale handler still runs and removes the
+    // popup we just opened. Symptom: every second marker click appeared to do
+    // nothing, and the marker -> marker editor flush could never run.
+    // Confirmed on the deployed build: markers 1 and 3 opened, marker 2 did not.
+    state.popup = new maplibregl.Popup({ maxWidth: "300px", closeOnClick: false });
+    // The close button, Escape, and the hand-rolled map-click close below all
+    // route through remove(), which fires this. addTo() ALSO fires it on every
     // marker -> marker swap (addTo re-adds an already-added popup by calling
     // remove() first) -- that path is instead covered by the explicit flush
     // at the top of this function, which must run before the outgoing node
     // is replaced.
     state.popup.on("close", flushPopupEditor);
+    // Restores what closeOnClick used to give us, minus the self-inflicted
+    // removal: close only when the click landed on bare map. Any rendered
+    // feature under the cursor -- a listing dot, its tag ring, a cluster --
+    // means the click was aimed at something, so the popup stays. Raster tiles
+    // yield no queryable features, so empty map reads as an empty result.
+    state.map.on("click", (e) => {
+      if (!state.popup || !state.popup.isOpen()) return;
+      if (state.map.queryRenderedFeatures(e.point).length === 0) state.popup.remove();
+    });
   }
   state.popup
     .setLngLat(coordinates || [item.lng, item.lat])
