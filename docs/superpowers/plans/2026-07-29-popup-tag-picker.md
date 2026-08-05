@@ -11,11 +11,11 @@
 ## Global Constraints
 
 - **Test command is `node --test tests/web/*.test.mjs`** — the directory form is broken on node v25 (this machine runs v25.8.0).
-- Python tests: `pytest tests/rebuild/test_web_static.py -q`.
+- Python tests: `.venv/bin/python -m pytest tests/rebuild/test_web_static.py -q`. Use the worktree's own venv — the other worktrees' venvs resolve `skannonser` to the main checkout, which would test the wrong `STATIC_DIR`.
 - No build step. Every static file is served as authored; imports are relative and end in `.js`.
 - **No external resources.** `tests/rebuild/test_web_static.py` fails the build if any authored static file references a third-party host in a resource position (`<script src>`, `<link href>`, `@import`, `url(...)`).
 - Norwegian (Bokmål) for all user-visible copy, matching the existing popup ("Kommentar", "Tag", "Lagre").
-- Branch is `master`. Commit after every task.
+- Branch is `worktree-ui+popup-tag-picker`, in the worktree at `.claude/worktrees/ui+popup-tag-picker`. Commit after every task.
 - `main/database/properties.db` and the dev-server ports are shared across worktrees — see CLAUDE.md. Use port 8011 for manual checks.
 
 ---
@@ -984,6 +984,57 @@ function flushPopupEditor() {
 }
 ```
 
+- [ ] **Step 3b: Make the colour map current before the popup repaints (Task 4 review finding)**
+
+Task 4's editor dispatches `sk-annotation-saved` and then immediately repaints its chip row, on the premise that this handler refreshes `state.tagColors` synchronously. **It does not.** `applyAll()` defers all of its work into a `requestAnimationFrame`, and `state.tagColors` is assigned only inside that callback, in `featureCollectionsByGroup()`. The repaint therefore reads a colour map that is a frame stale.
+
+For an existing tag that is harmless. For a **brand-new** tag it is not: the picker paints chips strictly from the vocabulary it is handed, so the new tag gets no chip while the selection points at it, `colorForTag` returns null so the header mini-chip stays hidden, and `chipCount()` is unchanged so no re-pan fires. The save succeeds and the popup shows nothing — the exact failure the dispatch-then-repaint ordering was meant to prevent.
+
+Rebuild the map synchronously in the handler. Replace the `sk-annotation-saved` listener:
+
+```js
+  document.addEventListener("sk-annotation-saved", () => {
+    // The popup repaints its chip row the instant this returns, so the colour
+    // map has to be current NOW. applyAll() below also rebuilds it, but only
+    // inside a requestAnimationFrame -- a frame too late for that repaint, and
+    // a brand-new tag would render with no chip at all. Same inputs as
+    // featureCollectionsByGroup uses, so the rAF's rebuild is a no-op repeat.
+    state.tagColors = assignTagColors(
+      [...state.itemsById.values()].map((i) => i.tag)
+    );
+    rebuildFilterUIs(); // tag vocab may have changed
+    applyAll(); // tag rings / tag-visibility may have changed
+  });
+```
+
+`assignTagColors` is already imported in `app.js` — confirm the import line covers it rather than adding a duplicate.
+
+- [ ] **Step 3c: Give a failed tag save somewhere to show (Task 4 review finding)**
+
+In `popup.js`'s `runSave`, `control` is null on the chip-click path, so a rejected PUT only reaches `console.warn`. The picker repaints only on success, so the chip row keeps showing the previous selection: the click looks like it did nothing and the user is told nothing. The flush path genuinely has no popup left to draw in, but a chip click does.
+
+In `skannonser/web/static/popup.js`, replace the `catch` block in `runSave`:
+
+```js
+    } catch (err) {
+      // A chip click has no input to flash, but the popup is still on screen --
+      // mark the picker itself. The flush path is the only case with genuinely
+      // nowhere to show anything, because the popup is already gone.
+      if (control) control.classList.add("error");
+      else if (editor.isConnected) picker.node.classList.add("error");
+      else console.warn("skannonser: lagring av notat feilet", err);
+    }
+```
+
+and clear it alongside the input's classes at the top of `runSave`:
+
+```js
+    if (control) control.classList.remove("saved", "error");
+    picker.node.classList.remove("error");
+```
+
+Task 6 styles `.sk-tagpicker.error`.
+
 - [ ] **Step 4: Verify the dead import is gone and the accessor is in place**
 
 Run: `grep -n "syncTagOptions\|buildPopupContent\|skFlush" skannonser/web/static/app.js`
@@ -1023,7 +1074,7 @@ In `tests/rebuild/test_web_static.py`, replace line 136:
 
 - [ ] **Step 2: Run the Python static tests**
 
-Run: `pytest tests/rebuild/test_web_static.py -q`
+Run: `.venv/bin/python -m pytest tests/rebuild/test_web_static.py -q`
 Expected: PASS. The no-CDN check globs `STATIC_DIR/*.js` and already covers the new module.
 
 - [ ] **Step 3: Restyle the editor**
@@ -1055,6 +1106,9 @@ In `skannonser/web/static/style.css`, replace the `.sk-editor` block at lines 29
 .sk-editor .tag-chip-row { margin: 2px 0 0; gap: 4px; }
 .sk-editor .tag-chip { font-size: 11px; padding: 1px 8px; border-radius: 10px; }
 .sk-newtag { margin-top: 6px; }
+/* A chip click has no input to flash, so a failed tag save marks the picker.
+   Without this the click would look like it simply did nothing. */
+.sk-tagpicker.error { outline: 1px solid #a2392e; border-radius: 6px; }
 ```
 
 This drops `.sk-editor .row`, `.sk-editor button`, `.sk-editor button:disabled` and the two span-based `.saved` / `.error` rules — all of which belonged to the deleted Lagre row.
@@ -1067,13 +1121,56 @@ Expected: only the rules written in Step 3. No `button`, no `.row`.
 Run: `grep -rn "sk-editor .row\|sk-editor button" skannonser/web/static/`
 Expected: no output.
 
-- [ ] **Step 5: Serve the app and verify in a browser**
+- [ ] **Step 5: Give the worktree its own database, with tags to render**
+
+A worktree has no `main/database/properties.db` — that path is gitignored, so it exists only in the main checkout. Copy it rather than pointing at the original: CLAUDE.md warns that worktrees share that file, and the browser pass below writes annotations to it.
+
+Use SQLite's backup API rather than `cp`, so an active WAL cannot leave the copy torn:
 
 ```bash
-skannonser web --port 8011
+mkdir -p main/database
+.venv/bin/python -c "
+import sqlite3
+src = sqlite3.connect('file:/Users/tehbaer/kode/skannonser/main/database/properties.db?mode=ro', uri=True)
+dst = sqlite3.connect('main/database/properties.db')
+src.backup(dst)
+print('eiendom rows:', dst.execute('SELECT COUNT(*) FROM eiendom').fetchone()[0])
+"
 ```
 
-Open `http://localhost:8011/` and click a marker that has coordinates. Check each of these:
+The `annotations` table in that copy is **empty**, so the chip row would render zero chips and checks 1-3 below could not be performed at all. Seed it through the real API rather than by direct INSERT, so the seeding exercises the same PUT path the editor uses.
+
+Start the server (leave it running):
+
+```bash
+.venv/bin/skannonser web --port 8011 --db main/database/properties.db
+```
+
+Then, in a second shell, put the live vocabulary onto the first eleven listings that actually carry coordinates — only those get map markers:
+
+```bash
+.venv/bin/python -c "
+import json, urllib.request
+TAGS = ['nei','joda','nja','tja','nice','wow','fin','veldig fin','too far','fin, men nær veg','fake?']
+raw = json.load(urllib.request.urlopen('http://localhost:8011/api/listings'))
+rows = raw['listings'] if isinstance(raw, dict) else raw
+withxy = [r for r in rows if r.get('lat') and r.get('lng')][:len(TAGS)]
+assert len(withxy) >= 4, f'only {len(withxy)} listings have coordinates'
+for row, tag in zip(withxy, TAGS):
+    body = json.dumps({'kommentar': None, 'tag': tag}).encode()
+    req = urllib.request.Request(
+        'http://localhost:8011/api/annotations/' + str(row['finnkode']),
+        data=body, method='PUT', headers={'Content-Type': 'application/json'})
+    urllib.request.urlopen(req)
+    print(row['finnkode'], '->', tag)
+"
+```
+
+Fewer than eleven geocoded listings is survivable — the checks below need at least four distinct tags to be meaningful — but note how many were seeded, because check 1 counts chips.
+
+- [ ] **Step 6: Verify in a browser**
+
+Open `http://localhost:8011/` and click one of the markers seeded above. Check each of these:
 
 1. The Tag section shows one coloured chip per existing tag; the listing's own tag is filled, the rest outlined.
 2. Clicking an outlined chip fills it, the header mini-chip updates to match, and no reload is needed. Re-opening the popup shows the new tag.
@@ -1085,16 +1182,17 @@ Open `http://localhost:8011/` and click a marker that has coordinates. Check eac
 8. Typing a Kommentar and then clicking a **different marker** saves it — this is the path that fires no `close` event.
 9. The browser console is free of errors throughout.
 
-- [ ] **Step 6: Confirm the table view still saves**
+- [ ] **Step 7: Confirm the table view still saves**
 
 Open `http://localhost:8011/table`, edit a Kommentar cell and a Tag cell, and confirm each flashes and persists after a reload. Task 2 rewired this path; nothing about it should have changed.
 
-- [ ] **Step 7: Run the full test suite**
+- [ ] **Step 8: Run the full test suite**
 
-Run: `node --test tests/web/*.test.mjs && pytest tests/rebuild -q`
-Expected: both PASS.
+Run: `node --test tests/web/*.test.mjs && .venv/bin/python -m pytest tests/rebuild -q`
 
-- [ ] **Step 8: Commit**
+Expected: JS all pass. Pytest passes **except** the two pre-existing `tests/rebuild/test_dnb.py` failures — both `FileNotFoundError` on `data/dnbeiendom/html_crawled/page1.html`, a gitignored crawl artifact that no fresh worktree has. They fail identically at the branch point and are unrelated to this work. Any *other* failure is a regression.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add skannonser/web/static/style.css tests/rebuild/test_web_static.py
