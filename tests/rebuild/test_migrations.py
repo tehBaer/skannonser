@@ -10,6 +10,7 @@ EXPECTED_TABLES = {
     "annotations", "sold_prices", "sold_sweep_state", "sold_price_attempts",
     "listing_details", "listing_facilities",
     "listing_salgsoppgave", "listing_tg_findings", "listing_egenerklaering",
+    "listing_tilstand",
     "salgsoppgave_llm_cache",
 }
 
@@ -19,7 +20,7 @@ ALL_MIGRATIONS = [
     "007_sold_sweep_state", "008_postnummer_pad", "009_sold_attempts",
     "010_listing_details", "011_neighbour_sold", "012_neighbour_sold_index",
     "013_gjovikbanen_missing_stations", "014_r31_north_of_jaren",
-    "015_salgsoppgave",
+    "015_salgsoppgave", "016_tilstand",
 ]
 
 
@@ -378,14 +379,40 @@ def test_migration_015_adds_dl_columns_to_listing_details(tmp_path):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(listing_details)")}
     assert {"eiendomsskatt_kr", "verditakst"} <= cols
 
-
 def test_migration_015_tg_findings_dedupes(tmp_path):
     conn = connection.connect(tmp_path / "fresh.db")
     migrations.migrate(conn)
     conn.execute("INSERT INTO eiendom (finnkode, url) VALUES ('1', 'u')")
     for _ in range(2):
         conn.execute(
-            "INSERT OR IGNORE INTO listing_tg_findings "
-            "(finnkode, tg, bygningsdel) VALUES ('1', 2, 'vatrom')"
+            "INSERT INTO listing_tg_findings "
+            "(finnkode, tg, bygningsdel, alvorlighet) VALUES ('1', 2, 'vatrom', 'vesentlig')"
         )
-    assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 1
+    # After migration 016, UNIQUE (finnkode, tg, bygningsdel) is removed,
+    # so duplicate rows can coexist.
+    assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 2
+
+
+def test_016_reshapes_phase2_tables(tmp_path):
+    conn = connection.connect(tmp_path / "fresh.db")
+    migrations.migrate(conn)
+    tg_cols = {r["name"] for r in conn.execute("PRAGMA table_info(listing_tg_findings)")}
+    assert {"id", "alvorlighet", "kostnad_lav", "kostnad_hoy", "kostnad_kilde"} <= tg_cols
+    # the UNIQUE collapse is gone: two TG3 vatrom rows must coexist
+    conn.execute("INSERT INTO eiendom (finnkode) VALUES ('1')")
+    for _ in range(2):
+        conn.execute(
+            "INSERT INTO listing_tg_findings (finnkode, tg, bygningsdel, alvorlighet) "
+            "VALUES ('1', 3, 'vatrom', 'alvorlig')"
+        )
+    n = conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0]
+    assert n == 2
+    # phase-2 columns left listing_salgsoppgave
+    so_cols = {r["name"] for r in conn.execute("PRAGMA table_info(listing_salgsoppgave)")}
+    assert not ({"tg2_count", "tg3_count", "tilstandsrapport_dato",
+                 "tilstandsrapport_utsteder", "egenerklaering_antall"} & so_cols)
+    rollup_cols = {r["name"] for r in conn.execute("PRAGMA table_info(listing_tilstand)")}
+    assert {"finnkode", "tg2_count", "tg3_count", "reparasjon_lav", "reparasjon_hoy",
+            "reparasjon_est", "alvorlighet", "verste_bygningsdel", "reparasjon_kilde",
+            "tilstandsrapport_dato", "tilstandsrapport_utsteder",
+            "egenerklaering_antall", "classified_at"} <= rollup_cols

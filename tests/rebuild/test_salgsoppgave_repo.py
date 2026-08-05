@@ -45,7 +45,7 @@ def test_wipe_clears_all_four_tables(conn):
     repo = SalgsoppgaveRepo(conn)
     repo.upsert([Salgsoppgave(finnkode="1", ferdigattest="ingen")])
     conn.execute(
-        "INSERT INTO listing_tg_findings (finnkode, tg, bygningsdel) VALUES ('1',2,'vatrom')"
+        "INSERT INTO listing_tg_findings (finnkode, tg, bygningsdel, alvorlighet) VALUES ('1',2,'vatrom','vesentlig')"
     )
     conn.execute("INSERT INTO listing_egenerklaering (finnkode, forhold) VALUES ('1','tvist')")
     conn.commit()
