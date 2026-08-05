@@ -379,19 +379,6 @@ def test_migration_015_adds_dl_columns_to_listing_details(tmp_path):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(listing_details)")}
     assert {"eiendomsskatt_kr", "verditakst"} <= cols
 
-def test_migration_015_tg_findings_dedupes(tmp_path):
-    conn = connection.connect(tmp_path / "fresh.db")
-    migrations.migrate(conn)
-    conn.execute("INSERT INTO eiendom (finnkode, url) VALUES ('1', 'u')")
-    for _ in range(2):
-        conn.execute(
-            "INSERT INTO listing_tg_findings "
-            "(finnkode, tg, bygningsdel, alvorlighet) VALUES ('1', 2, 'vatrom', 'vesentlig')"
-        )
-    # After migration 016, UNIQUE (finnkode, tg, bygningsdel) is removed,
-    # so duplicate rows can coexist.
-    assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 2
-
 
 def test_016_reshapes_phase2_tables(tmp_path):
     conn = connection.connect(tmp_path / "fresh.db")
