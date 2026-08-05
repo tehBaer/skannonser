@@ -16,6 +16,10 @@ import {
   travelMinutes,
   mapsUrl,
   earthUrl,
+  fmtJaNei,
+  fmtFerdigattest,
+  fmtUtleie,
+  fmtHusdyr,
 } from "./listingmeta.js";
 import { colorForTag } from "./tagcolors.js";
 import { attachTagList } from "./tagoptions.js";
@@ -230,6 +234,19 @@ export function buildPopupContent(item, destinations, tagColors) {
       item.energimerke + (item.energifarge ? " (" + item.energifarge + ")" : "")
     );
   }
+
+  // Salgsoppgave enrichment (migration 015). Every row is conditional -- a
+  // listing whose prospectus never discussed a topic costs no row at all, so
+  // this block is invisible on the ~1/3 of listings with no parsed text.
+  addRow(dl, "Ferdigattest", fmtFerdigattest(item.ferdigattest));
+  addRow(dl, "Eiendomsskatt", fmtPris(item.eiendomsskatt_kr));
+  addRow(dl, "Verditakst", fmtPris(item.verditakst));
+  addRow(dl, "Utleie", fmtUtleie(item.utleie));
+  addRow(dl, "Husdyr", fmtHusdyr(item.husdyr));
+  addRow(dl, "Heftelser", fmtJaNei(item.heftelser));
+  addRow(dl, "Radon omtalt", fmtJaNei(item.radon_omtalt));
+  addRow(dl, "Boligselgerforsikring", fmtJaNei(item.boligselgerforsikring));
+
   if (dl.childNodes.length) body.appendChild(dl);
 
   const links = el("div", "links");

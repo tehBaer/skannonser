@@ -6,7 +6,10 @@
 // existing hash-focus handling).
 
 import { saveAnnotation } from "./annotations.js";
-import { isNew, fmtDate, premiumPct, fmtPremium, travelMinutes } from "./listingmeta.js";
+import {
+  isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
+  fmtJaNei, fmtFerdigattest, fmtUtleie, fmtHusdyr, resolveHiddenColumns,
+} from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import { attachTagList, syncTagOptions } from "./tagoptions.js";
@@ -77,6 +80,17 @@ const COLUMNS = [
   { key: "eieform", label: "Eieform", sortable: true },
   { key: "byggeaar", label: "Byggeår", sortable: true },
   { key: "energimerke", label: "Energi", sortable: true },
+  // Salgsoppgave enrichment (migration 015). Default-hidden: eight more
+  // columns is a lot of horizontal scroll to impose on everyone, and most
+  // readers want one or two of these, not all of them.
+  { key: "ferdigattest", label: "Ferdigattest", sortable: true },
+  { key: "eiendomsskatt_kr", label: "Eiendomsskatt", sortable: true },
+  { key: "verditakst", label: "Verditakst", sortable: true },
+  { key: "utleie", label: "Utleie", sortable: true },
+  { key: "husdyr", label: "Husdyr", sortable: true },
+  { key: "heftelser", label: "Heftelser", sortable: true },
+  { key: "radon_omtalt", label: "Radon", sortable: true },
+  { key: "boligselgerforsikring", label: "Selgerforsikring", sortable: true },
   { key: "brj", label: "BRJ", sortable: true },
   { key: "mvv", label: "MVV", sortable: true },
   { key: "mvv_uni", label: "UNI", sortable: true },
@@ -91,16 +105,25 @@ const COLUMNS = [
 // First-run defaults. `tilgjengelighet` is empty for every active listing in
 // production (0 of 770) -- it stays in the picker for anyone who wants it, but
 // costs a column of horizontal scroll by default for nothing.
+// Added by migration 015; listed separately so the one-time migration in
+// `loadHiddenColumns` can hide them for readers whose stored preferences
+// predate them, without re-hiding a column they have since chosen to show.
+const SALGSOPPGAVE_COLUMNS = [
+  "ferdigattest", "eiendomsskatt_kr", "verditakst", "utleie", "husdyr",
+  "heftelser", "radon_omtalt", "boligselgerforsikring",
+];
 const DEFAULT_HIDDEN_COLUMNS = [
   "postnummer", "pris", "felleskost_mnd", "soverom", "etasje", "tilgjengelighet",
+  ...SALGSOPPGAVE_COLUMNS,
 ];
 const ALWAYS_VISIBLE_COLUMNS = new Set(["adresse", "kart"]);
 
 function loadHiddenColumns() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const stored = raw ? JSON.parse(raw).hiddenColumns : null;
-    return new Set(Array.isArray(stored) ? stored : DEFAULT_HIDDEN_COLUMNS);
+    return resolveHiddenColumns(
+      raw ? JSON.parse(raw) : null, DEFAULT_HIDDEN_COLUMNS, SALGSOPPGAVE_COLUMNS
+    );
   } catch (_) {
     return new Set(DEFAULT_HIDDEN_COLUMNS);
   }
@@ -111,6 +134,7 @@ function saveHiddenColumns() {
     const raw = localStorage.getItem(STORAGE_KEY);
     const blob = raw ? JSON.parse(raw) : {};
     blob.hiddenColumns = [...state.hiddenColumns];
+    blob.salgsoppgaveColumnsDefaulted = true;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
   } catch (_) {
     /* storage may be unavailable; non-fatal */
@@ -434,6 +458,32 @@ function buildRow(item) {
         const formatted = fmtPris(item[col.key]);
         td.textContent = formatted || "";
         td.classList.add("num");
+        break;
+      }
+      case "eiendomsskatt_kr":
+      case "verditakst": {
+        td.textContent = fmtPris(item[col.key]) || "";
+        td.classList.add("num");
+        break;
+      }
+      case "ferdigattest": {
+        td.textContent = fmtFerdigattest(item.ferdigattest) || "";
+        break;
+      }
+      case "utleie": {
+        td.textContent = fmtUtleie(item.utleie) || "";
+        break;
+      }
+      case "husdyr": {
+        td.textContent = fmtHusdyr(item.husdyr) || "";
+        break;
+      }
+      case "heftelser":
+      case "radon_omtalt":
+      case "boligselgerforsikring": {
+        // Via fmtJaNei, not the default branch: `String(false)` would print
+        // the literal "false" into the cell.
+        td.textContent = fmtJaNei(item[col.key]) || "";
         break;
       }
       case "sold_date": {

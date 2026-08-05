@@ -120,3 +120,82 @@ export function fmtPremium(pct) {
     " %"
   );
 }
+
+// ---------------------------------------------------------------------------
+// Salgsoppgave display (migration 015)
+//
+// The API serves these as enum keys (`ikke_tillatt`) and raw booleans. Both
+// need formatting before a human sees them: popup.js's `addRow` only skips
+// null/undefined/"", so a boolean `false` would render as the string "false",
+// and an enum key is not Norwegian.
+//
+// All four return `null` for an absent value so `addRow` drops the row. That
+// matters most for the booleans: `null` means "no salgsoppgave text existed"
+// while `false` means "the text was read and the topic wasn't mentioned" --
+// rendering "Nei" for the former would assert something never checked.
+// ---------------------------------------------------------------------------
+
+export function fmtJaNei(value) {
+  if (value === null || value === undefined) return null;
+  return value ? "Ja" : "Nei";
+}
+
+// An unmapped key is returned as-is rather than dropped: it means the parser
+// grew a value the UI hasn't caught up with, and hiding it would make that
+// invisible. Ugly beats silent.
+function fromVocab(vocab, value) {
+  if (value === null || value === undefined || value === "") return null;
+  return vocab[value] !== undefined ? vocab[value] : value;
+}
+
+const FERDIGATTEST = {
+  ferdigattest: "Ja",
+  midlertidig: "Midlertidig brukstillatelse",
+  ingen: "Nei",
+};
+
+const UTLEIE = {
+  tillatt: "Tillatt",
+  ikke_tillatt: "Ikke tillatt",
+  egen_enhet: "Egen utleiedel",
+};
+
+const HUSDYR = {
+  tillatt: "Tillatt",
+  krever_godkjenning: "Krever godkjenning",
+  ikke_tillatt: "Ikke tillatt",
+};
+
+export function fmtFerdigattest(value) {
+  return fromVocab(FERDIGATTEST, value);
+}
+
+export function fmtUtleie(value) {
+  return fromVocab(UTLEIE, value);
+}
+
+export function fmtHusdyr(value) {
+  return fromVocab(HUSDYR, value);
+}
+
+// Which table columns start hidden, given a reader's stored preferences.
+//
+// Extracted from table.js's localStorage read so the decision is testable:
+// it has to distinguish "no opinion yet" from "deliberately shown", and
+// getting that wrong either buries new columns forever or re-hides one the
+// reader just chose to show.
+//
+//   stored == null / no hiddenColumns -> first run: the defaults
+//   stored predating the migration    -> their set, plus the new columns
+//   stored carrying the flag          -> their set, exactly as-is
+export function resolveHiddenColumns(stored, defaults, newColumns) {
+  const list = stored && Array.isArray(stored.hiddenColumns)
+    ? stored.hiddenColumns
+    : null;
+  if (!list) return new Set(defaults);
+  const hidden = new Set(list);
+  if (!stored.salgsoppgaveColumnsDefaulted) {
+    newColumns.forEach((key) => hidden.add(key));
+  }
+  return hidden;
+}
