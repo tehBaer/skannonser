@@ -427,14 +427,20 @@ function openPopup(finnkode, coordinates) {
   if (!state.popup) {
     state.popup = new maplibregl.Popup({ maxWidth: "300px" });
     // The close button, a click on the map and Escape all route through
-    // remove(), which fires this. The marker -> marker path does NOT.
+    // remove(), which fires this. addTo() below ALSO fires it on every
+    // marker -> marker swap (addTo re-adds an already-added popup by calling
+    // remove() first) -- that path is instead covered by the explicit flush
+    // at the top of this function, which must run before the outgoing node
+    // is replaced.
     state.popup.on("close", flushPopupEditor);
   }
-  state.popupContent = content;
   state.popup
     .setLngLat(coordinates || [item.lng, item.lat])
     .setDOMContent(content)
     .addTo(state.map);
+  // addTo() re-adds an existing popup by calling remove() first, which fires
+  // `close` -- assign after that, or the handler nulls the handle we just set.
+  state.popupContent = content;
   panPopupIntoView();
 }
 

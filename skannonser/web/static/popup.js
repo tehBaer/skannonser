@@ -318,7 +318,7 @@ function buildEditor(item, colors, onSaved) {
   // `control` is the input to flash, or null when there is nothing to flash
   // (a chip click, or a flush on a popup that is already gone).
   async function runSave(patch, control) {
-    if (control) control.classList.remove("saved", "error");
+    komInput.classList.remove("saved", "error");
     picker.node.classList.remove("error");
     try {
       const saved = await commitAnnotation(item, {
