@@ -27,7 +27,10 @@ import {
   priceBoundOf,
 } from "./filterstate.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
-import { premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE } from "./listingmeta.js";
+import {
+  premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE,
+  FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS,
+} from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 
@@ -124,6 +127,16 @@ export function listingExcluded(item, filters, meta) {
   // listing too -- which was ~70 % of the data before the svg energy-label
   // parser fix, so "A" was mostly not-A.
   if (selectionExcludes(f.energiSelected, item.energimerke || "")) return true;
+
+  // Salgsoppgave enums join energimerking's routing, NOT the selected-set
+  // routing below: `null` here means the prospectus was never parsed, which is
+  // ~36 % of listings. Under selectedSetExcludes that would defer to
+  // `includeUnknown` (on by default), so picking "Ja" would return every
+  // unparsed listing as well -- the same way "A" was mostly not-A before the
+  // energimerking fix above.
+  if (selectionExcludes(f.ferdigattestSelected, item.ferdigattest || "")) return true;
+  if (selectionExcludes(f.utleieSelected, item.utleie || "")) return true;
+  if (selectionExcludes(f.husdyrSelected, item.husdyr || "")) return true;
 
   // Selected sets (empty = off; non-empty = only these pass).
   if (selectedSetExcludes(f.eieformSelected, item.eieform, unknownFails)) return true;
@@ -555,6 +568,29 @@ export function buildFilterPanelUI(
       { key: "", label: "Ukjent" },
     ],
     selected: filters.energiSelected,
+    onChange,
+  });
+  // Fixed vocabularies, not vocab-derived: these three are closed enums owned
+  // by the parser (skannonser/ingest/finn/parse_salgsoppgave.py), so every
+  // option is known ahead of the data and none can go stale -- which is also
+  // why pruneFilterSets deliberately leaves them alone. Labels match the popup
+  // and table via listingmeta.js's formatters.
+  selectionChipRow(fields, {
+    label: "Ferdigattest",
+    options: FERDIGATTEST_OPTIONS,
+    selected: filters.ferdigattestSelected,
+    onChange,
+  });
+  selectionChipRow(fields, {
+    label: "Utleie",
+    options: UTLEIE_OPTIONS,
+    selected: filters.utleieSelected,
+    onChange,
+  });
+  selectionChipRow(fields, {
+    label: "Husdyr",
+    options: HUSDYR_OPTIONS,
+    selected: filters.husdyrSelected,
     onChange,
   });
   selectionChipRow(fields, {

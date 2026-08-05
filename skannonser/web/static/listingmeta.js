@@ -166,6 +166,22 @@ const HUSDYR = {
   ikke_tillatt: "Ikke tillatt",
 };
 
+// Chip/popover options, built from the same vocabularies the formatters use so
+// a label can never drift between the popup, the map filter and the table
+// filter. The trailing "" is the Ukjent bucket: a null here means the
+// prospectus was never parsed, and it must be selectable in its own right
+// rather than riding along with a real value (see filters.js).
+function optionsOf(vocab) {
+  return [
+    ...Object.entries(vocab).map(([key, label]) => ({ key, label })),
+    { key: "", label: "Ukjent" },
+  ];
+}
+
+export const FERDIGATTEST_OPTIONS = optionsOf(FERDIGATTEST);
+export const UTLEIE_OPTIONS = optionsOf(UTLEIE);
+export const HUSDYR_OPTIONS = optionsOf(HUSDYR);
+
 export function fmtFerdigattest(value) {
   return fromVocab(FERDIGATTEST, value);
 }

@@ -51,6 +51,13 @@ export function defaultFilters(meta) {
     tagSelected: [],
     postnummerSelected: [],
     nabolagSelected: [],
+    // Salgsoppgave enums (migration 015). Routed like energiSelected, not
+    // eieformSelected: a missing value here means the prospectus was never
+    // parsed (~36 % of listings), so deferring it to `includeUnknown` would
+    // make picking a real value return every unparsed listing too.
+    ferdigattestSelected: [],
+    utleieSelected: [],
+    husdyrSelected: [],
     // special
     facilitiesRequired: {},
     includeUnknown: true,
@@ -86,6 +93,9 @@ export function loadFilters(meta) {
     tagSelected: [...(stored.tagSelected || [])],
     postnummerSelected: [...(stored.postnummerSelected || [])],
     nabolagSelected: [...(stored.nabolagSelected || [])],
+    ferdigattestSelected: [...(stored.ferdigattestSelected || [])],
+    utleieSelected: [...(stored.utleieSelected || [])],
+    husdyrSelected: [...(stored.husdyrSelected || [])],
     facilitiesRequired: { ...(stored.facilitiesRequired || {}) },
   };
   // The 2026-07-26 conversion from hidden-sets to selections. Inverting a
@@ -205,6 +215,9 @@ export function activeFilterEntries(filters, meta) {
   selectedSet("tagSelected", "Tag");
   selectedSet("postnummerSelected", "Postnummer");
   selectedSet("nabolagSelected", "Nabolag");
+  selectedSet("ferdigattestSelected", "Ferdigattest");
+  selectedSet("utleieSelected", "Utleie");
+  selectedSet("husdyrSelected", "Husdyr");
 
   const nFac = Object.keys(filters.facilitiesRequired || {}).length;
   if (nFac) {

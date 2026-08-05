@@ -19,6 +19,7 @@ import {
   priceBoundOf,
 } from "./filterstate.js";
 import { rangeRow, checkboxGroup, searchableMultiSelect, openPopover, closePopover } from "./filters.js";
+import { FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 const fmtKr = (bound) => (v) => (v >= bound ? "Av" : NOK.format(v) + " kr");
@@ -50,11 +51,19 @@ export const COLUMN_FILTERS = {
   energimerke: { kind: "selection", stateKey: "energiSelected", vocab: "meta:energimerker", unknownBucket: "Ukjent" },
   tilgjengelighet: { kind: "selection", stateKey: "tilgjengelighetSelected", vocab: "vocab:tilgjengelighet" },
   tag: { kind: "selection", stateKey: "tagSelected", vocab: "vocab:tags" },
+  // Fixed enums owned by the parser: `options` rather than a vocab source,
+  // since the value list is known ahead of the data and never goes stale. The
+  // lists come from listingmeta.js so the popover label matches the map chip
+  // and the cell text.
+  ferdigattest: { kind: "selection", stateKey: "ferdigattestSelected", options: FERDIGATTEST_OPTIONS },
+  utleie: { kind: "selection", stateKey: "utleieSelected", options: UTLEIE_OPTIONS },
+  husdyr: { kind: "selection", stateKey: "husdyrSelected", options: HUSDYR_OPTIONS },
   postnummer: { kind: "search-set", stateKey: "postnummerSelected", vocab: "vocab:postnummer" },
   nabolag: { kind: "search-set", stateKey: "nabolagSelected", vocab: "vocab:nabolag" },
 };
 
 function vocabOptions(desc, ctx) {
+  if (desc.options) return desc.options; // fixed enum: no data source to read
   const [src, key] = desc.vocab.split(":");
   if (src === "meta") {
     const options = (ctx.meta[key] || []).map((v) => ({ key: v, label: v }));
