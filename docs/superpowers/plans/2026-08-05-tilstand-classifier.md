@@ -1555,7 +1555,8 @@ Note the boilerplate test: `_COST_LABEL` matches "kostnadsoverslag" in prose, bu
 
 **Interfaces:**
 - Consumes: `classify_tilstand`, `classify_tilstand_batch` (Tasks 7–8), `validate_estimates` (Task 9), `TilstandRepo` (Task 3).
-- Produces: `skannonser tools classify-tilstand` with `--db`, `--project-dir`, `--limit`, `--wipe`, `--batch`, `--validate`, `--status`.
+- Produces: `skannonser tools classify-tilstand` with `--db`, `--project-dir`, `--limit`, `--all`, `--wipe`, `--batch`, `--validate`, `--status`.
+- **Spend safety rule:** classification runs (sync or batch) require either `--limit N` or an explicit `--all`. A bare invocation errors out instead of silently spending the full-corpus cost. `--status`/`--validate` are exempt (`--validate` has its own default limit of 50).
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1570,6 +1571,13 @@ def test_classify_tilstand_status_prints_coverage(...):
 def test_classify_tilstand_refuses_pending_migrations(...):
     # DB with schema but unmigrated bookkeeping -> exit code 1,
     # "pending migrations" in stderr  (copy the existing backfill test for this)
+
+def test_classify_tilstand_refuses_unbounded_run(...):
+    # migrated DB, invoke `tools classify-tilstand --db <path>` with neither
+    # --limit nor --all -> exit code 1, "--limit" mentioned in stderr.
+    # This is the spend guard: a bare invocation must never cost the full
+    # corpus. (Also proves no API call happens: no seam is injected, so an
+    # attempted classification would crash on the missing anthropic import.)
 ```
 
 The classification paths themselves are covered by Tasks 7–9; the CLI tests only guard wiring. Do not invoke the API paths from CLI tests (no seam injection through typer — keep those paths untested at CLI level, tested at driver level).
@@ -1591,6 +1599,10 @@ def classify_tilstand_cmd(
         None, "--limit",
         help="Max NEW API classifications this run -- the spend control. "
              "Cache replays are unlimited and free."),
+    all_: bool = typer.Option(
+        False, "--all",
+        help="Explicitly allow an unbounded run over every uncached ad "
+             "(full-corpus cost). Without this, --limit is required."),
     wipe: bool = typer.Option(
         False, "--wipe",
         help="Clear the tilstand tables first. The LLM cache survives, so the "
@@ -1633,6 +1645,13 @@ def classify_tilstand_cmd(
         report = validate_estimates(conn, project_dir, limit=limit or 50)
         typer.echo(f"validate: {report}")
         return
+    if limit is None and not all_:
+        typer.echo(
+            "Error: classification costs money per uncached ad. Pass --limit N "
+            "to bound this run, or --all to explicitly process everything.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     if batch:
         result = classify_tilstand_batch(conn, project_dir, limit=limit)
     else:
@@ -2087,8 +2106,10 @@ Stage 2 — ~1,000 ads (~$17):
     Watch the `annet` share of bygningsdel (SELECT bygningsdel, COUNT(*) ...):
     >20% means the enum needs new values before the full run.
 
-Stage 3 — remainder (~$110 via Batch):
-    skannonser tools classify-tilstand --batch
+Stage 3 — remainder, at your own pace and batch size:
+    skannonser tools classify-tilstand --batch --limit 2000   # repeat as desired
+    # or, to finish everything in one go (~$110 via Batch):
+    skannonser tools classify-tilstand --batch --all
     Polls until the batch ends (typically <1h), then derives rows from the
     cache. Safe to interrupt and re-run: paid responses are cached by
     content hash.
