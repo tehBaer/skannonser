@@ -660,3 +660,22 @@ details.subgroup > summary {
 .chip-row-block { margin: 10px 0; }
 .chip-bulk { display: flex; gap: 8px; }
 .chip-row-empty { font-size: 12px; padding: 2px 0; }
+
+/* Salgsoppgave-derived fields (migration 015).
+   These are extracted from the prospectus PROSE, not read from structured
+   markup, so a blank means "the document did not say" rather than "no". The
+   dotted underline marks that softness without shouting; the full explanation
+   is in the title tooltip. */
+.from-salgsoppgave {
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.sk-dl-head {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 3px;
+  cursor: help;
+}

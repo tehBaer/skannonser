@@ -29,7 +29,7 @@ import {
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE,
-  FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS,
+  FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS, SALGSOPPGAVE_HINT,
 } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
@@ -430,7 +430,7 @@ export function applyChipClick(selected, key, allKeys) {
 // FILLED and unselected ones outlined, so state reads without relying on the
 // per-value colour -- tags and lines carry their own colours and cannot also
 // use colour to mean "on".
-export function selectionChipRow(parent, { label, options, selected, colorFor, emptyIsRealValue, onChange }) {
+export function selectionChipRow(parent, { label, labelHint, options, selected, colorFor, emptyIsRealValue, onChange }) {
   const wrap = document.createElement("div");
   wrap.className = "chip-row-block";
 
@@ -442,6 +442,12 @@ export function selectionChipRow(parent, { label, options, selected, colorFor, e
   if (label) {
     const name = document.createElement("span");
     name.textContent = label;
+    // Salgsoppgave-derived rows carry the same dotted marker as their table
+    // headers, so the softness is visible wherever the field is offered.
+    if (labelHint) {
+      name.classList.add("from-salgsoppgave");
+      name.title = labelHint;
+    }
     head.appendChild(name);
   }
 
@@ -577,18 +583,21 @@ export function buildFilterPanelUI(
   // and table via listingmeta.js's formatters.
   selectionChipRow(fields, {
     label: "Ferdigattest",
+    labelHint: SALGSOPPGAVE_HINT,
     options: FERDIGATTEST_OPTIONS,
     selected: filters.ferdigattestSelected,
     onChange,
   });
   selectionChipRow(fields, {
     label: "Utleie",
+    labelHint: SALGSOPPGAVE_HINT,
     options: UTLEIE_OPTIONS,
     selected: filters.utleieSelected,
     onChange,
   });
   selectionChipRow(fields, {
     label: "Husdyr",
+    labelHint: SALGSOPPGAVE_HINT,
     options: HUSDYR_OPTIONS,
     selected: filters.husdyrSelected,
     onChange,

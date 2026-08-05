@@ -23,9 +23,11 @@ import {
   mapsUrl,
   earthUrl,
   fmtJaNei,
+  fmtOmtalt,
   fmtFerdigattest,
   fmtUtleie,
   fmtHusdyr,
+  SALGSOPPGAVE_HINT,
 } from "./listingmeta.js";
 import { colorForTag } from "./tagcolors.js";
 import { buildTagPicker } from "./tagpicker.js";
@@ -252,19 +254,30 @@ export function buildPopupContent(item, destinations, getTagColors) {
     );
   }
 
-  // Salgsoppgave enrichment (migration 015). Every row is conditional -- a
-  // listing whose prospectus never discussed a topic costs no row at all, so
-  // this block is invisible on the ~1/3 of listings with no parsed text.
-  addRow(dl, "Ferdigattest", fmtFerdigattest(item.ferdigattest));
-  addRow(dl, "Eiendomsskatt", fmtPris(item.eiendomsskatt_kr));
-  addRow(dl, "Verditakst", fmtPris(item.verditakst));
-  addRow(dl, "Utleie", fmtUtleie(item.utleie));
-  addRow(dl, "Husdyr", fmtHusdyr(item.husdyr));
-  addRow(dl, "Heftelser", fmtJaNei(item.heftelser));
-  addRow(dl, "Radon omtalt", fmtJaNei(item.radon_omtalt));
-  addRow(dl, "Boligselgerforsikring", fmtJaNei(item.boligselgerforsikring));
-
+  addRow(dl, "Verditakst", fmtPris(item.verditakst)); // pricing <dl>, like the rows above
   if (dl.childNodes.length) body.appendChild(dl);
+
+  // Salgsoppgave enrichment (migration 015), under its own heading: these come
+  // from the prospectus PROSE, so a missing row means "the document did not
+  // say", not "no". Every row is conditional, so the whole block is absent on
+  // the ~1/3 of listings with no parsed text.
+  const sdl = el("dl");
+  addRow(sdl, "Ferdigattest", fmtFerdigattest(item.ferdigattest));
+  addRow(sdl, "Eiendomsskatt", fmtPris(item.eiendomsskatt_kr));
+  addRow(sdl, "Utleie", fmtUtleie(item.utleie));
+  addRow(sdl, "Husdyr", fmtHusdyr(item.husdyr));
+  // Omtalt/Ikke omtalt, NOT Ja/Nei: these detect whether the prospectus
+  // mentions the topic, so "Heftelser: Ja" would assert something we never
+  // established.
+  addRow(sdl, "Heftelser", fmtOmtalt(item.heftelser));
+  addRow(sdl, "Radon", fmtOmtalt(item.radon_omtalt));
+  addRow(sdl, "Boligselgerforsikring", fmtJaNei(item.boligselgerforsikring));
+  if (sdl.childNodes.length) {
+    const head = el("p", "sk-dl-head", "Fra salgsoppgaven");
+    head.title = SALGSOPPGAVE_HINT;
+    body.appendChild(head);
+    body.appendChild(sdl);
+  }
 
   const links = el("div", "links");
   function addExternalLink(label, href) {

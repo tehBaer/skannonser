@@ -140,3 +140,51 @@ test("the returned set is independent of the inputs", () => {
   assert.deepEqual(stored.hiddenColumns, ["pris"]);
   assert.ok(!DEFAULTS.includes("mutated"));
 });
+
+// --- "mentioned" is not "has" -----------------------------------------------
+// `heftelser` and `radon_omtalt` are mention-detectors: the parser looks for
+// the words `servitutt|heftelse` and `radon` anywhere in the prospectus. So
+// True means "the prospectus discusses this", NOT "this property has it".
+// Rendering them as Ja/Nei was wrong and alarming -- "Radon: Ja" reads as a
+// radon problem, when half of all listings say something about radon purely as
+// boilerplate. Omtalt/Ikke omtalt says what we actually know.
+//
+// boligselgerforsikring is deliberately NOT in this group: the parser
+// distinguishes "har tegnet" from "har ikke tegnet", so Ja/Nei is a true
+// statement about the seller.
+
+import { fmtOmtalt, SALGSOPPGAVE_DERIVED } from "../../skannonser/web/static/listingmeta.js";
+
+test("fmtOmtalt says what was observed, not what is true of the property", () => {
+  assert.equal(fmtOmtalt(true), "Omtalt");
+  assert.equal(fmtOmtalt(false), "Ikke omtalt");
+});
+
+test("fmtOmtalt never renders Ja or Nei", () => {
+  for (const v of [true, false]) {
+    assert.ok(!["Ja", "Nei"].includes(fmtOmtalt(v)));
+  }
+});
+
+test("fmtOmtalt passes null through (no prospectus text at all)", () => {
+  assert.equal(fmtOmtalt(null), null);
+  assert.equal(fmtOmtalt(undefined), null);
+});
+
+test("SALGSOPPGAVE_DERIVED marks the prose-extracted fields", () => {
+  for (const key of [
+    "ferdigattest", "utleie", "husdyr", "heftelser",
+    "radon_omtalt", "boligselgerforsikring", "eiendomsskatt_kr",
+  ]) {
+    assert.ok(SALGSOPPGAVE_DERIVED.has(key), `${key} should be marked as derived`);
+  }
+});
+
+test("SALGSOPPGAVE_DERIVED excludes fields read from structured markup", () => {
+  // verditakst comes from the pricing <dl>, exactly like totalpris and
+  // omkostninger, which carry no marker. Marking it would imply a softness it
+  // does not have.
+  assert.ok(!SALGSOPPGAVE_DERIVED.has("verditakst"));
+  assert.ok(!SALGSOPPGAVE_DERIVED.has("totalpris"));
+  assert.ok(!SALGSOPPGAVE_DERIVED.has("energimerke"));
+});

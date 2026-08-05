@@ -8,7 +8,8 @@
 import { commitAnnotation } from "./annotations.js";
 import {
   isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
-  fmtJaNei, fmtFerdigattest, fmtUtleie, fmtHusdyr, resolveHiddenColumns,
+  fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, resolveHiddenColumns,
+  SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT,
 } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
@@ -333,6 +334,12 @@ function renderHead() {
   row.innerHTML = "";
   visibleColumns().forEach((col) => {
     const th = el("th", null, col.label);
+    // Mark the prose-derived columns: their blanks mean "the prospectus did not
+    // say", not "no", and that is worth knowing before filtering on one.
+    if (SALGSOPPGAVE_DERIVED.has(col.key)) {
+      th.classList.add("from-salgsoppgave");
+      th.title = SALGSOPPGAVE_HINT;
+    }
     if (col.sortable) {
       th.classList.add("sortable");
       if (state.sortKey === col.key) {
@@ -458,11 +465,17 @@ function buildRow(item) {
         break;
       }
       case "heftelser":
-      case "radon_omtalt":
+      case "radon_omtalt": {
+        // Omtalt/Ikke omtalt, NOT Ja/Nei: these detect whether the prospectus
+        // mentions the topic at all. "Radon: Ja" reads as a radon problem.
+        td.textContent = fmtOmtalt(item[col.key]) || "";
+        break;
+      }
       case "boligselgerforsikring": {
-        // Via fmtJaNei, not the default branch: `String(false)` would print
-        // the literal "false" into the cell.
-        td.textContent = fmtJaNei(item[col.key]) || "";
+        // A true yes/no: the parser distinguishes "har tegnet" from "har ikke
+        // tegnet". Via fmtJaNei, not the default branch, since `String(false)`
+        // would print the literal "false".
+        td.textContent = fmtJaNei(item.boligselgerforsikring) || "";
         break;
       }
       case "sold_date": {

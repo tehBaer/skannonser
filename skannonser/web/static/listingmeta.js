@@ -135,6 +135,39 @@ export function fmtPremium(pct) {
 // rendering "Nei" for the former would assert something never checked.
 // ---------------------------------------------------------------------------
 
+// `heftelser` and `radon_omtalt` are MENTION detectors -- the parser searches
+// the prospectus for `servitutt|heftelse` and `radon`. True therefore means
+// "the document discusses this", not "the property has it". Rendering them as
+// Ja/Nei was actively misleading: "Radon: Ja" reads as a radon problem, while
+// half of all listings mention servitutter purely as boilerplate about a right
+// of way. Say what was observed instead.
+export function fmtOmtalt(value) {
+  if (value === null || value === undefined) return null;
+  return value ? "Omtalt" : "Ikke omtalt";
+}
+
+// Fields whose value is extracted from the salgsoppgave PROSE rather than read
+// from structured markup, so the UI can mark them as softer than the rest. A
+// blank here means "the prospectus did not say", which is not the same as
+// "no" -- and for the mention-detectors above, a value means even less.
+//
+// `eiendomsskatt_kr` is included because it falls back to prose when the
+// pricing <dl> has no figure. `verditakst` is NOT: it comes only from that
+// <dl>, exactly like totalpris, which carries no marker.
+export const SALGSOPPGAVE_DERIVED = new Set([
+  "ferdigattest",
+  "utleie",
+  "husdyr",
+  "heftelser",
+  "radon_omtalt",
+  "boligselgerforsikring",
+  "eiendomsskatt_kr",
+]);
+
+export const SALGSOPPGAVE_HINT =
+  "Hentet fra teksten i salgsoppgaven \u2014 tomt felt betyr at " +
+  "salgsoppgaven ikke sa noe, ikke at svaret er nei";
+
 export function fmtJaNei(value) {
   if (value === null || value === undefined) return null;
   return value ? "Ja" : "Nei";
