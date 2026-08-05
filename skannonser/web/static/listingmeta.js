@@ -164,9 +164,19 @@ export const SALGSOPPGAVE_DERIVED = new Set([
   "eiendomsskatt_kr",
 ]);
 
+// Appended to every derived field's label. Applied from SALGSOPPGAVE_DERIVED
+// at render time rather than baked into each label, so the marker and the set
+// cannot drift apart.
+export const SALGSOPPGAVE_SUFFIX = " (s)";
+
 export const SALGSOPPGAVE_HINT =
-  "Hentet fra teksten i salgsoppgaven \u2014 tomt felt betyr at " +
+  "(s) = hentet fra teksten i salgsoppgaven \u2014 tomt felt betyr at " +
   "salgsoppgaven ikke sa noe, ikke at svaret er nei";
+
+// `label` with the marker appended when the field is prose-derived.
+export function labelWithSource(key, label) {
+  return SALGSOPPGAVE_DERIVED.has(key) ? label + SALGSOPPGAVE_SUFFIX : label;
+}
 
 export function fmtJaNei(value) {
   if (value === null || value === undefined) return null;

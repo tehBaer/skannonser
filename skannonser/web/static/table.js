@@ -9,7 +9,7 @@ import { commitAnnotation } from "./annotations.js";
 import {
   isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
   fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, resolveHiddenColumns,
-  SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT,
+  SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, labelWithSource,
 } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
@@ -333,7 +333,7 @@ function renderHead() {
   const row = document.getElementById("table-head-row");
   row.innerHTML = "";
   visibleColumns().forEach((col) => {
-    const th = el("th", null, col.label);
+    const th = el("th", null, labelWithSource(col.key, col.label));
     // Mark the prose-derived columns: their blanks mean "the prospectus did not
     // say", not "no", and that is worth knowing before filtering on one.
     if (SALGSOPPGAVE_DERIVED.has(col.key)) {
@@ -649,7 +649,14 @@ function wireToolbar() {
             render();
           });
           row.appendChild(cb);
-          row.appendChild(document.createTextNode(col.label));
+          // The picker names the same columns, so it carries the same marker.
+          const name = document.createElement("span");
+          name.textContent = labelWithSource(col.key, col.label);
+          if (SALGSOPPGAVE_DERIVED.has(col.key)) {
+            name.classList.add("from-salgsoppgave");
+            name.title = SALGSOPPGAVE_HINT;
+          }
+          row.appendChild(name);
           wrap.appendChild(row);
         });
         pop.appendChild(wrap);

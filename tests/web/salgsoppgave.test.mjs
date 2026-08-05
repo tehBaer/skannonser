@@ -188,3 +188,40 @@ test("SALGSOPPGAVE_DERIVED excludes fields read from structured markup", () => {
   assert.ok(!SALGSOPPGAVE_DERIVED.has("totalpris"));
   assert.ok(!SALGSOPPGAVE_DERIVED.has("energimerke"));
 });
+
+// --- the (s) marker ---------------------------------------------------------
+// Applied from SALGSOPPGAVE_DERIVED at render time, not baked into each
+// label, so a field added to the set is marked everywhere at once and the
+// marker can never disagree with the set.
+
+import { labelWithSource, SALGSOPPGAVE_SUFFIX, SALGSOPPGAVE_HINT }
+  from "../../skannonser/web/static/listingmeta.js";
+
+test("derived fields get the marker", () => {
+  assert.equal(labelWithSource("ferdigattest", "Ferdigattest"), "Ferdigattest (s)");
+  assert.equal(labelWithSource("radon_omtalt", "Radon"), "Radon (s)");
+  assert.equal(labelWithSource("eiendomsskatt_kr", "Eiendomsskatt"), "Eiendomsskatt (s)");
+});
+
+test("structured-source fields do NOT get the marker", () => {
+  // Marking these would imply a softness they do not have.
+  assert.equal(labelWithSource("verditakst", "Verditakst"), "Verditakst");
+  assert.equal(labelWithSource("totalpris", "Totalpris"), "Totalpris");
+  assert.equal(labelWithSource("byggeaar", "Byggeår"), "Byggeår");
+});
+
+test("every derived field is marked, with no hand-maintained second list", () => {
+  for (const key of SALGSOPPGAVE_DERIVED) {
+    assert.ok(
+      labelWithSource(key, "X").endsWith(SALGSOPPGAVE_SUFFIX),
+      `${key} is in the derived set but renders unmarked`
+    );
+  }
+});
+
+test("the tooltip explains what (s) means", () => {
+  assert.ok(
+    SALGSOPPGAVE_HINT.includes(SALGSOPPGAVE_SUFFIX.trim()),
+    "a marker nobody can decode is just noise"
+  );
+});

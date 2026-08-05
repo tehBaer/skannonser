@@ -29,7 +29,7 @@ import {
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE,
-  FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS, SALGSOPPGAVE_HINT,
+  FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS, SALGSOPPGAVE_HINT, SALGSOPPGAVE_SUFFIX,
 } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
@@ -441,7 +441,8 @@ export function selectionChipRow(parent, { label, labelHint, options, selected, 
   // so the bulk controls keep their place.
   if (label) {
     const name = document.createElement("span");
-    name.textContent = label;
+    // Same marker as the table header/picker: one field, one visual language.
+    name.textContent = labelHint ? label + SALGSOPPGAVE_SUFFIX : label;
     // Salgsoppgave-derived rows carry the same dotted marker as their table
     // headers, so the softness is visible wherever the field is offered.
     if (labelHint) {
