@@ -141,7 +141,7 @@ def test_vendor_css_served_with_css_content_type(tmp_path):
 
 def test_app_modules_served(tmp_path):
     client = _client(tmp_path)
-    for name in ("app.js", "map.js", "popup.js", "filters.js", "stations.js"):
+    for name in ("app.js", "map.js", "popup.js", "filters.js", "stations.js", "tagpicker.js"):
         resp = client.get("/" + name)
         assert resp.status_code == 200, name
         assert "javascript" in resp.headers["content-type"].lower(), name

@@ -304,19 +304,20 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
   border-radius: 5px;
   font: inherit;
 }
-.sk-editor .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.sk-editor button {
-  padding: 5px 12px;
-  border: 0;
-  border-radius: 5px;
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-  font: inherit;
-}
-.sk-editor button:disabled { opacity: 0.5; cursor: default; }
-.sk-editor .saved { font-size: 12px; color: var(--accent); }
-.sk-editor .error { font-size: 12px; color: #a2392e; }
+/* Auto-save feedback. There is no Lagre button and no status line any more:
+   a saved field flashes its border for 1.5s, a failed one keeps a red border
+   until the next attempt. Same vocabulary as the table's .cell-edit. */
+.sk-editor input.saved { border-color: var(--accent); }
+.sk-editor input.error { border-color: #a2392e; }
+
+/* Tag picker. The chips are the filter panel's .tag-chip component, sized
+   down: the popup is 280px, against a sidebar that is not. */
+.sk-editor .tag-chip-row { margin: 2px 0 0; gap: 4px; }
+.sk-editor .tag-chip { font-size: 11px; padding: 1px 8px; border-radius: 10px; }
+.sk-newtag { margin-top: 6px; }
+/* A chip click has no input to flash, so a failed tag save marks the picker.
+   Without this the click would look like it simply did nothing. */
+.sk-tagpicker.error { outline: 1px solid #a2392e; border-radius: 6px; }
 
 /* ---- Table view (Phase 5 Task 8) ------------------------------------- */
 

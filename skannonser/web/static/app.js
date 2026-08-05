@@ -413,9 +413,10 @@ function openPopup(finnkode, coordinates) {
   const item = state.itemsById.get(finnkode);
   if (!item) return;
   // Marker -> marker reuses the ONE Popup instance below, so setDOMContent
-  // silently discards the previous editor without firing `close`. Flush it
-  // first, or a kommentar typed and abandoned by clicking the next marker
-  // dies with the node.
+  // replaces the previous editor's node. Flush it BEFORE that happens, or a
+  // kommentar typed and abandoned by clicking the next marker dies with the
+  // node. (What does or doesn't fire `close` is covered where the handler is
+  // registered, below.)
   flushPopupEditor();
   // A function, not a snapshot: a tag invented in the editor only gains a
   // colour once applyAll() has rebuilt state.tagColors.
