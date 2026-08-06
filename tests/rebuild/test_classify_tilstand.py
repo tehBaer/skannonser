@@ -213,3 +213,46 @@ def test_batch_nothing_to_do(tmp_path):
         _sleep=lambda s: None, _input_fn=FAKE_INPUT,
     )
     assert result["submitted"] == 0
+
+
+def _rankable(conn, finnkode, *, active=1, tilg=None, area=None, brj=None, mvv=None):
+    conn.execute(
+        "UPDATE eiendom SET active = ?, tilgjengelighet = ?, info_usable_area = ? "
+        "WHERE finnkode = ?",
+        (active, tilg, area, finnkode),
+    )
+    conn.execute(
+        "INSERT INTO eiendom_processed (finnkode, pendl_rush_brj, pendl_rush_mvv) "
+        "VALUES (?, ?, ?)",
+        (finnkode, brj, mvv),
+    )
+    conn.commit()
+
+
+def test_limit_spends_on_the_highest_priority_ads(tmp_path):
+    conn = _env(tmp_path, {"1": "TG3 a " * 60, "2": "TG3 b " * 60, "3": "TG3 c " * 60})
+    # Insertion order is 1, 2, 3 -- priority order is 3, 2, 1.
+    _rankable(conn, "1", active=0, tilg="Solgt", area=100, brj=30, mvv=30)
+    _rankable(conn, "2", active=0, tilg="Inaktiv", area=100, brj=30, mvv=30)
+    _rankable(conn, "3", active=1, area=100, brj=30, mvv=30)
+    result = classify_tilstand(
+        conn, tmp_path, limit=2, _call=lambda t: RESPONSE, _input_fn=FAKE_INPUT
+    )
+    assert result["called"] == 2 and result["limit_skipped"] == 1
+    classified = {
+        str(r[0]) for r in conn.execute("SELECT finnkode FROM listing_tilstand")
+    }
+    assert classified == {"3", "2"}
+
+
+def test_batch_pending_follows_the_same_priority_order(tmp_path):
+    from skannonser.enrich.tilstand_backfill import _pending_inputs
+
+    conn = _env(tmp_path, {"1": "TG3 a " * 60, "2": "TG3 b " * 60, "3": "TG3 c " * 60})
+    _rankable(conn, "1", active=0, tilg="Solgt", area=100, brj=30, mvv=30)
+    _rankable(conn, "2", active=1, area=60, brj=30, mvv=30)     # active, too small
+    _rankable(conn, "3", active=1, area=100, brj=30, mvv=30)    # active, match
+    pending = _pending_inputs(conn, tmp_path, FAKE_INPUT, 2)
+    assert len(pending) == 2
+    texts = list(pending.values())
+    assert texts[0].startswith("TG3 c") and texts[1].startswith("TG3 b")

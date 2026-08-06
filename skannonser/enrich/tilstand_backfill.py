@@ -34,7 +34,7 @@ def classify_tilstand(
     if wipe:
         repo.wipe()
 
-    finnkodes = [str(r[0]) for r in conn.execute("SELECT finnkode FROM eiendom")]
+    finnkodes = repo.candidate_finnkodes()
     counts = {
         "eiendom_rows": len(finnkodes), "missing_html": 0, "empty_input": 0,
         "cached": 0, "called": 0, "limit_skipped": 0, "uncached_skipped": 0,
@@ -95,9 +95,11 @@ def _default_client():
 
 def _pending_inputs(conn, project_dir, input_fn, limit) -> dict[str, str]:
     """sha -> input text for every ad whose input is not yet cached.
-    Dedup by sha is automatic (dict key); `limit` bounds the request count."""
+    Dedup by sha is automatic (dict key); `limit` bounds the request count.
+    Walks in classification priority order, so a bounded batch buys the
+    highest-priority ads -- the same ones the sync driver would pick."""
     pending: dict[str, str] = {}
-    for (finnkode,) in conn.execute("SELECT finnkode FROM eiendom"):
+    for finnkode in TilstandRepo(conn).candidate_finnkodes():
         if limit is not None and len(pending) >= limit:
             break
         path = Path(project_dir) / "html_extracted" / f"{finnkode}.html"
