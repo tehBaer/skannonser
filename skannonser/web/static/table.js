@@ -23,6 +23,7 @@ import {
   statusVocabComplete,
   wantsClosed,
 } from "./filters.js";
+import { isBlank, matchesFilter, partitionRows } from "./tablerows.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import { attachTagList, syncTagOptions } from "./tagoptions.js";
 import {
@@ -336,10 +337,6 @@ function cellValue(item, key) {
   }
 }
 
-function isBlank(v) {
-  return v === null || v === undefined || v === "";
-}
-
 // Nulls sort last no matter the direction: only a defined-vs-defined pair
 // gets its comparison flipped by `dir`.
 function compareItems(a, b, key, dir) {
@@ -358,25 +355,6 @@ function compareItems(a, b, key, dir) {
     cmp = String(av).localeCompare(String(bv), "nb", { sensitivity: "base" });
   }
   return dir === "asc" ? cmp : -cmp;
-}
-
-function matchesFilter(item, text) {
-  if (!text) return true;
-  const needle = text.toLowerCase();
-  // Includes kommentar/tag so your own notes are searchable.
-  return [item.adresse, item.postnummer, item.boligtype, item.kommentar, item.tag].some(
-    (v) => !isBlank(v) && String(v).toLowerCase().includes(needle)
-  );
-}
-
-function visibleRows() {
-  const filtered = state.items.filter((item) => {
-    if (state.focusFinnkode && String(item.finnkode) === state.focusFinnkode) return true;
-    if (listingExcluded(item, state.filters, state.meta)) return false;
-    return matchesFilter(item, state.filterText);
-  });
-  filtered.sort((a, b) => compareItems(a, b, state.sortKey, state.sortDir));
-  return filtered;
 }
 
 function el(tag, cls, text) {
@@ -638,7 +616,11 @@ function render() {
   renderHead();
   const body = document.getElementById("table-body");
   body.innerHTML = "";
-  const rows = visibleRows();
+  const { rows, universe } = partitionRows(state.items, state.filters, state.meta, {
+    text: state.filterText,
+    focusFinnkode: state.focusFinnkode,
+  });
+  rows.sort((a, b) => compareItems(a, b, state.sortKey, state.sortDir));
   rows.forEach((item) => body.appendChild(buildRow(item)));
   if (!rows.length && state.items.length) {
     const tr = el("tr");
@@ -673,7 +655,7 @@ function render() {
     state.statusError = null;
   } else {
     setStatus(
-      rows.length + " av " + state.items.length + " annonser" +
+      rows.length + " av " + universe + " annonser" +
       (n ? " · " + n + " filtre aktive" : "")
     );
   }

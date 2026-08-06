@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { statusBadges } from "../../skannonser/web/static/tablefilters.js";
+import { partitionRows } from "../../skannonser/web/static/tablerows.js";
 
 // Badges derive from activeFilterEntries rather than a parallel count, so a
 // button's badge and the toolbar's "N filtre aktive" cannot disagree.
@@ -36,4 +37,48 @@ test("a multi-value selection sums count, not entries", () => {
     { key: "facilitiesRequired", count: 4 },
   ];
   assert.deepEqual(statusBadges(entries), { status: 3, tag: 9, facilities: 4 });
+});
+
+const META = { boligtyper: [], eieformer: [], energimerker: [], destinations: [] };
+const BASE = { includeUnknown: true, tilgjengelighetSelected: [""], tagSelected: [],
+  boligtypeSelected: [], eieformSelected: [], energiSelected: [], postnummerSelected: [],
+  nabolagSelected: [], ferdigattestSelected: [], utleieSelected: [], husdyrSelected: [],
+  alvorlighetSelected: [], facilitiesRequired: {}, travelMax: {} };
+
+const ITEMS = [
+  { finnkode: "1", adresse: "Aveien 1", tilgjengelighet: null, closed: false },
+  { finnkode: "2", adresse: "Bveien 2", tilgjengelighet: null, closed: false },
+  { finnkode: "3", adresse: "Cveien 3", tilgjengelighet: "Solgt", closed: true, sold: true },
+  { finnkode: "4", adresse: "Dveien 4", tilgjengelighet: "Inaktiv", closed: true },
+];
+
+test("the denominator counts only rows whose status is selected", () => {
+  const { rows, universe } = partitionRows(ITEMS, { ...BASE }, META, {});
+  assert.equal(universe, 2);
+  assert.equal(rows.length, 2);
+});
+
+test("selecting a closed status widens the denominator", () => {
+  const filters = { ...BASE, tilgjengelighetSelected: ["", "Solgt"] };
+  const { universe } = partitionRows(ITEMS, filters, META, {});
+  assert.equal(universe, 3);
+});
+
+// The whole point: a text search narrows the numerator, never the denominator.
+test("a text filter narrows rows but not the universe", () => {
+  const { rows, universe } = partitionRows(ITEMS, { ...BASE }, META, { text: "Aveien" });
+  assert.equal(rows.length, 1);
+  assert.equal(universe, 2);
+});
+
+test("a deep-linked row survives a status it does not match, in both counts", () => {
+  const { rows, universe } = partitionRows(ITEMS, { ...BASE }, META, { focusFinnkode: "3" });
+  assert.equal(universe, 3);
+  assert.ok(rows.some((r) => r.finnkode === "3"));
+});
+
+test("an empty status selection counts every loaded row", () => {
+  const filters = { ...BASE, tilgjengelighetSelected: [] };
+  const { universe } = partitionRows(ITEMS, filters, META, {});
+  assert.equal(universe, 4);
 });
