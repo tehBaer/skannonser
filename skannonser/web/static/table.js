@@ -741,6 +741,15 @@ function wireToolbar() {
   if (reset) {
     reset.addEventListener("click", () => {
       resetFilters(state.filters, state.meta);
+      // resetFilters restores defaultFilters, whose tilgjengelighetSelected
+      // is [] -- but [] means "unfiltered" everywhere except status, where it
+      // collides with the lazily-fetched closed bucket: an empty selection
+      // reached here (closed rows possibly already loaded this session) would
+      // show the ~4387-row table instead of the ~867-row floor a cold load
+      // shows for the same stored value. Re-seed so the reset lands on the
+      // floor like every other reset path. [""] is Til salgs only, so unlike
+      // the empty-state reset this never needs the closed bucket.
+      seedStatus(state.filters);
       if (unk) unk.checked = state.filters.includeUnknown !== false;
       closePopover();
       onFilterChange();
@@ -819,6 +828,13 @@ async function init() {
   // Live cross-tab sync: the map (or another table tab) changed the filters.
   subscribeOtherTabs(() => {
     state.filters = loadFilters(state.meta);
+    // loadFilters installs a brand-new filters object (and array), so
+    // whatever seeded THIS tab's floor at init does not carry over. Any
+    // stored blob with an empty tilgjengelighetSelected -- a stale write
+    // from before this floor existed, or a future write path that forgets
+    // to seed -- would otherwise resurrect the cold-load-vs-warm-load split
+    // this floor exists to prevent. Cheap and idempotent, so just reseed.
+    seedStatus(state.filters);
     closePopover();
     const unk = document.getElementById("table-include-unknown");
     if (unk) unk.checked = state.filters.includeUnknown !== false;
