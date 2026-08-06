@@ -1,3 +1,6 @@
+import pytest
+
+from skannonser.enrich.sentinels import TRAVEL_API_ERROR, TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC
 from skannonser.store import connection, migrations
 from skannonser.store.repositories.tilstand import TilstandRepo
 
@@ -119,13 +122,31 @@ def test_both_commutes_must_qualify(tmp_path):
     assert TilstandRepo(conn).candidate_finnkodes() == ["both", "one_only"]
 
 
-def test_travel_sentinel_is_unknown_not_a_great_commute(tmp_path):
-    # -1 is numerically under 70 but means "no routes" (enrich/sentinels.py).
+@pytest.mark.parametrize(
+    "sentinel", [TRAVEL_NO_ROUTES, TRAVEL_UNREALISTIC, TRAVEL_API_ERROR]
+)
+def test_travel_sentinel_is_unknown_not_a_great_commute(tmp_path, sentinel):
+    # All three sentinels are negative (enrich/sentinels.py) and numerically
+    # under 70, but none of them means "an excellent commute" -- the
+    # BETWEEN 0 AND 70 guard must reject all three the same way.
     conn = _rank_db(tmp_path)
-    _ad(conn, "sentinel", area=100, brj=-1, mvv=30)
+    _ad(conn, "sentinel", area=100, brj=sentinel, mvv=30)
     _ad(conn, "real", area=100, brj=30, mvv=30)
     _ad(conn, "miss", area=100, brj=90, mvv=30)
     assert TilstandRepo(conn).candidate_finnkodes() == ["real", "sentinel", "miss"]
+
+
+def test_dangling_donor_falls_back_to_own_travel(tmp_path):
+    # travel_copy_from_finnkode points at a finnkode with no
+    # eiendom_processed row at all -- the LEFT JOIN to ep_src yields NULL,
+    # and the CASE's ELSE branch must fall back to the row's own travel
+    # values rather than the row silently dropping to band 1. Give the
+    # dangling-donor row good travel of its own and prove it lands in band 0,
+    # ahead of a genuine unknown-travel row.
+    conn = _rank_db(tmp_path)
+    _ad(conn, "dangling", area=100, brj=30, mvv=30, donor="ghost")
+    _ad(conn, "unknown", area=100, brj=None, mvv=30)
+    assert TilstandRepo(conn).candidate_finnkodes() == ["dangling", "unknown"]
 
 
 def test_donor_travel_times_decide_the_band(tmp_path):
