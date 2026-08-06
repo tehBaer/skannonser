@@ -1,9 +1,10 @@
 // Sortable/filterable table view (Phase 5 Task 8): every /api/listings row
 // in one <table>, click-to-sort headers, a text filter box, inline
 // kommentar/tag editing (via the shared ./annotations.js save helper -- the
-// same one popup.js's map-popup editor uses), a lazy Sold toggle, and a
-// "Kart" link that hands off to `/#finnkode=...` (index.html/app.js's
-// existing hash-focus handling).
+// same one popup.js's map-popup editor uses), the shared Status popover
+// (filters.tilgjengelighetSelected, which lazily pulls in the closed bucket
+// the first time it is asked for), and a "Kart" link that hands off to
+// `/#finnkode=...` (index.html/app.js's existing hash-focus handling).
 
 import { commitAnnotation } from "./annotations.js";
 import {
@@ -189,8 +190,9 @@ function visibleColumns() {
 }
 
 const state = {
-  items: [], // all loaded items (eie + dnb, + sold once toggled on)
+  items: [], // all loaded items (eie + dnb, + closed once the Status filter asks for it)
   soldLoaded: false,
+  soldPromise: null, // in-flight ensureSoldForSelection, so concurrent callers share one fetch
   focusFinnkode: null, // deep-linked row (map popup "Tabell" handoff): exempt from filters
   sortKey: "scraped_at", // newest first: the scanner's daily question
   sortDir: "desc",
@@ -246,19 +248,34 @@ function setStatus(text) {
 }
 
 // Fetch the closed bucket if the current status selection asks for it and it
-// is not already loaded. Idempotent and safe to call on every filter change.
-async function ensureSoldForSelection() {
-  if (state.soldLoaded) return;
-  if (!wantsClosed(state.filters.tilgjengelighetSelected)) return;
+// is not already loaded. Idempotent and safe to call on every filter change --
+// including a second call before the first has resolved: the in-flight
+// promise is memoized on state.soldPromise so concurrent callers (e.g. Solgt
+// unchecked then re-checked while the first ~3500-row fetch is still
+// outstanding) share the one fetch instead of each concat-ing their own
+// response into state.items and duplicating every closed row. Mirrors
+// app.js's ensureSoldLoaded. Rejects on a failed fetch (status line already
+// reports it) so callers that need to know -- e.g. to roll back a selection
+// that just asked for rows which never arrived -- can catch it; the memo is
+// cleared either way so a later retry can still succeed.
+function ensureSoldForSelection() {
+  if (state.soldLoaded) return Promise.resolve();
+  if (!wantsClosed(state.filters.tilgjengelighetSelected)) return Promise.resolve();
+  if (state.soldPromise) return state.soldPromise;
   setStatus("Laster solgte …");
-  try {
-    state.items = state.items.concat(await fetchListings(1));
-    state.soldLoaded = true;
-  } catch (err) {
-    setStatus("Kunne ikke laste solgte: " + err.message);
-    return;
-  }
-  refreshVocabs();
+  state.soldPromise = (async () => {
+    try {
+      state.items = state.items.concat(await fetchListings(1));
+      state.soldLoaded = true;
+      refreshVocabs();
+    } catch (err) {
+      setStatus("Kunne ikke laste solgte: " + err.message);
+      throw err;
+    }
+  })().finally(() => {
+    state.soldPromise = null;
+  });
+  return state.soldPromise;
 }
 
 // sold=truthy fetches ONLY the sold bucket (?bucket=sold) -- the actives are
@@ -619,16 +636,18 @@ function render() {
     td.colSpan = visibleColumns().length;
     const btn = el("button", null, "Nullstill filtre");
     btn.type = "button";
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
       resetFilters(state.filters, state.meta);
       saveFilters(state.filters);
       // Also restore the status selection to its unfiltered floor. The
       // message names layers/filters as a possible cause of the empty table,
       // so the button must be able to undo a status selection too -- a
       // filters-only reset leaves a user who emptied the table via the Status
-      // popover clicking on nothing.
+      // popover clicking on nothing. resetFilters always clears
+      // tilgjengelighetSelected first, so seedStatus always re-floors it to
+      // [""] here -- which never wants the closed bucket -- so this path
+      // skips ensureSoldForSelection, same as the toolbar reset below.
       seedStatus(state.filters);
-      await ensureSoldForSelection();
       refreshVocabs();
       render();
     });
@@ -651,6 +670,65 @@ function render() {
   }
 }
 
+// The Status popover's body. Extracted so it can be re-invoked from inside
+// its own onChange: selectionChipRow repaints its chips BEFORE calling
+// onChange, so if this handler's seedStatus (or the failure rollback below)
+// changes the selection, the chips just painted are already stale -- e.g.
+// clicking "Til salgs" from [""] empties the array, paints all-off, and only
+// then does seedStatus put "" back, leaving the chip reading "off" while it
+// IS selected. Re-mounting from scratch (innerHTML + a fresh selectionChipRow
+// call) re-derives the paint from the real post-seed state instead. Safe
+// against recursion/double-binding: this only re-runs from an actual click,
+// never synchronously from within itself, and clearing `pop` first discards
+// the old chip buttons (and their listeners) rather than layering new ones
+// on top. Mirrors app.js's wireStatusToggles, which solves the same problem
+// by rebuilding its checkbox mount.
+function renderStatusPopover(pop) {
+  // Snapshot before this paint's click can mutate the array in place --
+  // exactly the selection to roll back to if the click's fetch fails below.
+  const before = state.filters.tilgjengelighetSelected.slice();
+  pop.innerHTML = "";
+  // Counts come from the derived vocabulary when the bucket is loaded, but
+  // the OPTION LIST is the fixed constant -- a status absent from the loaded
+  // items still needs a control, or there is nothing to click to trigger the
+  // fetch that would produce it.
+  const counts = new Map(state.vocabs.tilgjengelighet.map((o) => [o.key, o.count]));
+  selectionChipRow(pop, {
+    label: "Status",
+    options: TILGJENGELIGHET_OPTIONS.map((o) => ({ ...o, count: counts.get(o.key) })),
+    selected: state.filters.tilgjengelighetSelected,
+    emptyIsRealValue: true,
+    onChange: async () => {
+      seedStatus(state.filters);
+      try {
+        await ensureSoldForSelection();
+      } catch (_) {
+        // Fetch failed (status line already reports it, via
+        // ensureSoldForSelection's own setStatus -- onFilterChange's render()
+        // must not be allowed to clobber that with the row count). Undo this
+        // click: `before` still holds the row-count-accurate selection so a
+        // failed "Solgt" fetch can't leave the filter claiming rows that were
+        // never loaded, which would otherwise also cross to the map via
+        // saveFilters. Re-seed in case `before` was itself []; app.js's
+        // wireStatusToggles rolls back the same way for the same reason.
+        state.filters.tilgjengelighetSelected.splice(
+          0, state.filters.tilgjengelighetSelected.length, ...before
+        );
+        seedStatus(state.filters);
+      }
+      // Every status change moves the vocabulary boundary, fetch or not: an
+      // uncheck, or a re-check once soldLoaded is already true, never reaches
+      // ensureSoldForSelection's own refreshVocabs call, and without this the
+      // toolbar's tag chips and the popover's own counts go stale.
+      refreshVocabs();
+      // Repaint from the (possibly reseeded, possibly rolled-back) state --
+      // see the function comment above.
+      renderStatusPopover(pop);
+      onFilterChange();
+    },
+  });
+}
+
 function wireToolbar() {
   const filterInput = document.getElementById("table-filter");
   filterInput.addEventListener("input", () => {
@@ -662,24 +740,7 @@ function wireToolbar() {
   if (statusBtn) {
     statusBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      openPopover(statusBtn, (pop) => {
-        // Counts come from the derived vocabulary when the bucket is loaded,
-        // but the OPTION LIST is the fixed constant -- a status absent from
-        // the loaded items still needs a control, or there is nothing to click
-        // to trigger the fetch that would produce it.
-        const counts = new Map(state.vocabs.tilgjengelighet.map((o) => [o.key, o.count]));
-        selectionChipRow(pop, {
-          label: "Status",
-          options: TILGJENGELIGHET_OPTIONS.map((o) => ({ ...o, count: counts.get(o.key) })),
-          selected: state.filters.tilgjengelighetSelected,
-          emptyIsRealValue: true,
-          onChange: async () => {
-            seedStatus(state.filters);
-            await ensureSoldForSelection();
-            onFilterChange();
-          },
-        });
-      });
+      openPopover(statusBtn, (pop) => renderStatusPopover(pop));
     });
   }
 
@@ -747,8 +808,8 @@ function wireToolbar() {
       // reached here (closed rows possibly already loaded this session) would
       // show the ~4387-row table instead of the ~867-row floor a cold load
       // shows for the same stored value. Re-seed so the reset lands on the
-      // floor like every other reset path. [""] is Til salgs only, so unlike
-      // the empty-state reset this never needs the closed bucket.
+      // floor like every other reset path. [""] is Til salgs only, so this
+      // never needs the closed bucket -- same as the empty-state reset above.
       seedStatus(state.filters);
       if (unk) unk.checked = state.filters.includeUnknown !== false;
       closePopover();
@@ -822,7 +883,12 @@ async function init() {
     return;
   }
   seedStatus(state.filters);
-  await ensureSoldForSelection();
+  try {
+    await ensureSoldForSelection();
+  } catch (_) {
+    // setStatus already reports the failure; cold load continues with the
+    // active bucket alone (refreshVocabs below still runs either way).
+  }
   refreshVocabs();
   wireToolbar();
   // Live cross-tab sync: the map (or another table tab) changed the filters.
