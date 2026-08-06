@@ -55,6 +55,8 @@ from skannonser.config.domain import load_domain
 # ProcessedRepo.sheet_travel_values (processed.py:390-407) / the CASE blocks in
 # get_eiendom_for_sheets (db.py:829-846). `ep` is the listing's processed row,
 # `ep_src` the donor pointed at by ep.travel_copy_from_finnkode.
+# Also copied (as `_donor_travel()`) in
+# skannonser/store/repositories/tilstand.py -- keep both in sync.
 _DONOR_TRAVEL_SQL = """
     CASE
         WHEN ep.travel_copy_from_finnkode IS NOT NULL AND TRIM(ep.travel_copy_from_finnkode) != ''
@@ -192,6 +194,9 @@ def _as_float(v: Any) -> float | None:
 # tilgjengelighet NOT in {solgt, inaktiv} AND pris <= SHEETS_MAX_PRICE AND
 # CAST(info_usable_i_area AS REAL) >= MIN_BRA_I. Kommentar/Tag re-exported
 # from annotations (NULL when absent).
+# The active/tilgjengelighet half of this WHERE clause is also copied (as
+# `_STATUS_TIER`) in skannonser/store/repositories/tilstand.py -- keep both
+# in sync.
 _EIE_SQL = (
     "SELECT "
     + _EIE_SELECT_HEAD

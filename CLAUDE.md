@@ -19,7 +19,7 @@ under `.claude/worktrees/`). Then run:
 A worktree checkout omits every gitignored path, and three matter here — the
 venv, a crawled HTML fixture (two `test_dnb.py` tests fail without it), and the
 live DB. The script restores all three and runs a baseline `pytest`. Expect
-**659 passed**; anything less was already broken before you arrived.
+**871 passed**; anything less was already broken before you arrived.
 
 Worktrees share one object store, so commits are visible across them instantly —
 no push or fetch needed. Git refuses to check out the same branch in two
