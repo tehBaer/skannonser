@@ -9,7 +9,7 @@ from skannonser.ingest.finn.payload import Section
 from skannonser.enrich.tilstand import (
     GRID, BYGNINGSDEL, classify_input, content_sha, select_sections,
     TILSTAND_SCHEMA, TilstandResponse, cache_get, cache_put, classify_one,
-    _response_text,
+    _response_text, compute_rollup,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finn"
@@ -122,3 +122,54 @@ def test_response_text_returns_text_on_normal_stop():
         content=[SimpleNamespace(type="text", text="hello")],
     )
     assert _response_text(response) == "hello"
+
+
+def _resp(findings, egen_present=True, egen=()):
+    return TilstandResponse.model_validate({
+        "findings": findings,
+        "egenerklaering_present": egen_present,
+        "egenerklaering": list(egen),
+        "tilstandsrapport_dato": None,
+        "tilstandsrapport_utsteder": None,
+    })
+
+
+F_BAD = {"tg": 3, "bygningsdel": "vatrom", "tiltak": None, "alvorlighet": "alvorlig",
+         "kostnad_lav": 200_000, "kostnad_hoy": 500_000, "kostnad_kilde": "takst"}
+F_TAK = {"tg": 2, "bygningsdel": "tak", "tiltak": None, "alvorlighet": "mindre",
+         "kostnad_lav": 10_000, "kostnad_hoy": 50_000, "kostnad_kilde": "estimat"}
+
+
+def test_rollup_sums_and_worst():
+    r = compute_rollup(_resp([F_BAD, F_TAK], egen=["fuktskade"]))
+    assert (r["tg2_count"], r["tg3_count"]) == (1, 1)
+    assert (r["reparasjon_lav"], r["reparasjon_hoy"]) == (210_000, 550_000)
+    # midpoints 350k + 30k = 380k, rounded to nearest 10k
+    assert r["reparasjon_est"] == 380_000
+    assert r["alvorlighet"] == "alvorlig"
+    assert r["verste_bygningsdel"] == "vatrom"
+    assert r["reparasjon_kilde"] == "blandet"
+    assert r["egenerklaering_antall"] == 1
+
+
+def test_rollup_severity_tie_broken_by_kostnad_hoy():
+    a = {**F_BAD, "bygningsdel": "tak", "kostnad_hoy": 300_000}
+    b = {**F_BAD, "bygningsdel": "vatrom", "kostnad_hoy": 500_000}
+    assert compute_rollup(_resp([a, b]))["verste_bygningsdel"] == "vatrom"
+
+
+def test_rollup_zero_findings_is_counts_zero_not_null():
+    r = compute_rollup(_resp([]))
+    assert (r["tg2_count"], r["tg3_count"]) == (0, 0)
+    assert r["reparasjon_lav"] is None and r["reparasjon_est"] is None
+    assert r["alvorlighet"] is None and r["reparasjon_kilde"] is None
+
+
+def test_rollup_egen_absent_section_is_null_not_zero():
+    assert compute_rollup(_resp([], egen_present=False))["egenerklaering_antall"] is None
+    assert compute_rollup(_resp([], egen_present=True))["egenerklaering_antall"] == 0
+
+
+def test_rollup_kilde_uniform():
+    assert compute_rollup(_resp([F_BAD]))["reparasjon_kilde"] == "takst"
+    assert compute_rollup(_resp([F_TAK]))["reparasjon_kilde"] == "estimat"

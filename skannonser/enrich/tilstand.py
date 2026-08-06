@@ -236,3 +236,45 @@ def cache_put(conn: sqlite3.Connection, sha: str, response_json: str, model: str
         (sha, response_json, model),
     )
     conn.commit()
+
+
+_SEVERITY_ORDER = {"kosmetisk": 0, "mindre": 1, "vesentlig": 2, "alvorlig": 3}
+
+
+def compute_rollup(resp: TilstandResponse) -> dict:
+    """Per-listing rollups (design spec 'Rollup semantics'). Pure function so
+    the max/sum/tie-break rules are testable without a DB or an API call."""
+    findings = resp.findings
+    costed = [f for f in findings
+              if f.kostnad_lav is not None and f.kostnad_hoy is not None]
+    if costed:
+        lav = sum(f.kostnad_lav for f in costed)
+        hoy = sum(f.kostnad_hoy for f in costed)
+        est = round(sum((f.kostnad_lav + f.kostnad_hoy) / 2 for f in costed) / 10_000) * 10_000
+        kilder = {f.kostnad_kilde for f in costed}
+        kilde = "takst" if kilder == {"takst"} else (
+            "estimat" if kilder == {"estimat"} else "blandet")
+    else:
+        lav = hoy = est = kilde = None
+    if findings:
+        worst = max(findings,
+                    key=lambda f: (_SEVERITY_ORDER[f.alvorlighet], f.kostnad_hoy or 0))
+        alvorlighet, verste = worst.alvorlighet, worst.bygningsdel
+    else:
+        alvorlighet = verste = None
+    return {
+        "tg2_count": sum(1 for f in findings if f.tg == 2),
+        "tg3_count": sum(1 for f in findings if f.tg == 3),
+        "reparasjon_lav": lav,
+        "reparasjon_hoy": hoy,
+        "reparasjon_est": est,
+        "alvorlighet": alvorlighet,
+        "verste_bygningsdel": verste,
+        "reparasjon_kilde": kilde,
+        "tilstandsrapport_dato": resp.tilstandsrapport_dato,
+        "tilstandsrapport_utsteder": resp.tilstandsrapport_utsteder,
+        # NULL = no egenerklaering section existed; 0 = section existed, seller
+        # disclosed nothing. Same discipline as Phase 1's null-vs-false rule.
+        "egenerklaering_antall": (
+            len(resp.egenerklaering) if resp.egenerklaering_present else None),
+    }
