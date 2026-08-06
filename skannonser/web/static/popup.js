@@ -28,6 +28,10 @@ import {
   fmtUtleie,
   fmtHusdyr,
   SALGSOPPGAVE_HINT,
+  fmtAlvorlighet,
+  fmtBygningsdel,
+  fmtKostnadBand,
+  TILSTAND_HINT,
 } from "./listingmeta.js";
 import { colorForTag } from "./tagcolors.js";
 import { buildTagPicker } from "./tagpicker.js";
@@ -277,6 +281,39 @@ export function buildPopupContent(item, destinations, getTagColors) {
     head.title = SALGSOPPGAVE_HINT;
     body.appendChild(head);
     body.appendChild(sdl);
+  }
+
+  // Tilstand classifier (migration 016), under its own heading. Absent
+  // entirely when the listing was never classified.
+  const tdl = el("dl");
+  if (item.tg2_count !== null && item.tg2_count !== undefined) {
+    addRow(tdl, "TG2 / TG3", item.tg2_count + " / " + item.tg3_count);
+  }
+  addRow(tdl, "Alvorlighet",
+    item.alvorlighet
+      ? fmtAlvorlighet(item.alvorlighet)
+        + (item.verste_bygningsdel ? " – " + fmtBygningsdel(item.verste_bygningsdel) : "")
+      : null);
+  addRow(tdl, "Utbedring",
+    fmtKostnadBand(item.reparasjon_lav, item.reparasjon_hoy, item.reparasjon_kilde));
+  if (tdl.childNodes.length) {
+    const thead = el("p", "sk-dl-head", "Tilstand");
+    thead.title = TILSTAND_HINT;
+    body.appendChild(thead);
+    body.appendChild(tdl);
+    // Findings list, worst first (API pre-sorts by kostnad_hoy DESC)
+    if (item.tg_findings && item.tg_findings.length) {
+      const ul = el("ul", "sk-tg-findings");
+      for (const f of item.tg_findings) {
+        const band = fmtKostnadBand(f.kostnad_lav, f.kostnad_hoy, f.kostnad_kilde);
+        ul.appendChild(el(
+          "li", null,
+          "TG" + f.tg + " " + fmtBygningsdel(f.bygningsdel)
+            + (band ? " – " + band : "")
+        ));
+      }
+      body.appendChild(ul);
+    }
   }
 
   const links = el("div", "links");

@@ -237,6 +237,72 @@ export function fmtHusdyr(value) {
   return fromVocab(HUSDYR, value);
 }
 
+// ---------------------------------------------------------------------------
+// Tilstand classifier (migration 016)
+//
+// Same discipline as the salgsoppgave fields: null means "never classified",
+// which addRow must skip -- never render as "0 kr" or "Nei".
+// ---------------------------------------------------------------------------
+
+const ALVORLIGHET_LABELS = {
+  kosmetisk: "Kosmetisk",
+  mindre: "Mindre",
+  vesentlig: "Vesentlig",
+  alvorlig: "Alvorlig",
+};
+
+export const BYGNINGSDEL_LABELS = {
+  vatrom: "Våtrom",
+  kjokken: "Kjøkken",
+  tak: "Tak",
+  vinduer_dorer: "Vinduer/dører",
+  yttervegg: "Yttervegg",
+  etasjeskille: "Etasjeskille",
+  grunn_drenering: "Grunn/drenering",
+  vvs: "VVS",
+  elektrisk: "Elektrisk",
+  ventilasjon: "Ventilasjon",
+  overflater: "Overflater",
+  balkong_terrasse: "Balkong/terrasse",
+  trapp: "Trapp",
+  radon: "Radon",
+  vaskerom: "Vaskerom",
+  utvendig_annet: "Utvendig annet",
+  helhet: "Helhet",
+  annet: "Annet",
+};
+
+export function fmtAlvorlighet(value) {
+  return fromVocab(ALVORLIGHET_LABELS, value);
+}
+
+export function fmtBygningsdel(value) {
+  return fromVocab(BYGNINGSDEL_LABELS, value);
+}
+
+// nb-NO's grouping separator is U+00A0 (NBSP), not a plain space -- \s
+// matches it, so this normalizes to a plain space for deterministic output
+// (tests, and consistent copy/paste).
+function fmtKr(n) {
+  return n.toLocaleString("nb-NO").replace(/\s/g, " ");
+}
+
+// Cost band with provenance: `takst` is the surveyor's own figure and renders
+// plain; `estimat`/`blandet` carry model judgment and are hedged with "~".
+// The grid's 1 000 000 ceiling means "1M+", so a band touching it is open.
+export function fmtKostnadBand(lav, hoy, kilde) {
+  if (lav === null || lav === undefined || hoy === null || hoy === undefined) return null;
+  const hedge = kilde === "takst" ? "" : "~";
+  if (lav === 0) return hedge + "under " + fmtKr(hoy) + " kr";
+  if (hoy === 1000000) return hedge + "over " + fmtKr(lav) + " kr";
+  if (lav === hoy) return hedge + fmtKr(lav) + " kr";
+  return hedge + fmtKr(lav) + " – " + fmtKr(hoy) + " kr";
+}
+
+export const TILSTAND_HINT =
+  "Fra tilstandsrapporten, KI-klassifisert. ~ = kostnadsanslag fra modellen, " +
+  "ikke takstmannens tall. Tomt felt betyr at ingen tilstandsrapport ble lest.";
+
 // Which table columns start hidden, given a reader's stored preferences.
 //
 // Extracted from table.js's localStorage read so the decision is testable:

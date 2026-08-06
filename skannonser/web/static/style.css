@@ -679,3 +679,18 @@ details.subgroup > summary {
   text-underline-offset: 3px;
   cursor: help;
 }
+
+/* Tilstand classifier findings list (migration 016) -- worst-first, one line
+   per TG2/TG3 item. Compact like .sk-nabolag-row: this sits directly under
+   the Tilstand <dl> and can run to several lines on a listing with many
+   findings. */
+.sk-tg-findings {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  font-size: 12px;
+}
+.sk-tg-findings li {
+  margin: 0 0 3px;
+  color: var(--muted);
+}
