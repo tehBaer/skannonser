@@ -255,6 +255,22 @@ def _maanedskost(rec: dict) -> int | None:
     return felleskost + kommunale_mnd
 
 
+def _reparasjon_usikkerhet(rec: dict) -> int | None:
+    """Half the width of the repair-cost range, so the table can show
+    `est ± usikkerhet` instead of a bare midpoint that hides a 2-3x spread.
+
+    `reparasjon_est` is the sum of per-finding midpoints and the bounds are the
+    sums of the per-finding bounds, so est is the midpoint of [lav, hoy] and
+    this reconstructs the range exactly (bar est's 10k rounding). Derived here
+    rather than stored, for the same reason as `_pris_kvm_totalpris`: a stored
+    copy goes stale silently the moment a re-classification moves a bound.
+    None -- never 0 -- when nothing was costed; 0 would read as certainty."""
+    lav, hoy = rec.get("REPARASJON_LAV"), rec.get("REPARASJON_HOY")
+    if lav is None or hoy is None:
+        return None
+    return (hoy - lav) // 2
+
+
 def _as_bool(value: Any) -> bool | None:
     """SQLite stores BOOLEAN as 0/1/NULL; the API contract is True/False/None.
     ``None`` stays ``None`` -- distinct from ``False`` -- see
@@ -392,6 +408,7 @@ def _eie_item(
         "reparasjon_lav": rec.get("REPARASJON_LAV"),
         "reparasjon_hoy": rec.get("REPARASJON_HOY"),
         "reparasjon_est": rec.get("REPARASJON_EST"),
+        "reparasjon_usikkerhet": _reparasjon_usikkerhet(rec),
         "alvorlighet": rec.get("ALVORLIGHET"),
         "verste_bygningsdel": rec.get("VERSTE_BYGNINGSDEL"),
         "reparasjon_kilde": rec.get("REPARASJON_KILDE"),
