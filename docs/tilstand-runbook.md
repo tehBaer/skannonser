@@ -49,6 +49,19 @@ skannonser tools classify-tilstand --batch --all
 The CLI requires either `--limit` or `--all`; a classification run without
 one of these is refused.
 
+Polls until the batch ends (typically <1h), then derives rows from the
+cache. Safe to interrupt and re-run: paid responses are cached by
+content hash.
+
+**Operational note:** The batch poll loop waits until the batch ends
+(typically <1h) and has no client-side timeout. Results are cached only
+AFTER the batch ends — a Ctrl-C mid-poll abandons that batch's results
+client-side even though the batch keeps running (and billing) server-side,
+and a re-run submits a NEW batch for the same ads, billing them twice.
+If a batch seems stuck: check it in the Anthropic Console before killing
+the command; prefer waiting. Ctrl-C in SYNC mode (no --batch) is always
+safe — each ad is cached as it completes.
+
 ## What `--limit` buys you
 
 The walk is ordered, so a bounded run is a *prefix of the priority list*, not a
@@ -62,19 +75,6 @@ to active listings matching both criteria, and the 3434 sold ads sort last.
 
 Nothing is excluded — `--all` still covers every ad, and cached responses replay
 free in any order. Re-running with a larger `--limit` simply extends the prefix.
-
-Polls until the batch ends (typically <1h), then derives rows from the
-cache. Safe to interrupt and re-run: paid responses are cached by
-content hash.
-
-**Operational note:** The batch poll loop waits until the batch ends
-(typically <1h) and has no client-side timeout. Results are cached only
-AFTER the batch ends — a Ctrl-C mid-poll abandons that batch's results
-client-side even though the batch keeps running (and billing) server-side,
-and a re-run submits a NEW batch for the same ads, billing them twice.
-If a batch seems stuck: check it in the Anthropic Console before killing
-the command; prefer waiting. Ctrl-C in SYNC mode (no --batch) is always
-safe — each ad is cached as it completes.
 
 ## Deploy
 
