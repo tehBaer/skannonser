@@ -53,7 +53,14 @@ Polls until the batch ends (typically <1h), then derives rows from the
 cache. Safe to interrupt and re-run: paid responses are cached by
 content hash.
 
-**Operational note:** The batch poll loop waits until the batch ends (typically <1h) and has no client-side timeout; if a batch appears stuck for hours, Ctrl-C is safe — paid responses already collected are cached, and re-running resumes from the cache.
+**Operational note:** The batch poll loop waits until the batch ends
+(typically <1h) and has no client-side timeout. Results are cached only
+AFTER the batch ends — a Ctrl-C mid-poll abandons that batch's results
+client-side even though the batch keeps running (and billing) server-side,
+and a re-run submits a NEW batch for the same ads, billing them twice.
+If a batch seems stuck: check it in the Anthropic Console before killing
+the command; prefer waiting. Ctrl-C in SYNC mode (no --batch) is always
+safe — each ad is cached as it completes.
 
 ## Deploy
 
@@ -65,5 +72,6 @@ sync/replay locally-built rows via the normal pipeline-write path ->
 ## Ongoing
 
 New listings are classified by re-running
-`skannonser tools classify-tilstand` locally (incremental: cache hits are
-free, only genuinely new salgsoppgave text is billed -- a few ads/day).
+`skannonser tools classify-tilstand --limit 100` locally (incremental:
+cache hits are free, only genuinely new salgsoppgave text is billed --
+a few ads/day, so any reasonable --limit covers it).
