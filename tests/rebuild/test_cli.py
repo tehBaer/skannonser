@@ -168,6 +168,7 @@ def test_cli_nightly_no_drift_key_when_finn_step_hard_failed(tmp_path, monkeypat
 def _migrated_db(tmp_path):
     from skannonser.store import connection, migrations
 
+    tmp_path.mkdir(parents=True, exist_ok=True)
     db = tmp_path / "tilstand-cli.db"
     c = connection.connect(db)
     migrations.migrate(c)
@@ -249,3 +250,57 @@ def test_classify_tilstand_wipe_clears_tables_without_api_call(tmp_path):
 
     conn = connection.connect(db)
     assert conn.execute("SELECT COUNT(*) FROM listing_tilstand").fetchone()[0] == 0
+
+
+def test_export_then_import_tilstand_cache_roundtrips(tmp_path):
+    """The local-classify -> server-publish path, end to end. Only the cache
+    moves; the receiving side derives findings/rollups from it."""
+    import json
+
+    from skannonser.enrich.tilstand import cache_put, export_cache
+
+    src = _migrated_db(tmp_path / "a")
+    from skannonser.store import connection
+
+    conn = connection.connect(src)
+    cache_put(conn, "a" * 64, '{"findings": []}', model="claude-opus-5")
+    conn.close()
+
+    out = tmp_path / "cache.json"
+    result = CliRunner().invoke(
+        app, ["tools", "export-tilstand-cache", "--db", str(src), "--out", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "1" in result.output
+    assert json.loads(out.read_text())[0]["content_sha256"] == "a" * 64
+
+    dst = _migrated_db(tmp_path / "b")
+    result = CliRunner().invoke(
+        app,
+        ["tools", "import-tilstand-cache", "--db", str(dst), "--in", str(out), "--no-derive"],
+    )
+    assert result.exit_code == 0, result.output
+    assert export_cache(connection.connect(dst))[0]["response_json"] == '{"findings": []}'
+
+
+def test_import_tilstand_cache_errors_on_missing_file(tmp_path):
+    db = _migrated_db(tmp_path)
+    result = CliRunner().invoke(
+        app,
+        ["tools", "import-tilstand-cache", "--db", str(db),
+         "--in", str(tmp_path / "nope.json"), "--no-derive"],
+    )
+    assert result.exit_code == 1, result.output
+    assert "not found" in result.output
+
+
+def test_export_tilstand_cache_refuses_pending_migrations(tmp_path):
+    from skannonser.store import connection
+
+    db = tmp_path / "unmigrated.db"
+    connection.connect(db).close()
+    result = CliRunner().invoke(
+        app, ["tools", "export-tilstand-cache", "--db", str(db), "--out", str(tmp_path / "o.json")]
+    )
+    assert result.exit_code == 1, result.output
+    assert "pending migrations" in result.output

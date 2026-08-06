@@ -191,3 +191,83 @@ def classify_tilstand_cmd(
         result = classify_tilstand(conn, project_dir, limit=limit)
     typer.echo(f"classify-tilstand: {result}")
     typer.echo(f"coverage: {repo.coverage()}")
+
+
+@app.command(name="export-tilstand-cache")
+def export_tilstand_cache_cmd(
+    out: Path = typer.Option(..., "--out", help="File to write the cache JSON to"),
+    db: Path | None = typer.Option(None, "--db", help="Override the DB path for this run"),
+) -> None:
+    """Dump the classifier response cache to a JSON file, for moving results
+    to another machine (typically local -> server).
+
+    Only the cache travels: findings and rollups are derived from it, so the
+    receiving side rebuilds them for free with import-tilstand-cache. Nothing
+    here calls the API or costs anything."""
+    import json
+
+    from skannonser.enrich.tilstand import export_cache
+
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+    conn = connection.connect(db_path)
+    if migrations.pending(conn):
+        typer.echo("Error: pending migrations - run 'skannonser db migrate' first", err=True)
+        raise typer.Exit(code=1)
+
+    rows = export_cache(conn)
+    out.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    typer.echo(f"export-tilstand-cache: {len(rows)} rows -> {out}")
+
+
+@app.command(name="import-tilstand-cache")
+def import_tilstand_cache_cmd(
+    in_: Path = typer.Option(..., "--in", help="Cache JSON produced by export-tilstand-cache"),
+    db: Path | None = typer.Option(None, "--db", help="Override the DB path for this run"),
+    project_dir: Path = typer.Option(
+        Path("data/eiendom"), "--project-dir",
+        help="FINN cache root (html_extracted/ lives here) -- needed by --derive"
+    ),
+    derive: bool = typer.Option(
+        True, "--derive/--no-derive",
+        help="After importing, rebuild findings and rollups from the cache. "
+             "Replays cached responses only -- never calls the API."),
+) -> None:
+    """Load a cache file produced by export-tilstand-cache, then (by default)
+    derive findings and rollups from it.
+
+    The derive pass reads the local html_extracted cache to match each ad to a
+    cached response by content hash, so ads sharing identical condition text
+    are all filled from one response. No API key needed on this side."""
+    import json
+
+    from skannonser.enrich.tilstand import import_cache
+    from skannonser.enrich.tilstand_backfill import classify_tilstand
+    from skannonser.store.repositories.tilstand import TilstandRepo
+
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+    if not in_.is_file():
+        typer.echo(f"Error: cache file not found at {in_}", err=True)
+        raise typer.Exit(code=1)
+    conn = connection.connect(db_path)
+    if migrations.pending(conn):
+        typer.echo("Error: pending migrations - run 'skannonser db migrate' first", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        rows = json.loads(in_.read_text(encoding="utf-8"))
+        result = import_cache(conn, rows)
+    except (ValueError, json.JSONDecodeError) as exc:
+        typer.echo(f"Error: malformed cache file: {exc}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"import-tilstand-cache: {result}")
+
+    if derive:
+        derived = classify_tilstand(conn, project_dir, cache_only=True)
+        typer.echo(f"derive: {derived}")
+        typer.echo(f"coverage: {TilstandRepo(conn).coverage()}")

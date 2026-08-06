@@ -239,6 +239,55 @@ def cache_put(conn: sqlite3.Connection, sha: str, response_json: str, model: str
     conn.commit()
 
 
+_CACHE_COLS = ("content_sha256", "response_json", "model", "created_at")
+
+
+def export_cache(conn: sqlite3.Connection) -> list[dict]:
+    """Every cached classifier response, as plain dicts.
+
+    The cache is the ONLY thing worth moving between machines: findings and
+    rollups are derived from it, so a receiving DB replays them for free with
+    `classify-tilstand --limit 0`. Classification runs locally (it needs an
+    API key); the server only ever reads the results.
+    """
+    return [
+        dict(zip(_CACHE_COLS, row))
+        for row in conn.execute(
+            f"SELECT {', '.join(_CACHE_COLS)} FROM salgsoppgave_llm_cache "
+            "ORDER BY content_sha256"
+        )
+    ]
+
+
+def import_cache(conn: sqlite3.Connection, rows: list[dict]) -> dict:
+    """Insert exported rows, returning {"imported": n, "replaced": n}.
+
+    `created_at` travels with the row rather than being re-stamped: it records
+    when the response was paid for, which keeps a re-export byte-identical.
+    Validates the whole batch before writing anything, so a malformed export
+    file cannot leave the cache half-populated.
+    """
+    for row in rows:
+        missing = [c for c in _CACHE_COLS if c not in row]
+        if missing:
+            raise ValueError(f"cache row missing {missing}: {row!r}")
+
+    existing = {r[0] for r in conn.execute("SELECT content_sha256 FROM salgsoppgave_llm_cache")}
+    replaced = sum(1 for r in rows if r["content_sha256"] in existing)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.executemany(
+            f"INSERT OR REPLACE INTO salgsoppgave_llm_cache ({', '.join(_CACHE_COLS)}) "
+            "VALUES (?, ?, ?, ?)",
+            [tuple(r[c] for c in _CACHE_COLS) for r in rows],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"imported": len(rows) - replaced, "replaced": replaced}
+
+
 _SEVERITY_ORDER = {"kosmetisk": 0, "mindre": 1, "vesentlig": 2, "alvorlig": 3}
 
 

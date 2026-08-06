@@ -305,6 +305,19 @@ export const TILSTAND_HINT =
   "ikke takstmannens tall. Tomt felt betyr at ingen tilstandsrapport ble lest " +
   "— eller at rapporten ikke inneholdt TG2/TG3-funn.";
 
+// Columns whose values a LANGUAGE MODEL produced, as opposed to
+// SALGSOPPGAVE_DERIVED above, which is regex over the same prose. The
+// distinction is worth a separate colour rather than a shared marker: a regex
+// is wrong in ways you can predict from reading it, while a model can be
+// fluently and confidently wrong about a real defect -- most of all for
+// `reparasjon_est`, where an unstated cost is the model's own guess. Any
+// future LLM-backed column belongs in this set, and in no other.
+export const TILSTAND_DERIVED = new Set([
+  "tg3_count",
+  "reparasjon_est",
+  "alvorlighet",
+]);
+
 // Which table columns start hidden, given a reader's stored preferences.
 //
 // Extracted from table.js's localStorage read so the decision is testable:

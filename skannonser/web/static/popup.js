@@ -297,7 +297,10 @@ export function buildPopupContent(item, destinations, getTagColors) {
   addRow(tdl, "Utbedring",
     fmtKostnadBand(item.reparasjon_lav, item.reparasjon_hoy, item.reparasjon_kilde));
   if (tdl.childNodes.length) {
-    const thead = el("p", "sk-dl-head", "Tilstand");
+    // Same violet provenance marker the table's LLM columns carry -- these are
+    // the identical numbers, so the two views must not disagree about how they
+    // were produced.
+    const thead = el("p", "sk-dl-head from-llm-head", "Tilstand");
     thead.title = TILSTAND_HINT;
     body.appendChild(thead);
     body.appendChild(tdl);

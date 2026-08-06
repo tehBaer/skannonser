@@ -179,3 +179,71 @@ def test_rollup_est_rounds_half_up_not_bankers():
     f = {"tg": 2, "bygningsdel": "tak", "tiltak": None, "alvorlighet": "mindre",
          "kostnad_lav": 0, "kostnad_hoy": 10_000, "kostnad_kilde": "estimat"}
     assert compute_rollup(_resp([f]))["reparasjon_est"] == 10_000
+
+
+# --- cache export / import -------------------------------------------------
+# Moving classifier results between machines (local classify -> server) needs
+# only the CACHE: everything else is derived from it. These two functions are
+# what the `tools export-tilstand-cache` / `import-tilstand-cache` pair wrap.
+
+def _cache_db(tmp_path, name="c.db"):
+    from skannonser.store import connection, migrations
+
+    conn = connection.connect(tmp_path / name)
+    migrations.migrate(conn)
+    return conn
+
+
+def test_export_cache_returns_all_rows(tmp_path):
+    from skannonser.enrich.tilstand import cache_put, export_cache
+
+    conn = _cache_db(tmp_path)
+    assert export_cache(conn) == []
+    cache_put(conn, "a" * 64, '{"x": 1}', model="m1")
+    cache_put(conn, "b" * 64, '{"x": 2}', model="m2")
+    rows = export_cache(conn)
+    assert len(rows) == 2
+    assert {r["content_sha256"] for r in rows} == {"a" * 64, "b" * 64}
+    assert set(rows[0]) == {"content_sha256", "response_json", "model", "created_at"}
+
+
+def test_import_cache_roundtrips_and_preserves_model_and_timestamp(tmp_path):
+    from skannonser.enrich.tilstand import cache_put, export_cache, import_cache
+
+    src = _cache_db(tmp_path, "src.db")
+    cache_put(src, "a" * 64, '{"x": 1}', model="claude-opus-5")
+    exported = export_cache(src)
+
+    dst = _cache_db(tmp_path, "dst.db")
+    assert import_cache(dst, exported) == {"imported": 1, "replaced": 0}
+    got = export_cache(dst)[0]
+    # created_at travels with the row: it records when the response was PAID
+    # for, not when it was copied, so a re-export is idempotent.
+    assert got == exported[0]
+
+
+def test_import_cache_reports_replacements_separately(tmp_path):
+    from skannonser.enrich.tilstand import cache_get, cache_put, import_cache
+
+    conn = _cache_db(tmp_path)
+    cache_put(conn, "a" * 64, '{"old": true}', model="m")
+    result = import_cache(conn, [
+        {"content_sha256": "a" * 64, "response_json": '{"new": true}',
+         "model": "m2", "created_at": "2026-01-01T00:00:00"},
+        {"content_sha256": "b" * 64, "response_json": '{"x": 1}',
+         "model": "m2", "created_at": "2026-01-01T00:00:00"},
+    ])
+    assert result == {"imported": 1, "replaced": 1}
+    assert cache_get(conn, "a" * 64) == '{"new": true}'
+
+
+def test_import_cache_rejects_rows_missing_required_keys(tmp_path):
+    import pytest
+
+    from skannonser.enrich.tilstand import export_cache, import_cache
+
+    conn = _cache_db(tmp_path)
+    with pytest.raises(ValueError):
+        import_cache(conn, [{"content_sha256": "a" * 64}])
+    # a rejected batch writes nothing at all
+    assert export_cache(conn) == []

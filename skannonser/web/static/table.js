@@ -10,7 +10,8 @@ import {
   isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
   fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, fmtAlvorlighet,
   resolveHiddenColumns, applyTilstandColumnsMigration,
-  SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, TILSTAND_HINT, labelWithSource,
+  SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, TILSTAND_DERIVED, TILSTAND_HINT,
+  labelWithSource,
 } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
@@ -375,10 +376,10 @@ function renderHead() {
     if (SALGSOPPGAVE_DERIVED.has(col.key)) {
       th.classList.add("from-salgsoppgave");
       th.title = SALGSOPPGAVE_HINT;
-    } else if (col.key === "alvorlighet") {
-      // Same dotted-underline soft-field marker, AI-classified rather than
-      // prose-derived -- see TILSTAND_HINT for what "blank" means here.
-      th.classList.add("from-salgsoppgave");
+    } else if (TILSTAND_DERIVED.has(col.key)) {
+      // Distinct from the regex-derived marker above, and deliberately louder:
+      // these are a model's judgement, not a pattern match over the prose.
+      th.classList.add("from-llm");
       th.title = TILSTAND_HINT;
     }
     if (col.sortable) {
@@ -454,6 +455,9 @@ function buildRow(item) {
 
   visibleColumns().forEach((col) => {
     const td = el("td");
+    // Tint the whole column, not just its header: a reader scanning rows
+    // should see at a glance which numbers a model produced.
+    if (TILSTAND_DERIVED.has(col.key)) td.classList.add("from-llm-cell");
     switch (col.key) {
       case "adresse": {
         if (item.url) {
@@ -712,12 +716,12 @@ function wireToolbar() {
           // The picker names the same columns, so it carries the same marker.
           const name = document.createElement("span");
           name.textContent = labelWithSource(col.key, col.label);
-          if (SALGSOPPGAVE_DERIVED.has(col.key)) {
+          if (TILSTAND_DERIVED.has(col.key)) {
+            name.classList.add("from-llm");
+            name.title = TILSTAND_HINT;
+          } else if (SALGSOPPGAVE_DERIVED.has(col.key)) {
             name.classList.add("from-salgsoppgave");
             name.title = SALGSOPPGAVE_HINT;
-          } else if (col.key === "alvorlighet") {
-            name.classList.add("from-salgsoppgave");
-            name.title = TILSTAND_HINT;
           }
           row.appendChild(name);
           wrap.appendChild(row);

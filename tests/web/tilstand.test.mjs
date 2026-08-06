@@ -98,3 +98,36 @@ test("reader who already passed 016 and manually unhid alvorlighet keeps it visi
     "alvorlighet must stay out of the hidden set -- the reader chose to show it"
   );
 });
+
+// --- provenance sets --------------------------------------------------------
+// Two DIFFERENT kinds of "soft" field share the table, and conflating them
+// would be misleading. SALGSOPPGAVE_DERIVED is regex over prose -- wrong only
+// if the pattern is wrong. TILSTAND_DERIVED is a language model's judgement --
+// it can be confidently wrong about a real defect, so it gets its own colour.
+
+import { SALGSOPPGAVE_DERIVED, TILSTAND_DERIVED } from "../../skannonser/web/static/listingmeta.js";
+
+test("TILSTAND_DERIVED covers every LLM-produced column", () => {
+  assert.ok(TILSTAND_DERIVED.has("tg3_count"));
+  assert.ok(TILSTAND_DERIVED.has("reparasjon_est"));
+  assert.ok(TILSTAND_DERIVED.has("alvorlighet"));
+});
+
+test("TILSTAND_DERIVED excludes the deterministic and regex-derived columns", () => {
+  // read straight off structured markup -- not derived at all
+  for (const k of ["pris", "byggeaar", "verditakst", "energimerke", "bra_i"]) {
+    assert.ok(!TILSTAND_DERIVED.has(k), k + " is not LLM-derived");
+  }
+  // regex over prose: soft, but deterministic and separately marked
+  for (const k of ["ferdigattest", "utleie", "husdyr", "heftelser"]) {
+    assert.ok(!TILSTAND_DERIVED.has(k), k + " is regex-derived, not LLM-derived");
+  }
+});
+
+test("the two provenance sets never overlap", () => {
+  // A column marked both ways would get two different tooltips and two
+  // different colours -- whichever branch ran last would silently win.
+  for (const k of TILSTAND_DERIVED) {
+    assert.ok(!SALGSOPPGAVE_DERIVED.has(k), k + " must not be in both sets");
+  }
+});

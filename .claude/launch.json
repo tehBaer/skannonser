@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "skannonser-web-review",
+      "runtimeExecutable": ".venv/bin/skannonser",
+      "runtimeArgs": [
+        "web",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8377",
+        "--db",
+        "main/database/properties.db"
+      ],
+      "port": 8377
+    }
+  ]
+}

@@ -7,6 +7,12 @@
   --muted: #597161;
   --accent: #156f55;
   --border: #d7e4dd;
+  /* LLM-derived data: violet, deliberately outside the green house
+     palette so it never reads as a status (good/bad) -- it marks
+     PROVENANCE, not quality. */
+  --llm: #6b4c9a;
+  --llm-bg: #f6f2fc;
+  --llm-border: #e2d7f2;
 }
 
 * { box-sizing: border-box; }
@@ -693,4 +699,41 @@ details.subgroup > summary {
 .sk-tg-findings li {
   margin: 0 0 3px;
   color: var(--muted);
+}
+
+/* Model-derived columns (migration 016). Distinct from .from-salgsoppgave
+   above on purpose: that marks regex over prose, which is wrong only in ways
+   you can predict by reading the pattern. These are a language model's
+   judgement, and `reparasjon_est` in particular is its own guess whenever the
+   surveyor stated no figure. Whole columns are tinted, not just headers, so a
+   reader scanning rows can see which numbers came from a model without
+   re-reading the header. */
+.from-llm {
+  color: var(--llm);
+  text-decoration: underline dotted var(--llm);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+/* `#listings-table th` sets `color: var(--muted)` and outranks a bare class,
+   so the header needs the id in its selector too -- without this only the
+   dotted underline turns violet and the label stays green. The :hover pair
+   keeps the marker visible while the sortable-hover cue is active. */
+#listings-table th.from-llm,
+#listings-table th.from-llm.sortable:hover {
+  color: var(--llm);
+}
+#listings-table td.from-llm-cell {
+  background: var(--llm-bg);
+  box-shadow: inset 1px 0 0 var(--llm-border), inset -1px 0 0 var(--llm-border);
+}
+/* Keep the row-hover cue readable over the tint rather than letting the two
+   backgrounds fight; the inset borders still mark the column edges. */
+#listings-table tbody tr:hover td.from-llm-cell { background: #efe8f9; }
+
+/* The popup's Tilstand block is the same provenance as those columns, so it
+   carries the same colour -- otherwise the two views disagree about how
+   trustworthy the identical numbers are. */
+.sk-dl-head.from-llm-head {
+  color: var(--llm);
+  text-decoration-color: var(--llm);
 }
