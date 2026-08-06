@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -8,6 +9,7 @@ from skannonser.ingest.finn.payload import Section
 from skannonser.enrich.tilstand import (
     GRID, BYGNINGSDEL, classify_input, content_sha, select_sections,
     TILSTAND_SCHEMA, TilstandResponse, cache_get, cache_put, classify_one,
+    _response_text,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finn"
@@ -100,3 +102,23 @@ def test_cache_roundtrip(tmp_path):
     assert cache_get(conn, "deadbeef") is None
     cache_put(conn, "deadbeef", json.dumps(GOOD_RESPONSE))
     assert json.loads(cache_get(conn, "deadbeef")) == GOOD_RESPONSE
+
+
+def test_response_text_raises_on_refusal():
+    response = SimpleNamespace(stop_reason="refusal", content=[])
+    with pytest.raises(RuntimeError, match="refused"):
+        _response_text(response)
+
+
+def test_response_text_raises_on_truncation():
+    response = SimpleNamespace(stop_reason="max_tokens", content=[])
+    with pytest.raises(RuntimeError, match="truncated"):
+        _response_text(response)
+
+
+def test_response_text_returns_text_on_normal_stop():
+    response = SimpleNamespace(
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text="hello")],
+    )
+    assert _response_text(response) == "hello"

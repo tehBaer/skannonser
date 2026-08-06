@@ -28,6 +28,8 @@ FORHOLD = (
     "annet",
 )
 UTSTEDER = ("anticimex", "norsk_takst", "takstinstituttet", "nito_takst", "annet")
+TG_GRADES = (2, 3)
+KOSTNAD_KILDE = ("takst", "estimat")
 
 # Measured 2026-08-05 (see design spec): this selection yields mean 8.7k
 # chars/ad vs 24k for the full text, and misses ~0 condition content.
@@ -81,13 +83,13 @@ class TgFinding(BaseModel):
     kostnad_hoy: int | None
     kostnad_kilde: str | None
 
-    _v_tg = field_validator("tg")(_enum_check((2, 3)))
+    _v_tg = field_validator("tg")(_enum_check(TG_GRADES))
     _v_del = field_validator("bygningsdel")(_enum_check(BYGNINGSDEL))
     _v_tiltak = field_validator("tiltak")(_enum_check(TILTAK))
     _v_alv = field_validator("alvorlighet")(_enum_check(ALVORLIGHET))
     _v_lav = field_validator("kostnad_lav")(_enum_check(GRID))
     _v_hoy = field_validator("kostnad_hoy")(_enum_check(GRID))
-    _v_kilde = field_validator("kostnad_kilde")(_enum_check(("takst", "estimat")))
+    _v_kilde = field_validator("kostnad_kilde")(_enum_check(KOSTNAD_KILDE))
 
 
 class TilstandResponse(BaseModel):
@@ -128,7 +130,7 @@ TILSTAND_SCHEMA = {
                     "kostnad_lav", "kostnad_hoy", "kostnad_kilde",
                 ],
                 "properties": {
-                    "tg": {"type": "integer", "enum": [2, 3]},
+                    "tg": {"type": "integer", "enum": list(TG_GRADES)},
                     "bygningsdel": {"type": "string", "enum": list(BYGNINGSDEL)},
                     "tiltak": {"anyOf": [
                         {"type": "string", "enum": list(TILTAK)}, {"type": "null"}]},
@@ -138,7 +140,7 @@ TILSTAND_SCHEMA = {
                     "kostnad_hoy": {"anyOf": [
                         {"type": "integer", "enum": _COST_ENUM}, {"type": "null"}]},
                     "kostnad_kilde": {"anyOf": [
-                        {"type": "string", "enum": ["takst", "estimat"]}, {"type": "null"}]},
+                        {"type": "string", "enum": list(KOSTNAD_KILDE)}, {"type": "null"}]},
                 },
             },
         },
@@ -186,6 +188,17 @@ Rules:
 """
 
 
+def _response_text(response) -> str:
+    """Refusal/truncation checks plus text extraction, split out from
+    `_anthropic_call` so it's unit-testable with plain stub objects --
+    no `anthropic` import needed to exercise these paths."""
+    if response.stop_reason == "refusal":
+        raise RuntimeError("classification request refused")
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError("classification truncated at max_tokens")
+    return next(b.text for b in response.content if b.type == "text")
+
+
 def _anthropic_call(text: str) -> str:
     """Default `_call` seam: one classification request. Imported lazily so
     the `anthropic` package is only needed where classification actually runs
@@ -195,14 +208,12 @@ def _anthropic_call(text: str) -> str:
     client = anthropic.Anthropic()
     response = client.messages.create(
         model=_MODEL,
-        max_tokens=16000,
+        max_tokens=32000,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": text}],
         output_config={"format": {"type": "json_schema", "schema": TILSTAND_SCHEMA}},
     )
-    if response.stop_reason == "refusal":
-        raise RuntimeError("classification request refused")
-    return next(b.text for b in response.content if b.type == "text")
+    return _response_text(response)
 
 
 def classify_one(text: str, *, _call=_anthropic_call) -> TilstandResponse:
