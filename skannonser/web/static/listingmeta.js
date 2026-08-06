@@ -119,7 +119,7 @@ export function premiumPct(item) {
   if (!Number.isFinite(soldPrice) || !Number.isFinite(asking) || asking <= 0) {
     return null;
   }
-  return Math.round((soldPrice / asking - 1) * 100);
+  return (soldPrice / asking - 1) * 100;
 }
 
 // "+7,2 %" / "−3,1 %" (nb-NO decimals) for a premium percent.
