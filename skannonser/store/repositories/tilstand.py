@@ -20,6 +20,67 @@ _ROLLUP_COLS = (
     "tilstandsrapport_dato", "tilstandsrapport_utsteder", "egenerklaering_antall",
 )
 
+# --- Classification priority order (2026-08-06 spec) -----------------------
+# `--limit` is the spend control and it cuts the walk wherever it lands, so
+# the order decides what a bounded run pays for. Status is the outer key;
+# commute+size fit only breaks ties inside a tier.
+
+# Active exactly as publish/rows.py:205 defines it -- 77 production rows have
+# active=1 AND tilgjengelighet='Inaktiv', and that rule resolves them to
+# inactive. One definition of "active", not two.
+_STATUS_TIER = """
+    CASE
+        WHEN LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) = 'solgt' THEN 2
+        WHEN e.active = 1
+             AND LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) NOT IN ('solgt', 'inaktiv')
+        THEN 0
+        ELSE 1
+    END
+"""
+
+# Donor-resolved travel, mirroring _DONOR_TRAVEL_SQL in publish/rows.py: a
+# listing that borrows a donor's times is ranked on the borrowed values, the
+# same ones the web UI shows for it.
+def _donor_travel(dest: str) -> str:
+    return f"""
+    CASE
+        WHEN ep.travel_copy_from_finnkode IS NOT NULL
+             AND TRIM(ep.travel_copy_from_finnkode) != ''
+             AND ep_src.pendl_rush_{dest} IS NOT NULL
+        THEN ep_src.pendl_rush_{dest}
+        ELSE ep.pendl_rush_{dest}
+    END
+    """
+
+
+# `areal` is NULL on 5776 of 5863 rows; info_usable_area (BRA) is the real
+# source at 5827. The others are fallbacks, not alternatives.
+_AREA = "COALESCE(e.info_usable_area, e.info_primary_area, e.areal)"
+
+# BETWEEN 0 AND 70 rather than <= 70: travel sentinels are negative (-1 no
+# routes, -2 unrealistic, -3 API error; see enrich/sentinels.py) and every one
+# of them would read as an excellent commute under a bare <= test.
+_CANDIDATE_SQL = f"""
+    SELECT e.finnkode
+    FROM eiendom e
+    LEFT JOIN eiendom_processed ep ON ep.finnkode = e.finnkode
+    LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
+    ORDER BY
+        {_STATUS_TIER},
+        CASE
+            WHEN ({_AREA} IS NOT NULL AND {_AREA} < 80)
+                 OR ({_donor_travel('brj')}) > 70
+                 OR ({_donor_travel('mvv')}) > 70
+            THEN 2
+            WHEN {_AREA} >= 80
+                 AND ({_donor_travel('brj')}) BETWEEN 0 AND 70
+                 AND ({_donor_travel('mvv')}) BETWEEN 0 AND 70
+            THEN 0
+            ELSE 1
+        END,
+        e.finnkode
+"""
+
 
 class TilstandRepo:
     def __init__(self, conn: sqlite3.Connection):
@@ -74,6 +135,16 @@ class TilstandRepo:
         except Exception:
             conn.rollback()
             raise
+
+    def candidate_finnkodes(self) -> list[str]:
+        """Every ad in `eiendom`, ordered for classification: active before
+        inactive before sold, and inside each tier the ads matching >= 80 m2
+        BRA with both rush commutes <= 70 min first, then the ads we cannot
+        rate, then the ones we know miss.
+
+        Nothing is filtered -- a bounded run just spends on the good end.
+        """
+        return [str(r[0]) for r in self.conn.execute(_CANDIDATE_SQL)]
 
     def coverage(self) -> dict:
         one = lambda sql: self.conn.execute(sql).fetchone()[0]  # noqa: E731

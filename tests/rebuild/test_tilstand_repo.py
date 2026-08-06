@@ -59,3 +59,96 @@ def test_wipe_spares_llm_cache(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM listing_tg_findings").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM listing_egenerklaering").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM salgsoppgave_llm_cache").fetchone()[0] == 1
+
+
+def _rank_db(tmp_path):
+    """A DB with one eiendom row per (tier, band) case we care about."""
+    conn = connection.connect(tmp_path / "rank.db")
+    migrations.migrate(conn)
+    return conn
+
+
+def _ad(conn, finnkode, *, active=1, tilg=None, area=None, brj=None, mvv=None, donor=None):
+    conn.execute(
+        "INSERT INTO eiendom (finnkode, active, tilgjengelighet, info_usable_area) "
+        "VALUES (?, ?, ?, ?)",
+        (finnkode, active, tilg, area),
+    )
+    conn.execute(
+        "INSERT INTO eiendom_processed "
+        "(finnkode, pendl_rush_brj, pendl_rush_mvv, travel_copy_from_finnkode) "
+        "VALUES (?, ?, ?, ?)",
+        (finnkode, brj, mvv, donor),
+    )
+    conn.commit()
+
+
+def test_candidate_order_puts_active_before_inactive_before_sold(tmp_path):
+    conn = _rank_db(tmp_path)
+    _ad(conn, "sold", active=0, tilg="Solgt", area=100, brj=30, mvv=30)
+    _ad(conn, "inactive", active=0, tilg="Inaktiv", area=100, brj=30, mvv=30)
+    _ad(conn, "active", active=1, tilg=None, area=100, brj=30, mvv=30)
+    assert TilstandRepo(conn).candidate_finnkodes() == ["active", "inactive", "sold"]
+
+
+def test_active_flag_loses_to_inaktiv_tilgjengelighet(tmp_path):
+    # 77 production rows carry active=1 AND tilgjengelighet='Inaktiv'.
+    # publish/rows.py:205 resolves those to NOT active; so must we.
+    conn = _rank_db(tmp_path)
+    _ad(conn, "conflicted", active=1, tilg="Inaktiv", area=100, brj=30, mvv=30)
+    _ad(conn, "clean", active=1, tilg=None, area=100, brj=30, mvv=30)
+    assert TilstandRepo(conn).candidate_finnkodes() == ["clean", "conflicted"]
+
+
+def test_band_orders_match_then_unknown_then_miss(tmp_path):
+    conn = _rank_db(tmp_path)
+    _ad(conn, "miss_far", area=100, brj=30, mvv=99)
+    _ad(conn, "miss_small", area=60, brj=30, mvv=30)
+    _ad(conn, "unknown", area=100, brj=None, mvv=30)
+    _ad(conn, "match", area=100, brj=30, mvv=30)
+    order = TilstandRepo(conn).candidate_finnkodes()
+    assert order[0] == "match"
+    assert order[1] == "unknown"
+    assert set(order[2:]) == {"miss_far", "miss_small"}
+
+
+def test_both_commutes_must_qualify(tmp_path):
+    conn = _rank_db(tmp_path)
+    _ad(conn, "one_only", area=100, brj=30, mvv=71)
+    _ad(conn, "both", area=100, brj=70, mvv=70)
+    assert TilstandRepo(conn).candidate_finnkodes() == ["both", "one_only"]
+
+
+def test_travel_sentinel_is_unknown_not_a_great_commute(tmp_path):
+    # -1 is numerically under 70 but means "no routes" (enrich/sentinels.py).
+    conn = _rank_db(tmp_path)
+    _ad(conn, "sentinel", area=100, brj=-1, mvv=30)
+    _ad(conn, "real", area=100, brj=30, mvv=30)
+    _ad(conn, "miss", area=100, brj=90, mvv=30)
+    assert TilstandRepo(conn).candidate_finnkodes() == ["real", "sentinel", "miss"]
+
+
+def test_donor_travel_times_decide_the_band(tmp_path):
+    conn = _rank_db(tmp_path)
+    _ad(conn, "donor", area=100, brj=30, mvv=30)
+    _ad(conn, "borrower", area=100, brj=None, mvv=None, donor="donor")
+    _ad(conn, "faraway", area=100, brj=90, mvv=90)
+    order = TilstandRepo(conn).candidate_finnkodes()
+    assert order.index("borrower") < order.index("faraway")
+
+
+def test_every_ad_is_returned_even_without_a_processed_row(tmp_path):
+    conn = _rank_db(tmp_path)
+    conn.execute("INSERT INTO eiendom (finnkode, active) VALUES ('orphan', 1)")
+    conn.commit()
+    _ad(conn, "normal", area=100, brj=30, mvv=30)
+    assert set(TilstandRepo(conn).candidate_finnkodes()) == {"orphan", "normal"}
+
+
+def test_order_is_total_and_stable_on_finnkode(tmp_path):
+    conn = _rank_db(tmp_path)
+    for finnkode in ("300", "100", "200"):
+        _ad(conn, finnkode, area=100, brj=30, mvv=30)
+    repo = TilstandRepo(conn)
+    assert repo.candidate_finnkodes() == ["100", "200", "300"]
+    assert repo.candidate_finnkodes() == repo.candidate_finnkodes()
