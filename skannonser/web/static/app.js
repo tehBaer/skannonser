@@ -758,7 +758,7 @@ function wireStationControls() {
   }
 
   // Lines pick like every other value filter, on the shared chip row -- which
-  // brings its own "Alle"/"Tøm" controls, so the panel carries no bulk markup.
+  // brings its own "Nullstill" control, so the panel carries no bulk markup.
   // There is deliberately no "Ingen": an empty selection means *all* lines, so
   // "no lines" is unrepresentable. "Vis stasjoner" clears the stations from the
   // map, which covers the visible intent -- but note it is NOT equivalent to the

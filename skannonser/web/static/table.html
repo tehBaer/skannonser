@@ -19,12 +19,23 @@
     <div class="table-toolbar">
       <input type="text" id="table-filter" class="table-filter-input"
              placeholder="Filtrer adresse, postnummer, boligtype …">
-      <button type="button" id="table-status-btn" class="toolbar-filter-btn">Status</button>
-      <button type="button" id="facilities-filter-btn" class="toolbar-filter-btn">Fasiliteter</button>
-      <button type="button" id="table-columns-btn" class="toolbar-filter-btn">Kolonner</button>
-      <div id="table-tag-chips"></div>
-      <label class="toggle"><input type="checkbox" id="table-include-unknown"> Inkluder ukjent verdi</label>
-      <button type="button" id="table-reset-filters" class="toolbar-filter-btn">Nullstill filtre</button>
+
+      <div class="toolbar-group toolbar-filters">
+        <button type="button" id="table-status-btn" class="toolbar-btn">Status</button>
+        <button type="button" id="table-tags-btn" class="toolbar-btn">Tagger</button>
+        <button type="button" id="facilities-filter-btn" class="toolbar-btn">Fasiliteter</button>
+        <label class="switch">
+          <input type="checkbox" id="table-include-unknown">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-label">Ukjent verdi</span>
+        </label>
+      </div>
+
+      <div class="toolbar-group toolbar-view">
+        <button type="button" id="table-columns-btn" class="toolbar-btn toolbar-btn-view">Kolonner</button>
+        <button type="button" id="table-reset-filters" class="toolbar-reset">Nullstill filtre</button>
+      </div>
+
       <span id="table-status" class="muted"></span>
     </div>
 

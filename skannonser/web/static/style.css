@@ -460,8 +460,84 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 .multi-clear { margin-top: 6px; font-size: 12px; cursor: pointer; }
 .active-filters { margin: 4px 0 8px; font-size: 12px; }
 .reset-filters { margin: 4px 0 8px; font-size: 12px; cursor: pointer; }
-.toolbar-filter-btn { font-size: 13px; cursor: pointer; }
-.toolbar-filter-btn.active { color: var(--accent, #2f6f4f); font-weight: 600; }
+/* --- table toolbar tiers (2026-08-06 redesign) ---------------------------
+   Three tiers, because the old toolbar gave Fasiliteter, Kolonner and
+   Nullstill one shared two-property rule and they read as the same control:
+   filter buttons (pill, bordered, badge), the view control (same shape,
+   muted, right-aligned) and reset (borderless text). */
+.table-toolbar { align-items: flex-start; }
+.toolbar-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar-view { margin-left: auto; }
+
+.toolbar-btn {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.toolbar-btn::after { content: " ▾"; opacity: 0.5; }
+.toolbar-btn:hover { border-color: var(--accent); }
+.toolbar-btn.active {
+  border-color: var(--accent);
+  background: #e8f3ee;
+  color: var(--accent);
+  font-weight: 600;
+}
+/* The badge rides in a data attribute so painting is one assignment and an
+   empty string removes it -- no separate span to create and tear down. */
+.toolbar-btn.active[data-badge]:not([data-badge=""])::before {
+  content: attr(data-badge);
+  display: inline-block;
+  min-width: 16px;
+  margin-right: 6px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  text-align: center;
+}
+.toolbar-btn-view { color: var(--muted); }
+.toolbar-btn-view::after { content: " ▾"; opacity: 0.35; }
+
+.toolbar-reset {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.toolbar-reset:disabled {
+  color: var(--muted);
+  cursor: default;
+  text-decoration: none;
+  opacity: 0.6;
+}
+
+/* Switch: a checkbox in behaviour and semantics (same id, same `checked`,
+   same includeUnknown wiring) -- only the paint differs. The native input
+   stays in the DOM and keeps focus/keyboard handling. */
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track {
+  width: 32px; height: 18px; border-radius: 9px;
+  background: var(--border); position: relative; transition: background 0.15s;
+}
+.switch-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; transition: transform 0.15s;
+}
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track::after { transform: translateX(14px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 480px) {
   .th-popover { left: 8px !important; right: 8px; width: auto !important; }
 }

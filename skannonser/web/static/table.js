@@ -29,6 +29,7 @@ import {
   loadFilters,
   saveFilters,
   activeFilterCount,
+  activeFilterEntries,
   subscribeOtherTabs,
   resetFilters,
   pruneFilterSets,
@@ -39,6 +40,7 @@ import {
   makeFilterButton,
   openFacilitiesPopover,
   closePopover,
+  statusBadges,
 } from "./tablefilters.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
@@ -634,18 +636,6 @@ function buildRow(item) {
 
 function render() {
   renderHead();
-  const chipMount = document.getElementById("table-tag-chips");
-  if (chipMount) {
-    chipMount.innerHTML = "";
-    // No label: the toolbar has no room for a heading, and these chips sit
-    // beside buttons that already name themselves.
-    selectionChipRow(chipMount, {
-      options: state.vocabs.tags,
-      selected: state.filters.tagSelected,
-      colorFor: (key) => colorForTag(key, state.tagColors),
-      onChange: onFilterChange,
-    });
-  }
   const body = document.getElementById("table-body");
   body.innerHTML = "";
   const rows = visibleRows();
@@ -675,26 +665,33 @@ function render() {
     tr.appendChild(td);
     body.appendChild(tr);
   }
+  const n = activeFilterCount(state.filters, state.meta);
   if (state.statusError) {
     // Show the stashed failure once, then fall back to the normal row-count
     // line on every render after this one.
     setStatus(state.statusError);
     state.statusError = null;
   } else {
-    const n = activeFilterCount(state.filters, state.meta);
     setStatus(
       rows.length + " av " + state.items.length + " annonser" +
       (n ? " · " + n + " filtre aktive" : "")
     );
   }
   // Runs on every render (onFilterChange + cross-tab sync included) so the
-  // button's active cue never drifts from the actual filter state.
-  const facBtn = document.getElementById("facilities-filter-btn");
-  if (facBtn) {
-    const hasFacilities =
-      Object.keys(state.filters.facilitiesRequired || {}).length > 0;
-    facBtn.classList.toggle("active", hasFacilities);
-  }
+  // buttons' active cues never drift from the actual filter state.
+  const badges = statusBadges(activeFilterEntries(state.filters, state.meta));
+  const paintBtn = (id, count) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.classList.toggle("active", count > 0);
+    btn.dataset.badge = count > 0 ? String(count) : "";
+  };
+  paintBtn("table-status-btn", badges.status);
+  paintBtn("table-tags-btn", badges.tag);
+  paintBtn("facilities-filter-btn", badges.facilities);
+
+  const resetBtn = document.getElementById("table-reset-filters");
+  if (resetBtn) resetBtn.disabled = n === 0;
 }
 
 // The Status popover's body. Extracted so it can be re-invoked from inside
@@ -769,6 +766,22 @@ function wireToolbar() {
     statusBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       openPopover(statusBtn, (pop) => renderStatusPopover(pop));
+    });
+  }
+
+  const tagsBtn = document.getElementById("table-tags-btn");
+  if (tagsBtn) {
+    tagsBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openPopover(tagsBtn, (pop) => {
+        selectionChipRow(pop, {
+          label: "Tagger",
+          options: state.vocabs.tags,
+          selected: state.filters.tagSelected,
+          colorFor: (key) => colorForTag(key, state.tagColors),
+          onChange: onFilterChange,
+        });
+      });
     });
   }
 

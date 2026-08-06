@@ -460,32 +460,27 @@ export function applyChipClick(selected, key, allKeys) {
 }
 
 // One selection control for every value list -- the five sidebar filters, the
-// station lines, and the table toolbar's tags (which passes no `label` and so
-// gets the bulk controls without a heading). Selected chips are
-// FILLED and unselected ones outlined, so state reads without relying on the
-// per-value colour -- tags and lines carry their own colours and cannot also
-// use colour to mean "on".
+// station lines, and the table toolbar's popovers (Status, Tagger). `label`
+// is mandatory: every mount now has room for a heading, including inside a
+// popover. Selected chips are FILLED and unselected ones outlined, so state
+// reads without relying on the per-value colour -- tags and lines carry their
+// own colours and cannot also use colour to mean "on".
 export function selectionChipRow(parent, { label, labelHint, options, selected, colorFor, emptyIsRealValue, onChange }) {
   const wrap = document.createElement("div");
   wrap.className = "chip-row-block";
 
   const head = document.createElement("div");
   head.className = "filter-head chip-row-head";
-  // `label` is optional: the table toolbar mounts this row beside already
-  // labelled buttons and has no room for a heading. The head stays either way
-  // so the bulk controls keep their place.
-  if (label) {
-    const name = document.createElement("span");
-    // Same marker as the table header/picker: one field, one visual language.
-    name.textContent = labelHint ? label + SALGSOPPGAVE_SUFFIX : label;
-    // Salgsoppgave-derived rows carry the same dotted marker as their table
-    // headers, so the softness is visible wherever the field is offered.
-    if (labelHint) {
-      name.classList.add("from-salgsoppgave");
-      name.title = labelHint;
-    }
-    head.appendChild(name);
+  const name = document.createElement("span");
+  // Same marker as the table header/picker: one field, one visual language.
+  name.textContent = labelHint ? label + SALGSOPPGAVE_SUFFIX : label;
+  // Salgsoppgave-derived rows carry the same dotted marker as their table
+  // headers, so the softness is visible wherever the field is offered.
+  if (labelHint) {
+    name.classList.add("from-salgsoppgave");
+    name.title = labelHint;
   }
+  head.appendChild(name);
 
   const bulkWrap = document.createElement("span");
   bulkWrap.className = "chip-bulk";
@@ -501,12 +496,14 @@ export function selectionChipRow(parent, { label, labelHint, options, selected, 
     });
     bulkWrap.appendChild(b);
   };
-  // Both controls reach the same resting state -- an empty selection shows
-  // everything -- but they read differently to a user mid-filter, so both are
-  // offered. "Alle" is the answer to "show me everything again"; "Tøm" is the
-  // answer to "undo my picks".
-  mkBulk("Alle", () => selected.splice(0, selected.length));
-  mkBulk("Tøm", () => selected.splice(0, selected.length));
+  // One control, not two. "Alle" and "Tøm" shipped byte-identical handlers --
+  // both spliced the selection empty -- on the theory that they read
+  // differently mid-filter. They do not: an empty selection IS the unfiltered
+  // state, so clearing and showing-everything are one action. Rendered only
+  // when there is something to clear.
+  if (selected.length) {
+    mkBulk("Nullstill", () => selected.splice(0, selected.length));
+  }
   head.appendChild(bulkWrap);
   wrap.appendChild(head);
 

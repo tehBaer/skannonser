@@ -207,6 +207,24 @@ export function makeFilterButton(colKey, ctx) {
   return btn;
 }
 
+// Per-button badge counts, derived from activeFilterEntries rather than
+// recounted from the filters object -- a second count is a second thing to
+// keep in sync with "N filtre aktive", and it would drift.
+const BADGE_KEYS = {
+  status: "tilgjengelighetSelected",
+  tag: "tagSelected",
+  facilities: "facilitiesRequired",
+};
+
+export function statusBadges(entries) {
+  const list = entries || [];
+  const out = { status: 0, tag: 0, facilities: 0 };
+  Object.entries(BADGE_KEYS).forEach(([button, key]) => {
+    out[button] = list.filter((e) => e.key === key).length;
+  });
+  return out;
+}
+
 // Toolbar "Fasiliteter" popover (no natural column) -- required-set semantics.
 export function openFacilitiesPopover(anchorEl, ctx) {
   openPopover(anchorEl, (pop) => {
