@@ -129,12 +129,18 @@ def test_travel_sentinel_is_unknown_not_a_great_commute(tmp_path):
 
 
 def test_donor_travel_times_decide_the_band(tmp_path):
+    # "aaa_control" has no donor and genuinely unknown travel, so it lands in
+    # band 1. "zzz_borrower" has the same unknown own travel but borrows the
+    # donor's good times, so with donor resolution working it lands in band 0
+    # and must sort ahead of the control. Without donor resolution, both are
+    # band 1 and tie-break on finnkode -- "aaa_control" (alphabetically first)
+    # would then sort ahead of "zzz_borrower", failing this assertion.
     conn = _rank_db(tmp_path)
     _ad(conn, "donor", area=100, brj=30, mvv=30)
-    _ad(conn, "borrower", area=100, brj=None, mvv=None, donor="donor")
-    _ad(conn, "faraway", area=100, brj=90, mvv=90)
+    _ad(conn, "zzz_borrower", area=100, brj=None, mvv=None, donor="donor")
+    _ad(conn, "aaa_control", area=100, brj=None, mvv=None, donor=None)
     order = TilstandRepo(conn).candidate_finnkodes()
-    assert order.index("borrower") < order.index("faraway")
+    assert order.index("zzz_borrower") < order.index("aaa_control")
 
 
 def test_every_ad_is_returned_even_without_a_processed_row(tmp_path):
