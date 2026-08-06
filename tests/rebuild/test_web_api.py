@@ -245,7 +245,8 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
         "verditakst",
         # Tilstand classifier (migration 016; Task 11).
         "tg2_count", "tg3_count", "reparasjon_lav", "reparasjon_hoy",
-        "reparasjon_est", "alvorlighet", "verste_bygningsdel",
+        "reparasjon_est", "reparasjon_usikkerhet",
+        "alvorlighet", "verste_bygningsdel",
         "reparasjon_kilde", "tg_findings",
     }
     assert item["finnkode"] == "A"
@@ -1540,3 +1541,44 @@ def test_detail_endpoint_carries_the_salgsoppgave_fields(db_path, client):
     # encumbrances. Collapsing the two would lose that distinction.
     assert body["heftelser"] is False
     assert body["verditakst"] == 4200000
+
+
+def test_reparasjon_usikkerhet_is_half_the_range(db_path, client):
+    """The table shows `reparasjon_est` as a single sortable number, which on
+    its own overstates precision -- 1.03M-2.67M is not "1.85M". This column is
+    the +/- half-width, so est +/- usikkerhet reconstructs the stored range.
+    Derived at query time like pris_kvm: a stored copy would go stale the
+    moment a re-classification changed a bound."""
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.execute(
+        "INSERT INTO listing_tilstand "
+        "(finnkode, tg2_count, tg3_count, reparasjon_lav, reparasjon_hoy, "
+        " reparasjon_est, classified_at) "
+        "VALUES ('A', 1, 0, 1030000, 2670000, 1850000, '2026-08-01T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["reparasjon_usikkerhet"] == 820000
+    assert item["reparasjon_est"] - item["reparasjon_usikkerhet"] == item["reparasjon_lav"]
+    assert item["reparasjon_est"] + item["reparasjon_usikkerhet"] == item["reparasjon_hoy"]
+
+
+def test_reparasjon_usikkerhet_is_none_without_a_range(db_path, client):
+    """Classified but nothing costed (or never classified) -> None, not 0.
+    A zero would read as "we are certain it is free"."""
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    _ins_eiendom(conn, "B")
+    conn.execute(
+        "INSERT INTO listing_tilstand (finnkode, tg2_count, tg3_count, classified_at) "
+        "VALUES ('A', 0, 0, '2026-08-01T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    items = client.get("/api/listings").json()["listings"]
+    assert _by_finnkode(items, "A")["reparasjon_usikkerhet"] is None   # classified, no costs
+    assert _by_finnkode(items, "B")["reparasjon_usikkerhet"] is None   # never classified

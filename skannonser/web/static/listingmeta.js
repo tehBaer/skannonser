@@ -315,6 +315,7 @@ export const TILSTAND_HINT =
 export const TILSTAND_DERIVED = new Set([
   "tg3_count",
   "reparasjon_est",
+  "reparasjon_usikkerhet",
   "alvorlighet",
 ]);
 

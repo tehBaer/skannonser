@@ -58,6 +58,7 @@ const NUMERIC_COLUMNS = new Set([
   "maanedskost",
   "tg3_count",
   "reparasjon_est",
+  "reparasjon_usikkerhet",
   // alvorlighet itself is a text enum, but cellValue() below maps it onto
   // ALVORLIGHET_ORDER's severity rank, and that rank must be compared
   // numerically -- alphabetical would sort "alvorlig" before "kosmetisk".
@@ -110,6 +111,7 @@ const COLUMNS = [
   // them once without re-hiding a column a reader has since chosen to show.
   { key: "tg3_count", label: "TG3", sortable: true },
   { key: "reparasjon_est", label: "Utbedring", sortable: true },
+  { key: "reparasjon_usikkerhet", label: "Usikkerhet", sortable: true },
   { key: "alvorlighet", label: "Alvorlighet", sortable: true },
   { key: "brj", label: "BRJ", sortable: true },
   { key: "mvv", label: "MVV", sortable: true },
@@ -139,7 +141,9 @@ const SALGSOPPGAVE_COLUMNS = [
 // resolveHiddenColumns checks exactly that one flag -- reusing it here would
 // make it skip hiding these new columns for every reader who upgraded
 // through 015 before 016 existed.
-const TILSTAND_COLUMNS = ["tg3_count", "reparasjon_est", "alvorlighet"];
+const TILSTAND_COLUMNS = [
+  "tg3_count", "reparasjon_est", "reparasjon_usikkerhet", "alvorlighet",
+];
 const DEFAULT_HIDDEN_COLUMNS = [
   "postnummer", "pris", "felleskost_mnd", "soverom", "etasje", "tilgjengelighet",
   ...SALGSOPPGAVE_COLUMNS,
@@ -525,6 +529,15 @@ function buildRow(item) {
       }
       case "tg3_count": {
         td.textContent = item.tg3_count ?? "";
+        td.classList.add("num");
+        break;
+      }
+      case "reparasjon_usikkerhet": {
+        // The +/- half-width of the repair-cost range. Utbedring alone is a
+        // midpoint, and on a listing spanning 1.0-2.7M that reads far more
+        // precise than it is; this is the spread that midpoint hides.
+        const u = fmtPris(item.reparasjon_usikkerhet);
+        td.textContent = u ? "\u00b1 " + u : "";
         td.classList.add("num");
         break;
       }
