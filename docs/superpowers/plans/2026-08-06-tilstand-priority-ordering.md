@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Work in a worktree.** Per `CLAUDE.md`, enter one and run `./ops/setup-worktree.sh` first. Baseline is **659 passed**; anything less was already broken.
+- **Work in a worktree.** Per `CLAUDE.md`, enter one and run `./ops/setup-worktree.sh --with-db` first (the `--with-db` flag is needed — Task 1 Step 5 and Task 3 Step 3 read the live DB snapshot, and a worktree has no `main/database/properties.db` without it). Baseline verified 2026-08-06 is **858 passed**; anything less was already broken. `CLAUDE.md` still says 659 — it is stale, trust the number you measure.
 - **Run pytest with `PYTHONPATH=.`** — a bare `pytest` in a worktree imports the *main clone's* `skannonser` package, so a green run proves nothing about your changes.
 - **No filtering.** Every ad stays eligible. `candidate_finnkodes()` must return all 5863 rows of `eiendom`, only reordered. A row missing its `eiendom_processed` join partner must still appear.
 - **Thresholds are constants in this revision:** 80 (m² BRA) and 70 (minutes). Not configurable.
@@ -395,7 +395,7 @@ band and tie-break on finnkode `1, 2, 3` — the order it already assumed).
 PYTHONPATH=. ./.venv/bin/pytest
 ```
 
-Expected: **669 passed** (659 baseline + 8 from Task 1 + 2 from Task 2). Any
+Expected: **868 passed** (858 baseline + 8 from Task 1 + 2 from Task 2). Any
 failure outside `test_tilstand_repo.py` / `test_classify_tilstand.py` means
 something else regressed — investigate before committing.
 
@@ -478,7 +478,7 @@ git commit -m "docs(runbook): what --limit buys under priority ordering"
 
 ## Done when
 
-- `PYTHONPATH=. ./.venv/bin/pytest` reports 669 passed.
+- `PYTHONPATH=. ./.venv/bin/pytest` reports 868 passed.
 - `TilstandRepo.candidate_finnkodes()` returns all 5863 finnkodes with no
   duplicates, starting with active ads.
 - Neither `tilstand_backfill.py` nor `tilstand_validate.py` contains a bare
