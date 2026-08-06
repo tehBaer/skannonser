@@ -358,10 +358,10 @@ export function seedStatus(filters) {
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `node --test tests/web/status.test.mjs`
-Expected: PASS, 12 tests.
+Expected: PASS, 11 tests.
 
 Run: `node --test tests/web/*.test.mjs`
-Expected: PASS, **204 tests** (192 + 12).
+Expected: PASS, **203 tests** (192 + 11).
 
 - [ ] **Step 7: Commit**
 
@@ -698,7 +698,7 @@ In `skannonser/web/static/filters.js`, delete the `selectionChipRow` call for `"
 - [ ] **Step 13: Run all JS tests**
 
 Run: `node --test tests/web/*.test.mjs`
-Expected: PASS, **208 tests** (204 + 4).
+Expected: PASS, **207 tests** (203 + 4).
 
 - [ ] **Step 14: Verify Python is untouched**
 
@@ -885,7 +885,7 @@ placed immediately after `state.filters = loadFilters(meta);` and before `refres
 - [ ] **Step 8: Run all JS tests**
 
 Run: `node --test tests/web/*.test.mjs`
-Expected: PASS, **208 tests** (unchanged — this task adds no tests).
+Expected: PASS, **207 tests** (unchanged — this task adds no tests).
 
 - [ ] **Step 9: Commit**
 
@@ -1242,7 +1242,7 @@ Replace `.toolbar-filter-btn`'s two rules in `style.css` (lines 463-464) and add
 - [ ] **Step 10: Run all JS tests**
 
 Run: `node --test tests/web/*.test.mjs`
-Expected: PASS, **214 tests** (208 + 4 toolbar + 2 chiprow).
+Expected: PASS, **213 tests** (207 + 4 toolbar + 2 chiprow).
 
 - [ ] **Step 11: Commit**
 
@@ -1443,7 +1443,7 @@ Run: `node --test tests/web/toolbar.test.mjs`
 Expected: PASS, 9 tests.
 
 Run: `node --test tests/web/*.test.mjs`
-Expected: PASS, **219 tests** (214 + 5).
+Expected: PASS, **218 tests** (213 + 5).
 
 - [ ] **Step 6: Verify Python is still untouched**
 
@@ -1482,7 +1482,7 @@ EOF
 node --test tests/web/*.test.mjs && PYTHONPATH=. ./.venv/bin/pytest -q
 ```
 
-Expected: **219 node, 858 pytest**.
+Expected: **218 node, 858 pytest**.
 
 - [ ] **Serve and verify by hand**
 
