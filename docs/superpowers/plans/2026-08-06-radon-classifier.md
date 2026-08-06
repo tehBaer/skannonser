@@ -10,6 +10,32 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-06-radon-classifier-design.md` — the authority on the two traps, the measured coverage numbers, and the cache-versioning decision. Read it before starting.
 
+## Coordinates with: `2026-08-06-table-toolbar-redesign.md`
+
+That plan rebuilds the table's filter toolbar and unifies the status filter
+across both pages. It is JS-only and changes no Python; this plan is 7/8
+Python. They were kept separate so this plan's migration and paid
+re-classification decisions stay out of a CSS change, and so that plan keeps
+its "pytest stays at 858" invariant.
+
+There are **no overlapping hunks**; the two can be developed in parallel and
+merged in either order.
+
+| File | This plan touches | Toolbar plan touches |
+|---|---|---|
+| `listingmeta.js` | radon formatters (~260), `TILSTAND_DERIVED` (~318) | `premiumPct` (~106), new `TILGJENGELIGHET_OPTIONS` (~226) |
+| `table.js` | `COLUMNS` (~106-115), `TILSTAND_COLUMNS` (~145), cell switch (~535) | `state` (~185), `render` (~637), `wireToolbar` (~675) |
+
+Task 7 here adds a `radon_status` column and relabels the Phase-1 one to
+"Radon nevnt". The toolbar plan's Kolonner picker reads `COLUMNS` dynamically,
+so both columns appear in it automatically — no coordination beyond rerunning
+`node --test tests/web/*.test.mjs` after the second of the two merges.
+
+One difference worth not tripping over: that plan invokes pytest as
+`PYTHONPATH=. ./.venv/bin/pytest`, this one as `./.venv/bin/python -m pytest`.
+Both put the worktree on `sys.path`; neither is the bare `pytest` that would
+silently test the main clone.
+
 ## Global Constraints
 
 - **Worktree + env**: work in a worktree (`EnterWorktree` + `./ops/setup-worktree.sh`). Tests: `./.venv/bin/python -m pytest` (bare `pytest` in a worktree silently tests the MAIN clone; the `python -m` form puts the worktree on `sys.path`). JS: `node --test tests/web/*.test.mjs` (the bare directory form fails).

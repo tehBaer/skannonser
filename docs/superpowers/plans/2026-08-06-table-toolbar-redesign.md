@@ -8,11 +8,32 @@
 
 **Tech Stack:** Vanilla ES modules (no build step), `node --test` for JS, pytest for Python, FastAPI backend (untouched by this plan).
 
+## Coordinates with: `2026-08-06-radon-classifier.md`
+
+Both plans are in flight and both touch two files. They were kept separate
+because radon is 7/8 backend (migration 017, LLM cache versioning, prompt and
+schema) while this plan changes no Python at all — merging them would cost the
+"pytest stays at 858" invariant that catches an accidental backend edit here.
+
+There are **no overlapping hunks**; the two can be developed in parallel and
+merged in either order.
+
+| File | Radon touches | This plan touches |
+|---|---|---|
+| `listingmeta.js` | radon formatters (~260), `TILSTAND_DERIVED` (~318) | `premiumPct` (~106), new `TILGJENGELIGHET_OPTIONS` after `HUSDYR_OPTIONS` (~226) |
+| `table.js` | `COLUMNS` (~106-115), `TILSTAND_COLUMNS` (~145), cell switch (~535) | `state` (~185), `render` (~637), `wireToolbar` (~675), `visibleRows` (~355) |
+
+One soft ordering note: radon's Task 7 adds a `radon_status` column and
+relabels the existing one to "Radon nevnt". This plan's Task 5 rebuilds the
+toolbar around the **Kolonner** picker, which reads `COLUMNS` dynamically — so
+a column added on either side appears automatically. No coordination needed
+beyond a rerun of `node --test tests/web/*.test.mjs` after the second merge.
+
 ## Global Constraints
 
 - **Work in this worktree.** `/Users/tehbaer/kode/skannonser/.claude/worktrees/table-toolbar-redesign`, branch `worktree-table-toolbar-redesign`. Do NOT `cd` to the main clone.
 - **JS tests:** `node --test tests/web/*.test.mjs` — the bare directory form (`node --test tests/web/`) fails. Baseline: **183 passing**.
-- **Python tests:** `PYTHONPATH=. ./.venv/bin/pytest` — bare `pytest` in a worktree silently tests the MAIN clone. Baseline: **856 passing**. No task in this plan changes Python; 856 must hold throughout.
+- **Python tests:** `PYTHONPATH=. ./.venv/bin/pytest` — bare `pytest` in a worktree silently tests the MAIN clone. Baseline: **858 passing**. No task in this plan changes Python; 858 must hold throughout.
 - **No build step.** The `static/` files are served as-is. No transpilation, no bundler, no new dependencies.
 - **Norwegian UI copy.** All user-visible strings are nb-NO. Existing labels are reused verbatim where they exist.
 - **Comments explain WHY, not WHAT.** This codebase's comments document rationale and traps. Match that register; do not narrate the code.
@@ -682,7 +703,7 @@ Expected: PASS, **207 tests** (203 + 4).
 - [ ] **Step 14: Verify Python is untouched**
 
 Run: `PYTHONPATH=. ./.venv/bin/pytest -q`
-Expected: **856 passed**.
+Expected: **858 passed**.
 
 - [ ] **Step 15: Commit**
 
@@ -721,7 +742,7 @@ EOF
 
 **Files:**
 - Modify: `skannonser/web/static/table.html:22` (remove the sold checkbox, add the Status button)
-- Modify: `skannonser/web/static/table.js` — `state.showSold` (~181), `refreshVocabs` (~213), `loadSoldPref`/`saveSoldPref` (~240-259), `enableSold` (~264), `visibleRows` (~354), `wireToolbar` (~669), empty-state reset (~639), `handleHash` (~785), `init` (~824)
+- Modify: `skannonser/web/static/table.js` — `state.showSold` (~185), `refreshVocabs` (~212), `loadSoldPref`/`saveSoldPref` (~244-262), `enableSold` (~268), `visibleRows` (~355), `wireToolbar` (~675), empty-state reset (~652), `handleHash` (~800), `init` (~837)
 - Test: covered by Task 6's `partitionRows` tests; this task is verified manually and by the existing suite staying green.
 
 **Interfaces:**
@@ -895,7 +916,7 @@ EOF
 
 **Files:**
 - Modify: `skannonser/web/static/table.html:19-29`
-- Modify: `skannonser/web/static/table.js` (~610, tag chip mount; `wireToolbar`)
+- Modify: `skannonser/web/static/table.js` (~623, tag chip mount; `wireToolbar` ~675)
 - Modify: `skannonser/web/static/tablefilters.js` (add `statusBadges`)
 - Modify: `skannonser/web/static/filters.js` (`selectionChipRow`: one bulk control, mandatory label)
 - Modify: `skannonser/web/static/style.css`
@@ -1257,7 +1278,7 @@ EOF
 
 **Files:**
 - Create: `skannonser/web/static/tablerows.js`
-- Modify: `skannonser/web/static/table.js` — delete `matchesFilter` (~342) and `visibleRows` (~351), update `render` (~624, ~647)
+- Modify: `skannonser/web/static/table.js` — delete `matchesFilter` (~346) and `visibleRows` (~355), update `render` (~637, ~661)
 - Test: `tests/web/toolbar.test.mjs` (extend)
 
 **Interfaces:**
@@ -1379,7 +1400,7 @@ export function partitionRows(items, filters, meta, { text, focusFinnkode } = {}
 }
 ```
 
-Then in `table.js`: delete `matchesFilter`, delete `visibleRows`, delete the now-unused local `isBlank` **only if nothing else in the file uses it** (it is also used by cell rendering — check with `grep -n "isBlank" skannonser/web/static/table.js` before removing), and add:
+Then in `table.js`: delete `matchesFilter` and `visibleRows`. **Keep `table.js`'s own `isBlank`** — `compareItems` and two cell-render branches still use it (lines 331, 332, 581, 613), so `tablerows.js` carries its own copy rather than importing one. Add:
 
 ```js
 import { matchesFilter, partitionRows } from "./tablerows.js";
@@ -1425,7 +1446,7 @@ Expected: PASS, **218 tests** (213 + 5).
 - [ ] **Step 6: Verify Python is still untouched**
 
 Run: `PYTHONPATH=. ./.venv/bin/pytest -q`
-Expected: **856 passed**.
+Expected: **858 passed**.
 
 - [ ] **Step 7: Commit**
 
@@ -1459,7 +1480,7 @@ EOF
 node --test tests/web/*.test.mjs && PYTHONPATH=. ./.venv/bin/pytest -q
 ```
 
-Expected: **218 node, 856 pytest**.
+Expected: **218 node, 858 pytest**.
 
 - [ ] **Serve and verify by hand**
 
