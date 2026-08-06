@@ -173,3 +173,9 @@ def test_rollup_egen_absent_section_is_null_not_zero():
 def test_rollup_kilde_uniform():
     assert compute_rollup(_resp([F_BAD]))["reparasjon_kilde"] == "takst"
     assert compute_rollup(_resp([F_TAK]))["reparasjon_kilde"] == "estimat"
+
+
+def test_rollup_est_rounds_half_up_not_bankers():
+    f = {"tg": 2, "bygningsdel": "tak", "tiltak": None, "alvorlighet": "mindre",
+         "kostnad_lav": 0, "kostnad_hoy": 10_000, "kostnad_kilde": "estimat"}
+    assert compute_rollup(_resp([f]))["reparasjon_est"] == 10_000

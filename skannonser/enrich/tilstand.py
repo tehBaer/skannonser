@@ -4,6 +4,7 @@ per-listing rollup math. The API call itself lives behind an injected `_call`
 so tests never touch the network and never import `anthropic`.
 """
 import hashlib
+import math
 import re
 import sqlite3
 
@@ -250,7 +251,7 @@ def compute_rollup(resp: TilstandResponse) -> dict:
     if costed:
         lav = sum(f.kostnad_lav for f in costed)
         hoy = sum(f.kostnad_hoy for f in costed)
-        est = round(sum((f.kostnad_lav + f.kostnad_hoy) / 2 for f in costed) / 10_000) * 10_000
+        est = math.floor(sum((f.kostnad_lav + f.kostnad_hoy) / 2 for f in costed) / 10_000 + 0.5) * 10_000
         kilder = {f.kostnad_kilde for f in costed}
         kilde = "takst" if kilder == {"takst"} else (
             "estimat" if kilder == {"estimat"} else "blandet")
