@@ -103,13 +103,23 @@ export function earthUrl(item) {
 
 // Percent over/under prisantydning for a sold item, or null when either the
 // tinglyst price or the asking price is missing.
+//
+// Blankness is rejected BEFORE Number(), not after: Number(null) is 0 and
+// Number("") is 0, both of which satisfy Number.isFinite, so a closed listing
+// whose sale is not yet tinglyst used to compute as a sale for 0 kr and render
+// "-100 %". Same trap `coords()` documents above. An explicit numeric 0 is
+// still a real (if implausible) sale and keeps computing.
 export function premiumPct(item) {
-  const soldPrice = Number(item.sold_price);
-  const asking = Number(item.price_suggestion);
+  const rawSold = item.sold_price;
+  const rawAsking = item.price_suggestion;
+  if (rawSold === null || rawSold === undefined || rawSold === "") return null;
+  if (rawAsking === null || rawAsking === undefined || rawAsking === "") return null;
+  const soldPrice = Number(rawSold);
+  const asking = Number(rawAsking);
   if (!Number.isFinite(soldPrice) || !Number.isFinite(asking) || asking <= 0) {
     return null;
   }
-  return (soldPrice / asking - 1) * 100;
+  return Math.round((soldPrice / asking - 1) * 100);
 }
 
 // "+7,2 %" / "−3,1 %" (nb-NO decimals) for a premium percent.
