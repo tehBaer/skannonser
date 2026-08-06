@@ -8,7 +8,8 @@
 import { commitAnnotation } from "./annotations.js";
 import {
   isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
-  fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, resolveHiddenColumns,
+  fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, fmtAlvorlighet,
+  resolveHiddenColumns,
   SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, labelWithSource,
 } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
@@ -54,7 +55,17 @@ const NUMERIC_COLUMNS = new Set([
   "felleskost_mnd",
   "pris_kvm_totalpris",
   "maanedskost",
+  "tg3_count",
+  "reparasjon_est",
+  // alvorlighet itself is a text enum, but cellValue() below maps it onto
+  // ALVORLIGHET_ORDER's severity rank, and that rank must be compared
+  // numerically -- alphabetical would sort "alvorlig" before "kosmetisk".
+  "alvorlighet",
 ]);
+
+// Severity rank used only for sorting (see cellValue's "alvorlighet" case);
+// display always goes through fmtAlvorlighet on the raw string.
+const ALVORLIGHET_ORDER = { kosmetisk: 0, mindre: 1, vesentlig: 2, alvorlig: 3 };
 
 // key: how a column's raw value is read off an item (travel columns reach
 // into item.travel; premium is derived). label: header text. sortable: false
@@ -92,6 +103,13 @@ const COLUMNS = [
   { key: "heftelser", label: "Heftelser", sortable: true },
   { key: "radon_omtalt", label: "Radon", sortable: true },
   { key: "boligselgerforsikring", label: "Selgerforsikring", sortable: true },
+  // Tilstand classifier (migration 016). Default-hidden like the salgsoppgave
+  // columns just above, and listed in their own migration array (see
+  // TILSTAND_COLUMNS) so stored column preferences that predate them hide
+  // them once without re-hiding a column a reader has since chosen to show.
+  { key: "tg3_count", label: "TG3", sortable: true },
+  { key: "reparasjon_est", label: "Utbedring", sortable: true },
+  { key: "alvorlighet", label: "Alvorlighet", sortable: true },
   { key: "brj", label: "BRJ", sortable: true },
   { key: "mvv", label: "MVV", sortable: true },
   { key: "mvv_uni", label: "UNI", sortable: true },
@@ -113,18 +131,34 @@ const SALGSOPPGAVE_COLUMNS = [
   "ferdigattest", "eiendomsskatt_kr", "verditakst", "utleie", "husdyr",
   "heftelser", "radon_omtalt", "boligselgerforsikring",
 ];
+// Migration 016's three columns, hidden by default the same way. Kept as its
+// OWN migration array with its own `tilstandColumnsDefaulted` flag below,
+// rather than folded into SALGSOPPGAVE_COLUMNS: a reader who already passed
+// the 015 migration has `salgsoppgaveColumnsDefaulted: true`, and
+// resolveHiddenColumns checks exactly that one flag -- reusing it here would
+// make it skip hiding these new columns for every reader who upgraded
+// through 015 before 016 existed.
+const TILSTAND_COLUMNS = ["tg3_count", "reparasjon_est", "alvorlighet"];
 const DEFAULT_HIDDEN_COLUMNS = [
   "postnummer", "pris", "felleskost_mnd", "soverom", "etasje", "tilgjengelighet",
   ...SALGSOPPGAVE_COLUMNS,
+  ...TILSTAND_COLUMNS,
 ];
 const ALWAYS_VISIBLE_COLUMNS = new Set(["adresse", "kart"]);
 
 function loadHiddenColumns() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return resolveHiddenColumns(
-      raw ? JSON.parse(raw) : null, DEFAULT_HIDDEN_COLUMNS, SALGSOPPGAVE_COLUMNS
-    );
+    const stored = raw ? JSON.parse(raw) : null;
+    const hidden = resolveHiddenColumns(stored, DEFAULT_HIDDEN_COLUMNS, SALGSOPPGAVE_COLUMNS);
+    // Second, independent one-time migration (see TILSTAND_COLUMNS above).
+    // `stored` null means resolveHiddenColumns already returned
+    // DEFAULT_HIDDEN_COLUMNS in full, which already includes these -- nothing
+    // more to add.
+    if (stored && !stored.tilstandColumnsDefaulted) {
+      TILSTAND_COLUMNS.forEach((key) => hidden.add(key));
+    }
+    return hidden;
   } catch (_) {
     return new Set(DEFAULT_HIDDEN_COLUMNS);
   }
@@ -136,6 +170,7 @@ function saveHiddenColumns() {
     const blob = raw ? JSON.parse(raw) : {};
     blob.hiddenColumns = [...state.hiddenColumns];
     blob.salgsoppgaveColumnsDefaulted = true;
+    blob.tilstandColumnsDefaulted = true;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
   } catch (_) {
     /* storage may be unavailable; non-fatal */
@@ -271,6 +306,14 @@ function cellValue(item, key) {
       return travelMinutes(item, key);
     case "premium":
       return premiumPct(item);
+    case "alvorlighet": {
+      // Sort by severity, not alphabetically: raw values are the enum keys
+      // (kosmetisk/mindre/vesentlig/alvorlig), and localeCompare on those
+      // would put "alvorlig" before "kosmetisk". An unmapped/missing value
+      // returns null, which compareItems' isBlank() sorts last either way.
+      const rank = ALVORLIGHET_ORDER[item.alvorlighet];
+      return rank === undefined ? null : rank;
+    }
     case "kart":
       return null;
     default:
@@ -476,6 +519,25 @@ function buildRow(item) {
         // tegnet". Via fmtJaNei, not the default branch, since `String(false)`
         // would print the literal "false".
         td.textContent = fmtJaNei(item.boligselgerforsikring) || "";
+        break;
+      }
+      case "tg3_count": {
+        td.textContent = item.tg3_count ?? "";
+        td.classList.add("num");
+        break;
+      }
+      case "reparasjon_est": {
+        const v = fmtPris(item.reparasjon_est);
+        // "~" hedges a model estimate; a plain figure means the surveyor's
+        // own number (reparasjon_kilde === "takst") came through unchanged.
+        td.textContent = v
+          ? (item.reparasjon_kilde === "takst" ? v : "~" + v)
+          : "";
+        td.classList.add("num");
+        break;
+      }
+      case "alvorlighet": {
+        td.textContent = fmtAlvorlighet(item.alvorlighet) || "";
         break;
       }
       case "sold_date": {

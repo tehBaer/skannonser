@@ -24,12 +24,14 @@ import {
   PRIS_KVM_MAX,
   SOLD_PRICE_MAX,
   PREMIUM_MAX,
+  REPARASJON_MAX,
   priceBoundOf,
 } from "./filterstate.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE,
   FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS, SALGSOPPGAVE_HINT, SALGSOPPGAVE_SUFFIX,
+  fmtAlvorlighet,
 } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
@@ -103,6 +105,10 @@ export function listingExcluded(item, filters, meta) {
   if (overMax(item.pris_kvm_totalpris, f.totalKvmMax, TOTAL_KVM_MAX)) return true;
   if (overMax(item.maanedskost, f.maanedskostMax, MAANEDSKOST_MAX)) return true;
   if (overMax(item.pris_kvm, f.prisKvmMax, PRIS_KVM_MAX)) return true;
+  // Tilstand classifier rollup (migration 016): same unknownFails policy as
+  // every other money slider above -- a listing with no tilstandsrapport
+  // (reparasjon_est null) passes while includeUnknown is on, the default.
+  if (overMax(item.reparasjon_est, f.reparasjonMax, REPARASJON_MAX)) return true;
   // Sold-outcome filters apply ONLY to sold items -- actives structurally
   // lack these fields, and must never be swept out by includeUnknown=false.
   if (item.sold) {
@@ -127,6 +133,12 @@ export function listingExcluded(item, filters, meta) {
   // listing too -- which was ~70 % of the data before the svg energy-label
   // parser fix, so "A" was mostly not-A.
   if (selectionExcludes(f.energiSelected, item.energimerke || "")) return true;
+  // Alvorlighet joins energimerking's routing: a null value means the
+  // listing was never classified (no tilstandsrapport read, or one was read
+  // and carried no TG2/TG3 findings), and it must be its own explicit "Ukjent"
+  // chip rather than an unknown deferring to includeUnknown -- same reasoning
+  // as the energimerking fix above.
+  if (selectionExcludes(f.alvorlighetSelected, item.alvorlighet || "")) return true;
 
   // Salgsoppgave enums join energimerking's routing, NOT the selected-set
   // routing below: `null` here means the prospectus was never parsed, which is
@@ -577,6 +589,19 @@ export function buildFilterPanelUI(
     selected: filters.energiSelected,
     onChange,
   });
+  // Same synthesis again: meta.alvorligheter lists only the severities
+  // actually present in listing_tilstand, so an unclassified listing needs
+  // its own "" row to be selectable (and excludable) at all. Labels come
+  // from fmtAlvorlighet so the chip text can never drift from the popup/table.
+  selectionChipRow(fields, {
+    label: "Alvorlighet",
+    options: [
+      ...(meta.alvorligheter || []).map((v) => ({ key: v, label: fmtAlvorlighet(v) })),
+      { key: "", label: "Ukjent" },
+    ],
+    selected: filters.alvorlighetSelected,
+    onChange,
+  });
   // Fixed vocabularies, not vocab-derived: these three are closed enums owned
   // by the parser (skannonser/ingest/finn/parse_salgsoppgave.py), so every
   // option is known ahead of the data and none can go stale -- which is also
@@ -666,6 +691,11 @@ export function buildFilterPanelUI(
     label: "Maks total/kvm", min: 0, max: TOTAL_KVM_MAX, step: 1000,
     value: filters.totalKvmMax, fmt: kr(TOTAL_KVM_MAX),
     onInput: (v) => { filters.totalKvmMax = v; onChange(); },
+  });
+  rangeRow(pris, {
+    label: "Maks utbedring", min: 0, max: REPARASJON_MAX, step: 50000,
+    value: filters.reparasjonMax, fmt: kr(REPARASJON_MAX),
+    onInput: (v) => { filters.reparasjonMax = v; onChange(); },
   });
 
   const bolig = group("grp-bolig", "Bolig");

@@ -16,10 +16,11 @@ import {
   PRIS_KVM_MAX,
   SOLD_PRICE_MAX,
   PREMIUM_MAX,
+  REPARASJON_MAX,
   priceBoundOf,
 } from "./filterstate.js";
 import { rangeRow, checkboxGroup, searchableMultiSelect, openPopover, closePopover } from "./filters.js";
-import { FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS } from "./listingmeta.js";
+import { FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS, fmtAlvorlighet } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
 const fmtKr = (bound) => (v) => (v >= bound ? "Av" : NOK.format(v) + " kr");
@@ -60,13 +61,31 @@ export const COLUMN_FILTERS = {
   husdyr: { kind: "selection", stateKey: "husdyrSelected", options: HUSDYR_OPTIONS },
   postnummer: { kind: "search-set", stateKey: "postnummerSelected", vocab: "vocab:postnummer" },
   nabolag: { kind: "search-set", stateKey: "nabolagSelected", vocab: "vocab:nabolag" },
+  // Tilstand classifier (migration 016). reparasjon_est is a rollup sum, so it
+  // gets its own bound (REPARASJON_MAX) rather than reusing pris/totalpris's
+  // -- see filterstate.js's comment. alvorlighet mirrors energimerke's
+  // selection shape, but its meta vocabulary is raw enum keys
+  // (kosmetisk/mindre/vesentlig/alvorlig), so `labelFn` renders them through
+  // fmtAlvorlighet instead of showing the key verbatim.
+  reparasjon_est: { kind: "slider-max", stateKey: "reparasjonMax", bound: () => REPARASJON_MAX, step: 50000, fmt: "kr" },
+  alvorlighet: {
+    kind: "selection", stateKey: "alvorlighetSelected", vocab: "meta:alvorligheter",
+    unknownBucket: "Ukjent", labelFn: fmtAlvorlighet,
+  },
 };
 
 function vocabOptions(desc, ctx) {
   if (desc.options) return desc.options; // fixed enum: no data source to read
   const [src, key] = desc.vocab.split(":");
   if (src === "meta") {
-    const options = (ctx.meta[key] || []).map((v) => ({ key: v, label: v }));
+    // labelFn covers vocabularies whose stored key isn't its own display label
+    // (alvorlighet's enum keys vs. fmtAlvorlighet's Norwegian text); every
+    // other meta vocab (boligtyper, eieformer, energimerker) has no formatter
+    // and falls back to showing the raw value, same as before.
+    const options = (ctx.meta[key] || []).map((v) => ({
+      key: v,
+      label: desc.labelFn ? desc.labelFn(v) : v,
+    }));
     if (desc.unknownBucket) options.push({ key: "", label: desc.unknownBucket });
     return options;
   }

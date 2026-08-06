@@ -19,6 +19,11 @@ export const MAANEDSKOST_MAX = 20_000;
 export const PRIS_KVM_MAX = 150_000;
 export const SOLD_PRICE_MAX = 10_000_000;
 export const PREMIUM_MAX = 30; // percent over prisantydning
+// Tilstand classifier (migration 016) rollup: reparasjon_est sums midpoints
+// across every TG2/TG3 finding, so it can exceed the 1M grid ceiling other
+// money sliders use -- a single roof + drainage + electrical estimate alone
+// can clear it.
+export const REPARASJON_MAX = 2_000_000;
 
 export function priceBoundOf(meta) {
   return Number((meta.filters && meta.filters.sheets_max_price) || 7500000);
@@ -43,6 +48,7 @@ export function defaultFilters(meta) {
     prisKvmMax: PRIS_KVM_MAX,
     soldPriceMax: SOLD_PRICE_MAX,
     premiumMax: PREMIUM_MAX,
+    reparasjonMax: REPARASJON_MAX,
     // selected sets: [] = off; non-empty => ONLY these values pass.
     boligtypeSelected: [],
     eieformSelected: [],
@@ -51,6 +57,11 @@ export function defaultFilters(meta) {
     tagSelected: [],
     postnummerSelected: [],
     nabolagSelected: [],
+    // Tilstand classifier (migration 016). Routed like energiSelected, not
+    // eieformSelected: a null alvorlighet means the listing was never
+    // classified (no tilstandsrapport read), so the "" bucket must be an
+    // explicit, selectable choice rather than deferring to includeUnknown.
+    alvorlighetSelected: [],
     // Salgsoppgave enums (migration 015). Routed like energiSelected, not
     // eieformSelected: a missing value here means the prospectus was never
     // parsed (~36 % of listings), so deferring it to `includeUnknown` would
@@ -96,6 +107,7 @@ export function loadFilters(meta) {
     ferdigattestSelected: [...(stored.ferdigattestSelected || [])],
     utleieSelected: [...(stored.utleieSelected || [])],
     husdyrSelected: [...(stored.husdyrSelected || [])],
+    alvorlighetSelected: [...(stored.alvorlighetSelected || [])],
     facilitiesRequired: { ...(stored.facilitiesRequired || {}) },
   };
   // The 2026-07-26 conversion from hidden-sets to selections. Inverting a
@@ -178,6 +190,7 @@ export function activeFilterEntries(filters, meta) {
   maxSlider("prisKvmMax", "Maks pris/kvm", PRIS_KVM_MAX, kr);
   maxSlider("soldPriceMax", "Maks solgt-pris", SOLD_PRICE_MAX, kr);
   maxSlider("premiumMax", "Maks budpremie", PREMIUM_MAX, (v) => "≤ +" + v + " %");
+  maxSlider("reparasjonMax", "Maks utbedring", REPARASJON_MAX, kr);
   minSlider("braIMin", "Min BRA-i", 0, (v) => "≥ " + v + " m²");
   minSlider("soveromMin", "Min soverom", 0, (v) => "≥ " + v);
   minSlider("byggeaarMin", "Min byggeår", BYGGEAAR_FLOOR, (v) => "≥ " + v);
@@ -218,6 +231,7 @@ export function activeFilterEntries(filters, meta) {
   selectedSet("ferdigattestSelected", "Ferdigattest");
   selectedSet("utleieSelected", "Utleie");
   selectedSet("husdyrSelected", "Husdyr");
+  selectedSet("alvorlighetSelected", "Alvorlighet");
 
   const nFac = Object.keys(filters.facilitiesRequired || {}).length;
   if (nFac) {
