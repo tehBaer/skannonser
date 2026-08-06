@@ -8,11 +8,12 @@ Responses are validated BEFORE caching so a malformed response never poisons
 the cache. Purely local: reads the on-disk HTML cache, never FINN.
 """
 import sqlite3
+import time
 from pathlib import Path
 
 from skannonser.enrich.tilstand import (
-    TilstandResponse, _anthropic_call, cache_get, cache_put, classify_input,
-    compute_rollup, content_sha,
+    TilstandResponse, _MODEL, _SYSTEM_PROMPT, TILSTAND_SCHEMA, _anthropic_call,
+    cache_get, cache_put, classify_input, compute_rollup, content_sha,
 )
 from skannonser.store.repositories.tilstand import TilstandRepo
 
@@ -83,4 +84,100 @@ def classify_tilstand(
             compute_rollup(resp),
         )
         counts["upserted"] += 1
+    return counts
+
+
+def _default_client():
+    import anthropic  # lazy: only where classification actually runs
+
+    return anthropic.Anthropic()
+
+
+def _pending_inputs(conn, project_dir, input_fn, limit) -> dict[str, str]:
+    """sha -> input text for every ad whose input is not yet cached.
+    Dedup by sha is automatic (dict key); `limit` bounds the request count."""
+    pending: dict[str, str] = {}
+    for (finnkode,) in conn.execute("SELECT finnkode FROM eiendom"):
+        if limit is not None and len(pending) >= limit:
+            break
+        path = Path(project_dir) / "html_extracted" / f"{finnkode}.html"
+        if not path.is_file():
+            continue
+        try:
+            text = input_fn(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        if text is None:
+            continue
+        sha = content_sha(text)
+        if sha not in pending and cache_get(conn, sha) is None:
+            pending[sha] = text
+    return pending
+
+
+def classify_tilstand_batch(
+    conn: sqlite3.Connection,
+    project_dir: Path,
+    *,
+    limit: int | None = None,
+    _client=None,
+    _sleep=None,
+    _input_fn=None,
+) -> dict:
+    """Backfill via the Batch API (50% cheaper). Fills the cache, then the
+    sync driver derives rows from it -- so an interrupted run loses nothing
+    already paid for."""
+    input_fn = _input_fn or classify_input
+    sleep = _sleep or time.sleep
+    pending = _pending_inputs(conn, project_dir, input_fn, limit)
+    counts = {"submitted": len(pending), "succeeded": 0, "failed": 0}
+    if pending:
+        client = _client or _default_client()
+        requests = [
+            {
+                "custom_id": sha,  # sha256 hex = 64 chars = the API's cap, exactly
+                "params": {
+                    "model": _MODEL,
+                    # Mirrors the sync seam: on claude-opus-5, adaptive thinking
+                    # shares the max_tokens budget, so this must stay at 32000.
+                    "max_tokens": 32000,
+                    "system": _SYSTEM_PROMPT,
+                    "messages": [{"role": "user", "content": text}],
+                    "output_config": {
+                        "format": {"type": "json_schema", "schema": TILSTAND_SCHEMA}
+                    },
+                },
+            }
+            for sha, text in pending.items()
+        ]
+        batch = client.messages.batches.create(requests=requests)
+        while True:
+            batch = client.messages.batches.retrieve(batch.id)
+            if batch.processing_status == "ended":
+                break
+            sleep(60)
+        for result in client.messages.batches.results(batch.id):
+            stop_reason = getattr(result.result.message, "stop_reason", None)
+            ok = (
+                result.result.type == "succeeded"
+                and stop_reason not in ("refusal", "max_tokens")
+            )
+            raw = None
+            if ok:
+                raw = next(
+                    (b.text for b in result.result.message.content if b.type == "text"),
+                    None,
+                )
+            if raw is not None:
+                try:
+                    TilstandResponse.model_validate_json(raw)
+                except Exception:
+                    raw = None
+            if raw is None:
+                counts["failed"] += 1
+                continue
+            cache_put(conn, result.custom_id, raw)
+            counts["succeeded"] += 1
+    derive = classify_tilstand(conn, project_dir, cache_only=True, _input_fn=_input_fn)
+    counts.update({f"derive_{k}": v for k, v in derive.items()})
     return counts
