@@ -163,7 +163,7 @@ def test_table_served_at_table_route(tmp_path):
     assert 'id="listings-table"' in body
     assert 'id="table-head-row"' in body and 'id="table-body"' in body
     assert 'id="table-filter"' in body
-    assert 'id="table-sold"' in body
+    assert 'id="table-status-btn"' in body
     assert 'type="module"' in body and "/table.js" in body
     # Links back to the map.
     assert 'href="/"' in body

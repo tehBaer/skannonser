@@ -11,9 +11,17 @@ import {
   fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, fmtAlvorlighet,
   resolveHiddenColumns, applyTilstandColumnsMigration,
   SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, TILSTAND_DERIVED, TILSTAND_HINT,
-  labelWithSource,
+  labelWithSource, TILGJENGELIGHET_OPTIONS,
 } from "./listingmeta.js";
-import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
+import {
+  listingExcluded,
+  deriveVocabs,
+  selectionChipRow,
+  openPopover,
+  selectionExcludes,
+  statusVocabComplete,
+  wantsClosed,
+} from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import { attachTagList, syncTagOptions } from "./tagoptions.js";
 import {
@@ -23,6 +31,7 @@ import {
   subscribeOtherTabs,
   resetFilters,
   pruneFilterSets,
+  seedStatus,
 } from "./filterstate.js";
 import {
   isColumnFilterActive,
@@ -33,9 +42,9 @@ import {
 
 const NOK = new Intl.NumberFormat("nb-NO");
 const STORAGE_KEY = "skannonser.ui.v1"; // shared with app.js -- this page
-// reads/writes `sold` and `hiddenColumns` in that blob (filters live there
-// too, via filterstate.js); neither page needs to know the other's full
-// UI-state shape, just its own fields within the shared blob.
+// reads/writes `hiddenColumns` in that blob (filters, including the status
+// selection, live there too via filterstate.js); neither page needs to know
+// the other's full UI-state shape, just its own fields within the shared blob.
 
 // Columns whose values are compared numerically (nulls always sort last,
 // regardless of sort direction -- see `compareItems`). Every other column
@@ -182,7 +191,6 @@ function visibleColumns() {
 const state = {
   items: [], // all loaded items (eie + dnb, + sold once toggled on)
   soldLoaded: false,
-  showSold: false, // tracks "Vis solgte" toggle state; sold items stay in items
   focusFinnkode: null, // deep-linked row (map popup "Tabell" handoff): exempt from filters
   sortKey: "scraped_at", // newest first: the scanner's daily question
   sortDir: "desc",
@@ -211,17 +219,13 @@ function onFilterChange() {
 
 function refreshVocabs() {
   // Same rule as the map (app.js vocabItems): the vocabulary describes the
-  // rows the user can see. `state.items` only ever grows, so without this the
-  // tag chips keep values that only closed rows carried after "Vis solgte" is
-  // switched back off.
-  const visible = state.showSold ? state.items : state.items.filter((it) => !it.closed);
+  // rows the user can see, and state.items only ever grows.
+  const visible = state.items.filter(
+    (it) => !selectionExcludes(state.filters.tilgjengelighetSelected, it.tilgjengelighet || "")
+  );
   state.vocabs = deriveVocabs(visible);
-  // Deleting stored filter values is only safe once the vocabulary covers the
-  // WHOLE dataset -- see pruneFilterSets. With "Vis solgte" off (which is also
-  // the state during init, before wireToolbar has read the pref) closed
-  // listings are invisible or not even fetched, and the map next door may well
-  // be showing them.
-  const vocabComplete = state.showSold && state.soldLoaded;
+  const vocabComplete =
+    statusVocabComplete(state.filters.tilgjengelighetSelected) && state.soldLoaded;
   if (pruneFilterSets(state.filters, state.vocabs, vocabComplete)) saveFilters(state.filters);
   state.tagColors = assignTagColors(state.vocabs.tags.map((o) => o.key));
   // Same source as the colours, so a tag saved in a cell is suggestable in the
@@ -241,44 +245,18 @@ function setStatus(text) {
   if (node) node.textContent = text || "";
 }
 
-function loadSoldPref() {
+// Fetch the closed bucket if the current status selection asks for it and it
+// is not already loaded. Idempotent and safe to call on every filter change.
+async function ensureSoldForSelection() {
+  if (state.soldLoaded) return;
+  if (!wantsClosed(state.filters.tilgjengelighetSelected)) return;
+  setStatus("Laster solgte …");
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    return !!JSON.parse(raw).sold;
-  } catch (_) {
-    return false;
-  }
-}
-
-function saveSoldPref(sold) {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const stored = raw ? JSON.parse(raw) : {};
-    stored.sold = sold;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-  } catch (_) {
-    /* storage may be unavailable; non-fatal */
-  }
-}
-
-// Turn "Vis solgte" on, fetching the closed bucket the first time. Shared by
-// the toggle itself and the empty-state reset (F5), whose message blames "lag
-// og filtre" but whose button could only ever touch the filters.
-async function enableSold() {
-  if (state.showSold) return;
-  state.showSold = true;
-  const soldToggle = document.getElementById("table-sold");
-  if (soldToggle) soldToggle.checked = true;
-  saveSoldPref(true);
-  if (!state.soldLoaded) {
-    setStatus("Laster solgte …");
-    try {
-      state.items = state.items.concat(await fetchListings(1));
-      state.soldLoaded = true;
-    } catch (err) {
-      setStatus("Kunne ikke laste solgte: " + err.message);
-    }
+    state.items = state.items.concat(await fetchListings(1));
+    state.soldLoaded = true;
+  } catch (err) {
+    setStatus("Kunne ikke laste solgte: " + err.message);
+    return;
   }
   refreshVocabs();
 }
@@ -355,7 +333,6 @@ function matchesFilter(item, text) {
 function visibleRows() {
   const filtered = state.items.filter((item) => {
     if (state.focusFinnkode && String(item.finnkode) === state.focusFinnkode) return true;
-    if (!state.showSold && item.closed) return false;
     if (listingExcluded(item, state.filters, state.meta)) return false;
     return matchesFilter(item, state.filterText);
   });
@@ -645,11 +622,13 @@ function render() {
     btn.addEventListener("click", async () => {
       resetFilters(state.filters, state.meta);
       saveFilters(state.filters);
-      // Also restore the one "lag" this page has. The message names layers as
-      // a possible cause of the empty table, so the button must be able to
-      // undo them too -- a filters-only reset leaves a user who emptied the
-      // table by unchecking "Vis solgte" clicking on nothing.
-      await enableSold();
+      // Also restore the status selection to its unfiltered floor. The
+      // message names layers/filters as a possible cause of the empty table,
+      // so the button must be able to undo a status selection too -- a
+      // filters-only reset leaves a user who emptied the table via the Status
+      // popover clicking on nothing.
+      seedStatus(state.filters);
+      await ensureSoldForSelection();
       refreshVocabs();
       render();
     });
@@ -679,25 +658,30 @@ function wireToolbar() {
     render();
   });
 
-  const soldToggle = document.getElementById("table-sold");
-  soldToggle.checked = loadSoldPref();
-  state.showSold = soldToggle.checked;
-  soldToggle.addEventListener("change", async () => {
-    if (soldToggle.checked) {
-      soldToggle.disabled = true;
-      try {
-        await enableSold();
-      } finally {
-        soldToggle.disabled = false;
-      }
-    } else {
-      state.showSold = false;
-      saveSoldPref(false);
-      // The off path changes the vocabulary boundary just as much as the on one.
-      refreshVocabs();
-    }
-    render();
-  });
+  const statusBtn = document.getElementById("table-status-btn");
+  if (statusBtn) {
+    statusBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openPopover(statusBtn, (pop) => {
+        // Counts come from the derived vocabulary when the bucket is loaded,
+        // but the OPTION LIST is the fixed constant -- a status absent from
+        // the loaded items still needs a control, or there is nothing to click
+        // to trigger the fetch that would produce it.
+        const counts = new Map(state.vocabs.tilgjengelighet.map((o) => [o.key, o.count]));
+        selectionChipRow(pop, {
+          label: "Status",
+          options: TILGJENGELIGHET_OPTIONS.map((o) => ({ ...o, count: counts.get(o.key) })),
+          selected: state.filters.tilgjengelighetSelected,
+          emptyIsRealValue: true,
+          onChange: async () => {
+            seedStatus(state.filters);
+            await ensureSoldForSelection();
+            onFilterChange();
+          },
+        });
+      });
+    });
+  }
 
   const facBtn = document.getElementById("facilities-filter-btn");
   if (facBtn) {
@@ -795,14 +779,10 @@ async function handleHash() {
     setStatus("Fant ikke annonse " + finnkode);
     return;
   }
-  if (item.closed && !state.showSold) {
-    state.showSold = true;
-    const soldToggle = document.getElementById("table-sold");
-    if (soldToggle) soldToggle.checked = true;
-    saveSoldPref(true);
-    // Vocab was derived from the non-closed set; this deep link just widened
-    // the visible rows to include the closed one, so the chips would
-    // describe a narrower set than what's now on screen without a rebuild.
+  const status = item.tilgjengelighet || "";
+  if (selectionExcludes(state.filters.tilgjengelighetSelected, status)) {
+    state.filters.tilgjengelighetSelected.push(status);
+    saveFilters(state.filters);
     refreshVocabs();
   }
   state.focusFinnkode = finnkode;
@@ -832,19 +812,10 @@ async function init() {
     setStatus("Kunne ikke laste data: " + err.message);
     return;
   }
+  seedStatus(state.filters);
+  await ensureSoldForSelection();
   refreshVocabs();
   wireToolbar();
-  const soldToggle = document.getElementById("table-sold");
-  if (soldToggle.checked) {
-    try {
-      state.items = state.items.concat(await fetchListings(1));
-      state.soldLoaded = true;
-      state.showSold = true;
-      refreshVocabs();
-    } catch (_) {
-      /* fall through with just the non-sold rows loaded */
-    }
-  }
   // Live cross-tab sync: the map (or another table tab) changed the filters.
   subscribeOtherTabs(() => {
     state.filters = loadFilters(state.meta);
