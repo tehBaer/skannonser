@@ -207,3 +207,45 @@ def test_classify_tilstand_refuses_unbounded_run(tmp_path):
     )
     assert result.exit_code == 1, result.output
     assert "--limit" in result.output
+
+
+def test_classify_tilstand_help_text_renders_readable(tmp_path):
+    """Guards against Rich-markup mangling: `[llm]` in the docstring gets
+    stripped as a style tag, and `%%` in a help string renders literally
+    since Typer/Click does not %-format help text."""
+    result = CliRunner().invoke(app, ["tools", "classify-tilstand", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "llm" in result.output
+    assert "[llm]" not in result.output
+    assert "50%" in result.output
+    assert "%%" not in result.output
+
+
+def test_classify_tilstand_wipe_clears_tables_without_api_call(tmp_path):
+    """--wipe must clear listing_tilstand even in the (default, non-batch)
+    path with --limit 0 -- no seam injected, so a real API call would crash
+    on the missing anthropic import; exit 0 here proves none was attempted."""
+    from skannonser.store import connection
+
+    db = _migrated_db(tmp_path)
+    conn = connection.connect(db)
+    conn.execute("INSERT INTO eiendom (finnkode, url) VALUES (?, ?)", ("12345678", "u"))
+    conn.execute(
+        "INSERT INTO listing_tilstand (finnkode, tg2_count, tg3_count, classified_at) "
+        "VALUES (?, 0, 0, ?)",
+        ("12345678", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "tools", "classify-tilstand", "--db", str(db),
+            "--wipe", "--limit", "0", "--project-dir", str(tmp_path / "eiendom"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    conn = connection.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM listing_tilstand").fetchone()[0] == 0

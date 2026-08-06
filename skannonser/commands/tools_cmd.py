@@ -139,7 +139,7 @@ def classify_tilstand_cmd(
              "rebuild replays paid responses for free."),
     batch: bool = typer.Option(
         False, "--batch",
-        help="Submit uncached ads via the Batch API (50%% cheaper), poll until "
+        help="Submit uncached ads via the Batch API (50% cheaper), poll until "
              "done, then derive rows from the cache."),
     validate: bool = typer.Option(
         False, "--validate",
@@ -149,8 +149,9 @@ def classify_tilstand_cmd(
 ) -> None:
     """Classify TG2/TG3 condition findings from cached salgsoppgave text
     (Claude Opus 5). COSTS MONEY on uncached ads -- run staged: --limit 200,
-    check, --limit 1000, check, then the rest with --batch. Requires
-    `pip install -e .[llm]` and ANTHROPIC_API_KEY locally; the server never
+    check, --limit 1000, check, then the rest with --batch. Requires the
+    anthropic package (install the llm extra from pyproject.toml's
+    optional-dependencies) and ANTHROPIC_API_KEY locally; the server never
     needs either."""
     from skannonser.enrich.tilstand_backfill import (
         classify_tilstand, classify_tilstand_batch,
@@ -182,9 +183,11 @@ def classify_tilstand_cmd(
             err=True,
         )
         raise typer.Exit(code=1)
+    if wipe:
+        repo.wipe()
     if batch:
         result = classify_tilstand_batch(conn, project_dir, limit=limit)
     else:
-        result = classify_tilstand(conn, project_dir, limit=limit, wipe=wipe)
+        result = classify_tilstand(conn, project_dir, limit=limit)
     typer.echo(f"classify-tilstand: {result}")
     typer.echo(f"coverage: {repo.coverage()}")
