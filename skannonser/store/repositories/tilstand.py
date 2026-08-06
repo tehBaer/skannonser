@@ -25,9 +25,10 @@ _ROLLUP_COLS = (
 # the order decides what a bounded run pays for. Status is the outer key;
 # commute+size fit only breaks ties inside a tier.
 
-# Active exactly as publish/rows.py:205 defines it -- 77 production rows have
-# active=1 AND tilgjengelighet='Inaktiv', and that rule resolves them to
-# inactive. One definition of "active", not two.
+# Active exactly as the WHERE clause of _EIE_SQL in publish/rows.py defines
+# it (e.active = 1 AND tilgjengelighet NOT IN ('solgt', 'inaktiv')) -- 77
+# production rows have active=1 AND tilgjengelighet='Inaktiv', and that rule
+# resolves them to inactive. One definition of "active", not two.
 _STATUS_TIER = """
     CASE
         WHEN LOWER(TRIM(COALESCE(e.tilgjengelighet, ''))) = 'solgt' THEN 2
@@ -38,7 +39,8 @@ _STATUS_TIER = """
     END
 """
 
-# Donor-resolved travel, mirroring _DONOR_TRAVEL_SQL in publish/rows.py: a
+# Donor-resolved travel, mirroring the _DONOR_TRAVEL_SQL constant in
+# publish/rows.py: a
 # listing that borrows a donor's times is ranked on the borrowed values, the
 # same ones the web UI shows for it.
 def _donor_travel(dest: str) -> str:
