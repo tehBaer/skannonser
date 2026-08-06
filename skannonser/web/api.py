@@ -621,11 +621,26 @@ def get_listing_detail(
             "SELECT facility FROM listing_facilities WHERE finnkode = ? ORDER BY facility",
             (finnkode,),
         ).fetchall()
-        tgf = _tg_findings_by_finnkode(conn)
+        tg_rows = conn.execute(
+            "SELECT tg, bygningsdel, alvorlighet, kostnad_lav, kostnad_hoy, kostnad_kilde "
+            "FROM listing_tg_findings WHERE finnkode = ? "
+            "ORDER BY (kostnad_hoy IS NULL), kostnad_hoy DESC, tg DESC",
+            (finnkode,),
+        ).fetchall()
         item = _eie_item(
             rec, domain, closed=_sold_from_hidden(rec), thumbs_dir=thumbs_dir,
             facilities=[r["facility"] for r in fac_rows],
-            tg_findings=tgf.get(rec.get("_finnkode")),
+            tg_findings=[
+                {
+                    "tg": r["tg"],
+                    "bygningsdel": r["bygningsdel"],
+                    "alvorlighet": r["alvorlighet"],
+                    "kostnad_lav": r["kostnad_lav"],
+                    "kostnad_hoy": r["kostnad_hoy"],
+                    "kostnad_kilde": r["kostnad_kilde"],
+                }
+                for r in tg_rows
+            ],
         )
         raw = {k: v for k, v in rec.items() if not k.startswith("_")}
         return {**raw, **item}

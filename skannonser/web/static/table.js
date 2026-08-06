@@ -9,8 +9,8 @@ import { commitAnnotation } from "./annotations.js";
 import {
   isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
   fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, fmtAlvorlighet,
-  resolveHiddenColumns,
-  SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, labelWithSource,
+  resolveHiddenColumns, applyTilstandColumnsMigration,
+  SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, TILSTAND_HINT, labelWithSource,
 } from "./listingmeta.js";
 import { listingExcluded, deriveVocabs, selectionChipRow, openPopover } from "./filters.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
@@ -151,14 +151,7 @@ function loadHiddenColumns() {
     const raw = localStorage.getItem(STORAGE_KEY);
     const stored = raw ? JSON.parse(raw) : null;
     const hidden = resolveHiddenColumns(stored, DEFAULT_HIDDEN_COLUMNS, SALGSOPPGAVE_COLUMNS);
-    // Second, independent one-time migration (see TILSTAND_COLUMNS above).
-    // `stored` null means resolveHiddenColumns already returned
-    // DEFAULT_HIDDEN_COLUMNS in full, which already includes these -- nothing
-    // more to add.
-    if (stored && !stored.tilstandColumnsDefaulted) {
-      TILSTAND_COLUMNS.forEach((key) => hidden.add(key));
-    }
-    return hidden;
+    return applyTilstandColumnsMigration(hidden, stored, TILSTAND_COLUMNS);
   } catch (_) {
     return new Set(DEFAULT_HIDDEN_COLUMNS);
   }
@@ -382,6 +375,11 @@ function renderHead() {
     if (SALGSOPPGAVE_DERIVED.has(col.key)) {
       th.classList.add("from-salgsoppgave");
       th.title = SALGSOPPGAVE_HINT;
+    } else if (col.key === "alvorlighet") {
+      // Same dotted-underline soft-field marker, AI-classified rather than
+      // prose-derived -- see TILSTAND_HINT for what "blank" means here.
+      th.classList.add("from-salgsoppgave");
+      th.title = TILSTAND_HINT;
     }
     if (col.sortable) {
       th.classList.add("sortable");
@@ -717,6 +715,9 @@ function wireToolbar() {
           if (SALGSOPPGAVE_DERIVED.has(col.key)) {
             name.classList.add("from-salgsoppgave");
             name.title = SALGSOPPGAVE_HINT;
+          } else if (col.key === "alvorlighet") {
+            name.classList.add("from-salgsoppgave");
+            name.title = TILSTAND_HINT;
           }
           row.appendChild(name);
           wrap.appendChild(row);

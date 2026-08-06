@@ -31,7 +31,7 @@ import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE,
   FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS, SALGSOPPGAVE_HINT, SALGSOPPGAVE_SUFFIX,
-  fmtAlvorlighet,
+  TILSTAND_HINT, fmtAlvorlighet,
 } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
@@ -595,6 +595,7 @@ export function buildFilterPanelUI(
   // from fmtAlvorlighet so the chip text can never drift from the popup/table.
   selectionChipRow(fields, {
     label: "Alvorlighet",
+    labelHint: TILSTAND_HINT,
     options: [
       ...(meta.alvorligheter || []).map((v) => ({ key: v, label: fmtAlvorlighet(v) })),
       { key: "", label: "Ukjent" },

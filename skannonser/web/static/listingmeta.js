@@ -292,6 +292,7 @@ function fmtKr(n) {
 // The grid's 1 000 000 ceiling means "1M+", so a band touching it is open.
 export function fmtKostnadBand(lav, hoy, kilde) {
   if (lav === null || lav === undefined || hoy === null || hoy === undefined) return null;
+  if (lav === 0 && hoy === 1000000) return null; // fully unbounded band: no real signal
   const hedge = kilde === "takst" ? "" : "~";
   if (lav === 0) return hedge + "under " + fmtKr(hoy) + " kr";
   if (hoy === 1000000) return hedge + "over " + fmtKr(lav) + " kr";
@@ -301,7 +302,8 @@ export function fmtKostnadBand(lav, hoy, kilde) {
 
 export const TILSTAND_HINT =
   "Fra tilstandsrapporten, KI-klassifisert. ~ = kostnadsanslag fra modellen, " +
-  "ikke takstmannens tall. Tomt felt betyr at ingen tilstandsrapport ble lest.";
+  "ikke takstmannens tall. Tomt felt betyr at ingen tilstandsrapport ble lest " +
+  "— eller at rapporten ikke inneholdt TG2/TG3-funn.";
 
 // Which table columns start hidden, given a reader's stored preferences.
 //
@@ -321,6 +323,22 @@ export function resolveHiddenColumns(stored, defaults, newColumns) {
   const hidden = new Set(list);
   if (!stored.salgsoppgaveColumnsDefaulted) {
     newColumns.forEach((key) => hidden.add(key));
+  }
+  return hidden;
+}
+
+// Second, independent one-time migration for migration 016's tilstand
+// columns, applied on top of resolveHiddenColumns's result. Split out (rather
+// than folded into resolveHiddenColumns's single flag) because a reader can
+// have passed the 015 migration (salgsoppgaveColumnsDefaulted: true) before
+// 016 existed, and still needs THIS migration to run once for them.
+//
+// `stored` null/falsy is a no-op: resolveHiddenColumns already returned the
+// full defaults (which include the tilstand columns) for a fresh reader, so
+// there is nothing more to add. Mutates and returns `hidden` for convenience.
+export function applyTilstandColumnsMigration(hidden, stored, tilstandColumns) {
+  if (stored && !stored.tilstandColumnsDefaulted) {
+    tilstandColumns.forEach((key) => hidden.add(key));
   }
   return hidden;
 }

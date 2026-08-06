@@ -276,6 +276,10 @@ def compute_rollup(resp: TilstandResponse) -> dict:
         "tilstandsrapport_utsteder": resp.tilstandsrapport_utsteder,
         # NULL = no egenerklaering section existed; 0 = section existed, seller
         # disclosed nothing. Same discipline as Phase 1's null-vs-false rule.
+        # Counts the model's raw list, not stored rows: TilstandRepo dedups via
+        # INSERT OR IGNORE on (finnkode, forhold), so two disclosures mapping to
+        # the same forhold make this exceed listing_egenerklaering's row count.
+        # Known and harmless -- those extra rows are never surfaced anywhere.
         "egenerklaering_antall": (
             len(resp.egenerklaering) if resp.egenerklaering_present else None),
     }
