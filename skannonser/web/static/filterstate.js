@@ -229,8 +229,9 @@ export function activeFilterEntries(filters, meta) {
   // seedStatus floor (see seedStatus above), not a user choice, and counting
   // it here would mean activeFilterCount can never reach 0 -- the map would
   // permanently read "1 filtre aktive" at rest, and a "disable Nullstill when
-  // nothing is active" behaviour could never fire. Any OTHER selection
-  // (including [] itself, and ["", "Solgt"]) still counts as active.
+  // nothing is active" behaviour could never fire. Any OTHER non-empty
+  // selection (e.g. ["", "Solgt"]) still counts as active; [] itself does
+  // NOT -- tilg.length is falsy for it, same as the floor case above.
   const tilg = filters.tilgjengelighetSelected || [];
   if (tilg.length && !(tilg.length === 1 && tilg[0] === "")) {
     entries.push({

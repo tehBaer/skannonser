@@ -15,7 +15,6 @@ import {
   labelWithSource, TILGJENGELIGHET_OPTIONS,
 } from "./listingmeta.js";
 import {
-  listingExcluded,
   deriveVocabs,
   selectionChipRow,
   openPopover,
@@ -23,7 +22,7 @@ import {
   statusVocabComplete,
   wantsClosed,
 } from "./filters.js";
-import { isBlank, matchesFilter, partitionRows } from "./tablerows.js";
+import { isBlank, partitionRows } from "./tablerows.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import { attachTagList, syncTagOptions } from "./tagoptions.js";
 import {
@@ -630,7 +629,6 @@ function render() {
     btn.type = "button";
     btn.addEventListener("click", () => {
       resetFilters(state.filters, state.meta);
-      saveFilters(state.filters);
       // Also restore the status selection to its unfiltered floor. The
       // message names layers/filters as a possible cause of the empty table,
       // so the button must be able to undo a status selection too -- a
@@ -639,7 +637,11 @@ function render() {
       // tilgjengelighetSelected first, so seedStatus always re-floors it to
       // [""] here -- which never wants the closed bucket -- so this path
       // skips ensureSoldForSelection, same as the toolbar reset below.
+      // Seed BEFORE saving: an empty selection must never reach storage, or
+      // cross-tab sync would carry the un-floored "unfiltered" value to the
+      // other page (see the toolbar reset below, which gets this order right).
       seedStatus(state.filters);
+      saveFilters(state.filters);
       refreshVocabs();
       render();
     });
@@ -939,6 +941,22 @@ async function init() {
     const unk = document.getElementById("table-include-unknown");
     if (unk) unk.checked = state.filters.includeUnknown !== false;
     render();
+    // The synced selection may now want the closed bucket even though THIS
+    // tab never fetched it -- the write that enabled it happened in the
+    // other tab, which paired its own write with its own fetch. Kick the
+    // same fetch here so the rows the badge/chip claim are selected actually
+    // exist in state.items. ensureSoldForSelection memoizes on
+    // state.soldPromise, so this cannot race a same-tab fetch already in
+    // flight. Swallow the rejection -- ensureSoldBucket already stashed a
+    // user-visible failure on state.statusError, which render() consumes.
+    ensureSoldForSelection()
+      .then(() => {
+        refreshVocabs();
+        render();
+      })
+      .catch(() => {
+        render();
+      });
   });
   render();
   if (window.location.hash) await handleHash();

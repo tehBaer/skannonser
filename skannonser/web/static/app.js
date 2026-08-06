@@ -1057,6 +1057,15 @@ async function init() {
     wireStatusToggles();
     rebuildFilterUIs();
     applyAll();
+    // The synced selection may now want the closed bucket even though this
+    // tab never fetched it -- the write that enabled it happened in the
+    // other tab, paired with that tab's own fetch. Mirror the same guarded
+    // call init() makes after map load. ensureSoldLoaded memoizes on
+    // state.soldPromise, so this cannot double-fetch alongside a same-tab
+    // fetch already in flight.
+    if (wantsClosed(state.ui.filters.tilgjengelighetSelected) && !state.soldLoaded) {
+      ensureSoldLoaded().then(applyAll).catch(() => {});
+    }
   });
 
   const map = createMap("map");
