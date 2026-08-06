@@ -1,8 +1,13 @@
+import json
 from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
 
 from skannonser.ingest.finn.payload import Section
 from skannonser.enrich.tilstand import (
     GRID, BYGNINGSDEL, classify_input, content_sha, select_sections,
+    TILSTAND_SCHEMA, TilstandResponse, cache_get, cache_put, classify_one,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finn"
@@ -47,3 +52,51 @@ def test_content_sha_is_stable_hex():
 def test_grid_is_the_spec_grid():
     assert GRID == (0, 10_000, 20_000, 50_000, 100_000, 200_000, 300_000, 500_000, 1_000_000)
     assert len(BYGNINGSDEL) == 18 and "annet" in BYGNINGSDEL
+
+
+GOOD_RESPONSE = {
+    "findings": [
+        {"tg": 3, "bygningsdel": "vatrom", "tiltak": "utskiftning",
+         "alvorlighet": "alvorlig", "kostnad_lav": 200_000, "kostnad_hoy": 500_000,
+         "kostnad_kilde": "takst"},
+    ],
+    "egenerklaering_present": True,
+    "egenerklaering": ["fuktskade"],
+    "tilstandsrapport_dato": "2026-05-01",
+    "tilstandsrapport_utsteder": "anticimex",
+}
+
+
+def test_classify_one_parses_via_injected_call():
+    resp = classify_one("some text", _call=lambda text: json.dumps(GOOD_RESPONSE))
+    assert resp.findings[0].bygningsdel == "vatrom"
+    assert resp.egenerklaering == ["fuktskade"]
+
+
+def test_response_model_rejects_off_vocab_and_off_grid():
+    with pytest.raises(ValidationError):
+        TilstandResponse.model_validate(
+            {**GOOD_RESPONSE, "findings": [{**GOOD_RESPONSE["findings"][0], "bygningsdel": "badekar"}]}
+        )
+    with pytest.raises(ValidationError):
+        TilstandResponse.model_validate(
+            {**GOOD_RESPONSE, "findings": [{**GOOD_RESPONSE["findings"][0], "kostnad_lav": 137_500}]}
+        )
+    with pytest.raises(ValidationError):
+        TilstandResponse.model_validate({**GOOD_RESPONSE, "egenerklaering": ["badekar"]})
+
+
+def test_schema_declares_enums_at_the_wire():
+    f = TILSTAND_SCHEMA["properties"]["findings"]["items"]
+    assert f["properties"]["bygningsdel"]["enum"][0] == "vatrom"
+    assert 137_500 not in f["properties"]["kostnad_lav"]["anyOf"][0]["enum"]
+    assert TILSTAND_SCHEMA["additionalProperties"] is False
+
+
+def test_cache_roundtrip(tmp_path):
+    from skannonser.store import connection, migrations
+    conn = connection.connect(tmp_path / "t.db")
+    migrations.migrate(conn)
+    assert cache_get(conn, "deadbeef") is None
+    cache_put(conn, "deadbeef", json.dumps(GOOD_RESPONSE))
+    assert json.loads(cache_get(conn, "deadbeef")) == GOOD_RESPONSE
