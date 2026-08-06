@@ -87,11 +87,17 @@ def test_bad_api_response_is_error_not_cached(tmp_path):
 
 
 class FakeBatchClient:
-    """Stands in for anthropic.Anthropic(): create -> poll twice -> results."""
+    """Stands in for anthropic.Anthropic(): create -> poll twice -> results.
 
-    def __init__(self, response_json, stop_reason="end_turn"):
+    `errored_indices` marks requests (by position in the submitted list) that
+    come back as an errored/canceled/expired batch result -- which the real
+    API represents WITHOUT a `.message` attribute at all, not with a null one.
+    """
+
+    def __init__(self, response_json, stop_reason="end_turn", errored_indices=frozenset()):
         self.response_json = response_json
         self.stop_reason = stop_reason
+        self.errored_indices = errored_indices
         self.submitted = None
         self.polls = 0
         outer = self
@@ -107,7 +113,16 @@ class FakeBatchClient:
                 return SimpleNamespace(id=batch_id, processing_status=status)
 
             def results(self, batch_id):
-                for req in outer.submitted:
+                for i, req in enumerate(outer.submitted):
+                    if i in outer.errored_indices:
+                        yield SimpleNamespace(
+                            custom_id=req["custom_id"],
+                            result=SimpleNamespace(
+                                type="errored",
+                                error=SimpleNamespace(type="api_error"),
+                            ),  # deliberately no `.message` attribute
+                        )
+                        continue
                     yield SimpleNamespace(
                         custom_id=req["custom_id"],
                         result=SimpleNamespace(
@@ -167,6 +182,28 @@ def test_batch_max_tokens_result_is_counted_not_cached(tmp_path):
     assert result["failed"] == 1 and result["succeeded"] == 0
     assert result["derive_upserted"] == 0
     assert cache_get(conn, content_sha(("TG3 a " * 60).strip())) is None
+
+
+def test_batch_errored_result_does_not_abort_the_batch(tmp_path):
+    conn = _env(tmp_path, {"1": "TG3 a " * 60, "2": "TG3 b " * 60})
+    client = FakeBatchClient(RESPONSE, errored_indices={0})
+    result = classify_tilstand_batch(
+        conn, tmp_path, _client=client, _sleep=lambda s: None, _input_fn=FAKE_INPUT
+    )
+    # No AttributeError from the errored result's missing `.message` --
+    # the other, uncollected success must not be lost (that would be
+    # double-billed on re-run).
+    assert result["failed"] == 1 and result["succeeded"] == 1
+    assert result["derive_upserted"] == 1
+
+
+def test_batch_limit_bounds_submitted_requests(tmp_path):
+    conn = _env(tmp_path, {"1": "TG3 a " * 60, "2": "TG3 b " * 60, "3": "TG3 c " * 60})
+    client = FakeBatchClient(RESPONSE)
+    result = classify_tilstand_batch(
+        conn, tmp_path, limit=2, _client=client, _sleep=lambda s: None, _input_fn=FAKE_INPUT
+    )
+    assert result["submitted"] == 2
 
 
 def test_batch_nothing_to_do(tmp_path):

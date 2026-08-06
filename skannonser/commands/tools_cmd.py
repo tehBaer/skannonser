@@ -173,7 +173,7 @@ def classify_tilstand_cmd(
         typer.echo(f"classify-tilstand status: {repo.coverage()}")
         return
     if validate:
-        report = validate_estimates(conn, project_dir, limit=limit or 50)
+        report = validate_estimates(conn, project_dir, limit=50 if limit is None else limit)
         typer.echo(f"validate: {report}")
         return
     if limit is None and not all_:

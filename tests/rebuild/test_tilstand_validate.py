@@ -101,3 +101,28 @@ def test_validate_survives_model_finding_with_null_hoy(tmp_path):
     assert report["pairs"] == 0
     assert report["model_unmatched"] == 0
     assert report["stated_unmatched"] == 1
+
+
+def test_validate_bounds_by_attempts_not_scored_ads(tmp_path):
+    """`limit` must bound API ATTEMPTS, not successes: `ads` only increments
+    after classify_one succeeds, so a persistently-failing `_call` must not
+    walk the whole corpus making paid calls that never count toward the
+    limit."""
+    conn = connection.connect(tmp_path / "t3.db")
+    migrations.migrate(conn)
+    (tmp_path / "html_extracted").mkdir()
+    for finnkode in ("1", "2", "3"):
+        conn.execute("INSERT INTO eiendom (finnkode) VALUES (?)", (finnkode,))
+        (tmp_path / "html_extracted" / f"{finnkode}.html").write_text(AD_TEXT)
+    conn.commit()
+
+    def always_raises(text):
+        raise RuntimeError("simulated API failure")
+
+    report = validate_estimates(
+        conn, tmp_path, limit=2,
+        _call=always_raises,
+        _input_fn=lambda html: html.strip() or None,
+    )
+    assert report["attempts"] == 2
+    assert report["ads"] == 0

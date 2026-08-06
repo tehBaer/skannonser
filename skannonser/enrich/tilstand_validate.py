@@ -88,11 +88,15 @@ def validate_estimates(
     _input_fn=None,
 ) -> dict:
     input_fn = _input_fn or classify_input
-    report = {"ads": 0, "pairs": 0, "exact": 0, "within_one": 0,
+    report = {"ads": 0, "attempts": 0, "pairs": 0, "exact": 0, "within_one": 0,
               "model_higher": 0, "model_lower": 0,
               "stated_unmatched": 0, "model_unmatched": 0}
     for (finnkode,) in conn.execute("SELECT finnkode FROM eiendom"):
-        if report["ads"] >= limit:
+        # Bounded by ATTEMPTS, not scored ads: `ads` only increments after a
+        # classify_one call succeeds, so persistent API failures would
+        # otherwise walk the whole corpus making paid calls that never count
+        # toward the limit.
+        if report["attempts"] >= limit:
             break
         path = Path(project_dir) / "html_extracted" / f"{finnkode}.html"
         if not path.is_file():
@@ -103,6 +107,7 @@ def validate_estimates(
         stated = sorted(stated_bands(text), key=lambda b: b[0] + b[1])
         if not stated:
             continue
+        report["attempts"] += 1
         try:
             resp = (classify_one(strip_stated_costs(text), _call=_call)
                     if _call else classify_one(strip_stated_costs(text)))

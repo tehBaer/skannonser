@@ -157,15 +157,22 @@ def classify_tilstand_batch(
                 break
             sleep(60)
         for result in client.messages.batches.results(batch.id):
-            stop_reason = getattr(result.result.message, "stop_reason", None)
+            # An errored/canceled/expired result has NO `.message` attribute at
+            # all -- fetch it via getattr FIRST so a batch of mixed outcomes
+            # never raises mid-loop (that would abort after the batch was
+            # already paid for, losing every uncollected success -- and
+            # double-billing them on re-run).
+            msg = getattr(result.result, "message", None)
+            stop_reason = getattr(msg, "stop_reason", None) if msg is not None else None
             ok = (
                 result.result.type == "succeeded"
+                and msg is not None
                 and stop_reason not in ("refusal", "max_tokens")
             )
             raw = None
             if ok:
                 raw = next(
-                    (b.text for b in result.result.message.content if b.type == "text"),
+                    (b.text for b in msg.content if b.type == "text"),
                     None,
                 )
             if raw is not None:
