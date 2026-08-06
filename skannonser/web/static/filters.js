@@ -482,6 +482,13 @@ export function selectionChipRow(parent, { label, labelHint, options, selected, 
   }
   head.appendChild(name);
 
+  // Painting is per-chip (plus the bulk button below) and closes over its own
+  // state, so no step depends on position in the row. Declared before the
+  // bulk block so mkBulk's click handler and paint registration both have
+  // something to call.
+  const paints = [];
+  const repaint = () => paints.forEach((p) => p());
+
   const bulkWrap = document.createElement("span");
   bulkWrap.className = "chip-bulk";
   const mkBulk = (text, fn) => {
@@ -495,23 +502,24 @@ export function selectionChipRow(parent, { label, labelHint, options, selected, 
       onChange();
     });
     bulkWrap.appendChild(b);
+    return b;
   };
   // One control, not two. "Alle" and "Tøm" shipped byte-identical handlers --
   // both spliced the selection empty -- on the theory that they read
   // differently mid-filter. They do not: an empty selection IS the unfiltered
-  // state, so clearing and showing-everything are one action. Rendered only
-  // when there is something to clear.
-  if (selected.length) {
-    mkBulk("Nullstill", () => selected.splice(0, selected.length));
-  }
+  // state, so clearing and showing-everything are one action. Always created
+  // -- selection can grow after mount and this row is never remounted -- so
+  // visibility is owned by `repaint`, not by the state at construction time.
+  const bulkBtn = mkBulk("Nullstill", () => selected.splice(0, selected.length));
+  const paintBulk = () => {
+    bulkBtn.hidden = !selected.length;
+  };
+  paints.push(paintBulk);
+  // Run once now so a row that mounts with an empty selection starts hidden
+  // instead of flashing visible until the first chip click triggers repaint.
+  paintBulk();
   head.appendChild(bulkWrap);
   wrap.appendChild(head);
-
-  // Painting is per-chip and closes over its own key, so no step depends on
-  // the chip's position in the row. Declared before the empty-list bail so
-  // the bulk handlers above always have something to call.
-  const paints = [];
-  const repaint = () => paints.forEach((p) => p());
 
   if (!options.length) {
     const empty = document.createElement("div");
@@ -752,7 +760,7 @@ export function buildFilterPanelUI(
     onChange();
   });
   unkRow.appendChild(unkCb);
-  unkRow.appendChild(document.createTextNode("Inkluder ukjent verdi"));
+  unkRow.appendChild(document.createTextNode("Ukjent verdi"));
   container.appendChild(unkRow);
 }
 

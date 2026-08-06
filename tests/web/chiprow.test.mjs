@@ -49,8 +49,12 @@ function stubDocument() {
     style: { setProperty() {} },
     classList: { add() {} },
     appendChild(c) { this.children.push(c); return c; },
-    addEventListener() {},
+    // Only "click" is stored, and only the last handler wins -- the row never
+    // registers more than one per element -- so a test can simulate a click
+    // via `_click()` without pulling in a real event system.
+    addEventListener(type, fn) { if (type === "click") this._click = fn; },
     setAttribute() {},
+    hidden: false,
   });
   return { createElement: make };
 }
@@ -65,7 +69,12 @@ function bulkButtons(node) {
   return found;
 }
 
-test("an unfiltered row offers no bulk control", (t) => {
+// The control is always created now (the row is never remounted, so its
+// visibility can't be decided once at construction time) -- what varies is
+// whether `repaint` hides it. See the mount-time regression this guards
+// against: a row mounting empty never gained the button before, even after
+// a later selection.
+test("an unfiltered row mounts with the bulk control hidden", (t) => {
   const prev = globalThis.document;
   globalThis.document = stubDocument();
   t.after(() => { globalThis.document = prev; });
@@ -76,12 +85,14 @@ test("an unfiltered row offers no bulk control", (t) => {
     selected: [],
     onChange() {},
   });
-  assert.equal(bulkButtons(parent).length, 0);
+  const bulk = bulkButtons(parent);
+  assert.equal(bulk.length, 1);
+  assert.equal(bulk[0].hidden, true);
 });
 
 // Two identical "Alle"/"Tøm" buttons used to render here, with byte-identical
 // handlers -- both spliced the selection empty.
-test("a filtered row offers exactly one bulk control", (t) => {
+test("a filtered row shows exactly one visible bulk control", (t) => {
   const prev = globalThis.document;
   globalThis.document = stubDocument();
   t.after(() => { globalThis.document = prev; });
@@ -95,4 +106,29 @@ test("a filtered row offers exactly one bulk control", (t) => {
   const bulk = bulkButtons(parent);
   assert.equal(bulk.length, 1);
   assert.equal(bulk[0].textContent, "Nullstill");
+  assert.equal(bulk[0].hidden, false);
+});
+
+// Clicking the control mid-session (selection grew after mount, no remount
+// happened) must both empty the selection and re-hide the button -- the
+// exact path finding 1 broke.
+test("clicking the bulk control empties the selection and hides itself", (t) => {
+  const prev = globalThis.document;
+  globalThis.document = stubDocument();
+  t.after(() => { globalThis.document = prev; });
+  const parent = globalThis.document.createElement("div");
+  const selected = ["Solgt"];
+  let changed = 0;
+  selectionChipRow(parent, {
+    label: "Status",
+    options: [{ key: "", label: "Til salgs" }, { key: "Solgt", label: "Solgt" }],
+    selected,
+    onChange() { changed++; },
+  });
+  const bulk = bulkButtons(parent)[0];
+  assert.equal(bulk.hidden, false);
+  bulk._click();
+  assert.deepEqual(selected, []);
+  assert.equal(bulk.hidden, true);
+  assert.equal(changed, 1);
 });

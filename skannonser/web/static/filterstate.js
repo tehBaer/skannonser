@@ -215,6 +215,7 @@ export function activeFilterEntries(filters, meta) {
         key,
         label,
         valueText: n + " valgt",
+        count: n,
         clear: (f) => {
           f[key].splice(0, f[key].length);
         },
@@ -236,6 +237,7 @@ export function activeFilterEntries(filters, meta) {
       key: "tilgjengelighetSelected",
       label: "Tilgjengelighet",
       valueText: tilg.length + " valgt",
+      count: tilg.length,
       clear: (f) => {
         f.tilgjengelighetSelected.splice(0, f.tilgjengelighetSelected.length);
       },
@@ -255,6 +257,7 @@ export function activeFilterEntries(filters, meta) {
       key: "facilitiesRequired",
       label: "Fasiliteter",
       valueText: nFac + " krav",
+      count: nFac,
       clear: (f) => {
         Object.keys(f.facilitiesRequired).forEach((k) => delete f.facilitiesRequired[k]);
       },

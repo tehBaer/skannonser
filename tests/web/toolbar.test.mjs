@@ -25,3 +25,15 @@ test("unrelated entries do not raise any badge", () => {
 test("a missing entries list is tolerated", () => {
   assert.deepEqual(statusBadges(undefined), { status: 0, tag: 0, facilities: 0 });
 });
+
+// activeFilterEntries emits at most one entry per key, so before `count`
+// existed a badge could only ever read 0 or 1 -- selecting nine tags still
+// painted "1", which reads as a count and was wrong.
+test("a multi-value selection sums count, not entries", () => {
+  const entries = [
+    { key: "tagSelected", count: 9 },
+    { key: "tilgjengelighetSelected", count: 3 },
+    { key: "facilitiesRequired", count: 4 },
+  ];
+  assert.deepEqual(statusBadges(entries), { status: 3, tag: 9, facilities: 4 });
+});

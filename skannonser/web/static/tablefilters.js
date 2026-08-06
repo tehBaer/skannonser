@@ -220,7 +220,11 @@ export function statusBadges(entries) {
   const list = entries || [];
   const out = { status: 0, tag: 0, facilities: 0 };
   Object.entries(BADGE_KEYS).forEach(([button, key]) => {
-    out[button] = list.filter((e) => e.key === key).length;
+    out[button] = list
+      .filter((e) => e.key === key)
+      // count defaults to 1 so an entry that never sets it (any future
+      // single-value filter) still registers instead of vanishing.
+      .reduce((sum, e) => sum + (e.count != null ? e.count : 1), 0);
   });
   return out;
 }

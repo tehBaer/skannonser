@@ -345,7 +345,11 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
 
 .table-toolbar {
   display: flex;
-  align-items: center;
+  /* flex-start, not center: the toolbar tiers below stack a search input,
+     two button groups and a switch of differing heights on one row, and
+     center-aligning them made the shorter items visually bob relative to
+     the tallest one. */
+  align-items: flex-start;
   gap: 16px;
   margin-bottom: 14px;
   flex-wrap: wrap;
@@ -465,7 +469,6 @@ details.panel:not([open]) > summary h2 { margin-bottom: 0; }
    Nullstill one shared two-property rule and they read as the same control:
    filter buttons (pill, bordered, badge), the view control (same shape,
    muted, right-aligned) and reset (borderless text). */
-.table-toolbar { align-items: flex-start; }
 .toolbar-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .toolbar-view { margin-left: auto; }
 
