@@ -69,9 +69,10 @@ function defaultUi(meta) {
     dnb: true,
     // `sold`/`inactive` used to live here as layer toggles. Status visibility
     // is now the shared filters.tilgjengelighetSelected, seeded to [""] --
-    // which reproduces the old false/false default exactly. Stale stored keys
-    // are ignored rather than migrated; the deep-merge in loadUi drops any key
-    // not present in this object.
+    // which reproduces the old false/false default exactly. A stored
+    // `sold`/`inactive` is not migrated; loadUi deletes it explicitly (its
+    // `...base, ...stored` merge would otherwise let a stale value survive
+    // and be re-persisted forever, since neither key is read by anything).
     filters: defaultFilters(meta),
     dimIntensity: 75, // % dimming for non-matching listings
     // Sold-only dimming defaults ON (50 %): with thousands of sold dots at
@@ -148,6 +149,11 @@ function loadUi(meta) {
       // saveUi can never re-persist the old shape.
       delete ui.boligtypeHidden;
       delete ui.tagHidden;
+      // Retired layer toggles (see defaultUi above): nothing reads them, but
+      // the ...base, ...stored spread would otherwise let a stored value
+      // survive and be re-persisted forever.
+      delete ui.sold;
+      delete ui.inactive;
       // Same 2026-07-26 hidden-set -> selection conversion, for the station
       // lines. The ...stored.stations spread above copies the old key straight
       // through, so drop it here or saveUi re-persists it forever.
@@ -528,9 +534,9 @@ function panPopupIntoView() {
 // Put the layer buckets back to their DEFAULTS, checkboxes included. Used by
 // the empty-state reset: a "Nullstill filtre" that cannot undo a layer toggle
 // is a dead button for the user who emptied the map by unchecking Eie and DNB.
-// Defaults rather than all-on, because the button says "nullstill" -- switching
-// on Solgt and Inaktiv, which most users never enable, would be doing more than
-// the label promises.
+// Only eie/dnb remain here -- status visibility moved to the shared
+// filters.tilgjengelighetSelected, so the emptyReset handler resets it via
+// resetFilters + seedStatus alongside this call, not through this function.
 function restoreLayerToggles() {
   const defaults = { eie: true, dnb: true };
   Object.entries(defaults).forEach(([bucket, on]) => {
@@ -574,7 +580,8 @@ function wireStatusToggles() {
     input.type = "checkbox";
     input.checked = selected.includes(opt.key);
     input.addEventListener("change", async () => {
-      const next = input.checked
+      const wasChecking = input.checked;
+      const next = wasChecking
         ? [...selected, opt.key]
         : selected.filter((k) => k !== opt.key);
       selected.splice(0, selected.length, ...next);
@@ -586,15 +593,26 @@ function wireStatusToggles() {
           await ensureSoldLoaded();
         } catch (_) {
           // Fetch failed (status line already says so): roll the selection
-          // back so the UI never claims a layer it does not have.
-          selected.splice(0, selected.length, ...next.filter((k) => k !== opt.key));
-          seedStatus(state.ui.filters);
-          saveUi();
-          input.checked = false;
+          // back. Only undo an actual check -- if the user was UNCHECKING,
+          // `next.filter(k => k !== opt.key)` is a no-op (opt.key was already
+          // absent from `next`), so unconditionally forcing a re-check would
+          // falsely restore a box the user just cleared.
+          if (wasChecking) {
+            selected.splice(0, selected.length, ...next.filter((k) => k !== opt.key));
+            seedStatus(state.ui.filters);
+            saveUi();
+          }
         } finally {
           input.disabled = false;
         }
       }
+      // seedStatus may just have re-floored an emptied selection to [""], or
+      // the rollback above may have restored a prior selection -- either way
+      // this handler's own checkbox node does not reflect it yet. Rebuild the
+      // mount so the DOM can never desync from state.ui.filters. Safe against
+      // recursion: this replaces the DOM (innerHTML + fresh listeners) rather
+      // than firing a change event, so it does not re-enter itself.
+      wireStatusToggles();
       rebuildFilterUIs();
       applyAll();
     });
@@ -886,6 +904,14 @@ function renderActiveFilterLine() {
     clearBtn.textContent = "×";
     clearBtn.addEventListener("click", () => {
       entry.clear(state.ui.filters);
+      // tilgjengelighetSelected never reaches [] in the UI -- an empty status
+      // selection is indistinguishable from "show every status", which would
+      // surface every already-fetched closed listing. Re-floor it here (the
+      // ["", "Solgt"] and ["Solgt"] cases can both land here since only the
+      // [""]-only default is excluded from the active-filter list) and rebind
+      // the checkboxes so they cannot show stale state after the clear.
+      seedStatus(state.ui.filters);
+      wireStatusToggles();
       rebuildFilterUIs(); // field summaries + sliders must reflect the clear
       onFilterChange();
     });

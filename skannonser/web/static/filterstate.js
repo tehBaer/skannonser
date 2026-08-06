@@ -224,7 +224,23 @@ export function activeFilterEntries(filters, meta) {
   selectedSet("boligtypeSelected", "Boligtype");
   selectedSet("eieformSelected", "Eieform");
   selectedSet("energiSelected", "Energimerking");
-  selectedSet("tilgjengelighetSelected", "Tilgjengelighet");
+  // tilgjengelighetSelected skips the shared selectedSet helper: [""] is the
+  // seedStatus floor (see seedStatus above), not a user choice, and counting
+  // it here would mean activeFilterCount can never reach 0 -- the map would
+  // permanently read "1 filtre aktive" at rest, and a "disable Nullstill when
+  // nothing is active" behaviour could never fire. Any OTHER selection
+  // (including [] itself, and ["", "Solgt"]) still counts as active.
+  const tilg = filters.tilgjengelighetSelected || [];
+  if (tilg.length && !(tilg.length === 1 && tilg[0] === "")) {
+    entries.push({
+      key: "tilgjengelighetSelected",
+      label: "Tilgjengelighet",
+      valueText: tilg.length + " valgt",
+      clear: (f) => {
+        f.tilgjengelighetSelected.splice(0, f.tilgjengelighetSelected.length);
+      },
+    });
+  }
   selectedSet("tagSelected", "Tag");
   selectedSet("postnummerSelected", "Postnummer");
   selectedSet("nabolagSelected", "Nabolag");
@@ -295,7 +311,13 @@ export function pruneFilterSets(filters, vocabs, vocabComplete = false) {
   };
 
   pruneSelected("tagSelected", keysOf(vocabs.tags));
-  pruneSelected("tilgjengelighetSelected", keysOf(vocabs.tilgjengelighet));
+  // tilgjengelighetSelected is DELIBERATELY exempt. Its four checkboxes come
+  // from the fixed TILGJENGELIGHET_OPTIONS list now, not from deriveVocabs, so
+  // a status with zero OBSERVED listings (Trukket, currently zero in
+  // production) would never appear in vocabs.tilgjengelighet and would be
+  // pruned the instant a user selected it with all four boxes checked --
+  // permanently and silently, since pruning is unrecoverable by design. Status
+  // is a closed domain; pruning it against observed data is simply wrong.
   pruneSelected("postnummerSelected", keysOf(vocabs.postnummer));
   pruneSelected("nabolagSelected", keysOf(vocabs.nabolag));
   return changed;
@@ -321,8 +343,17 @@ export function resetFilters(filters, meta) {
 // after resetFilters, which keeps ONE definition of "default" in defaultFilters
 // and layers this floor on top rather than forking it.
 export function seedStatus(filters) {
-  if (!filters.tilgjengelighetSelected || !filters.tilgjengelighetSelected.length) {
-    filters.tilgjengelighetSelected = [""];
+  // MUTATE, never reassign: wireStatusToggles' checkbox handlers close over
+  // `state.ui.filters.tilgjengelighetSelected` by reference. Reassigning here
+  // (the array used to be replaced wholesale) would detach every already-bound
+  // closure from state on the very next empty-selection tick -- the handlers
+  // keep splicing a now-orphaned array while state.ui.filters points at a new
+  // one, silently bricking all four checkboxes for the rest of the session.
+  if (!Array.isArray(filters.tilgjengelighetSelected)) {
+    filters.tilgjengelighetSelected = [];
+  }
+  if (!filters.tilgjengelighetSelected.length) {
+    filters.tilgjengelighetSelected.push("");
   }
   return filters;
 }
