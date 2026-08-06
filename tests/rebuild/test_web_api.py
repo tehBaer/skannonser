@@ -243,6 +243,10 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
         "radon_omtalt", "utleie", "husdyr", "heftelser",
         # verditakst (migration 015 listing_details column; Task 8).
         "verditakst",
+        # Tilstand classifier (migration 016; Task 11).
+        "tg2_count", "tg3_count", "reparasjon_lav", "reparasjon_hoy",
+        "reparasjon_est", "alvorlighet", "verste_bygningsdel",
+        "reparasjon_kilde", "tg_findings",
     }
     assert item["finnkode"] == "A"
     assert item["adresse"] == "Gata 1"
@@ -876,6 +880,90 @@ def test_unparsed_listing_has_null_verditakst(db_path, client):
 
     item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
     assert item["verditakst"] is None
+
+
+# ---------------------------------------------------------------------------
+# /api/listings -- tilstand classifier rollups + findings (migration 016)
+# ---------------------------------------------------------------------------
+
+def test_tilstand_rollup_flows_into_item(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.execute(
+        "INSERT INTO listing_tilstand "
+        "(finnkode, tg2_count, tg3_count, reparasjon_lav, reparasjon_hoy, "
+        " reparasjon_est, alvorlighet, verste_bygningsdel, reparasjon_kilde, "
+        " classified_at) "
+        "VALUES ('A', 1, 1, 260000, 500000, 380000, 'alvorlig', 'vatrom', "
+        " 'blandet', '2026-08-01T00:00:00')"
+    )
+    conn.execute(
+        "INSERT INTO listing_tg_findings "
+        "(finnkode, tg, bygningsdel, alvorlighet, kostnad_lav, kostnad_hoy, kostnad_kilde) "
+        "VALUES ('A', 3, 'vatrom', 'alvorlig', 200000, 400000, 'takst')"
+    )
+    conn.execute(
+        "INSERT INTO listing_tg_findings "
+        "(finnkode, tg, bygningsdel, alvorlighet, kostnad_lav, kostnad_hoy, kostnad_kilde) "
+        "VALUES ('A', 2, 'tak', 'mindre', 60000, 100000, 'estimat')"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["tg2_count"] == 1
+    assert item["tg3_count"] == 1
+    assert item["reparasjon_lav"] == 260000
+    assert item["reparasjon_hoy"] == 500000
+    assert item["reparasjon_est"] == 380000
+    assert item["alvorlighet"] == "alvorlig"
+    assert item["verste_bygningsdel"] == "vatrom"
+    assert item["reparasjon_kilde"] == "blandet"
+    findings = item["tg_findings"]
+    assert len(findings) == 2
+    assert findings[0]["bygningsdel"] == "vatrom"  # cost-descending
+    assert findings[0]["tg"] == 3
+    assert findings[0]["kostnad_hoy"] == 400000
+    assert findings[1]["bygningsdel"] == "tak"
+
+
+def test_unclassified_listing_has_null_tilstand_keys(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["tg2_count"] is None
+    assert item["tg3_count"] is None
+    assert item["reparasjon_lav"] is None
+    assert item["reparasjon_hoy"] is None
+    assert item["reparasjon_est"] is None
+    assert item["alvorlighet"] is None
+    assert item["verste_bygningsdel"] is None
+    assert item["reparasjon_kilde"] is None
+    assert item["tg_findings"] == []
+
+
+def test_filters_meta_lists_alvorligheter(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "m1")
+    _ins_eiendom(conn, "m2")
+    conn.execute(
+        "INSERT INTO listing_tilstand "
+        "(finnkode, tg2_count, tg3_count, alvorlighet, classified_at) "
+        "VALUES ('m1', 1, 0, 'mindre', '2026-08-01T00:00:00')"
+    )
+    conn.execute(
+        "INSERT INTO listing_tilstand "
+        "(finnkode, tg2_count, tg3_count, alvorlighet, classified_at) "
+        "VALUES ('m2', 0, 1, 'alvorlig', '2026-08-01T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    meta = client.get("/api/meta").json()
+    assert meta["alvorligheter"] == ["mindre", "alvorlig"]
 
 
 # ---------------------------------------------------------------------------

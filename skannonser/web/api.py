@@ -206,6 +206,27 @@ def _facilities_by_finnkode(conn: sqlite3.Connection) -> dict[str, list[str]]:
     return out
 
 
+def _tg_findings_by_finnkode(conn: sqlite3.Connection) -> dict[str, list[dict]]:
+    """Every listing's TG findings in one query, worst-cost first -- same
+    group-in-Python pattern as _facilities_by_finnkode."""
+    out: dict[str, list[dict]] = {}
+    for row in conn.execute(
+        "SELECT finnkode, tg, bygningsdel, alvorlighet, "
+        "       kostnad_lav, kostnad_hoy, kostnad_kilde "
+        "FROM listing_tg_findings "
+        "ORDER BY finnkode, kostnad_hoy DESC NULLS LAST, tg DESC"
+    ):
+        out.setdefault(str(row["finnkode"]), []).append({
+            "tg": row["tg"],
+            "bygningsdel": row["bygningsdel"],
+            "alvorlighet": row["alvorlighet"],
+            "kostnad_lav": row["kostnad_lav"],
+            "kostnad_hoy": row["kostnad_hoy"],
+            "kostnad_kilde": row["kostnad_kilde"],
+        })
+    return out
+
+
 def _pris_kvm_totalpris(rec: dict) -> int | None:
     """totalpris / BRA-i, rounded. Derived at query time, never stored
     (design spec: stored copies go stale silently). None unless both inputs
@@ -308,6 +329,7 @@ def _eie_item(
     closed: bool,
     thumbs_dir: Path | None = None,
     facilities: list[str] | None = None,
+    tg_findings: list[dict] | None = None,
 ) -> dict:
     derived = _derived_status(rec, domain.sold.trukket_grace_days) if closed else None
     sold = derived == "Solgt"
@@ -364,6 +386,16 @@ def _eie_item(
         "utleie": rec.get("UTLEIE"),
         "husdyr": rec.get("HUSDYR"),
         "heftelser": _as_bool(rec.get("HEFTELSER")),
+        # Tilstand classifier (migration 016; None/[] when unclassified).
+        "tg2_count": rec.get("TG2_COUNT"),
+        "tg3_count": rec.get("TG3_COUNT"),
+        "reparasjon_lav": rec.get("REPARASJON_LAV"),
+        "reparasjon_hoy": rec.get("REPARASJON_HOY"),
+        "reparasjon_est": rec.get("REPARASJON_EST"),
+        "alvorlighet": rec.get("ALVORLIGHET"),
+        "verste_bygningsdel": rec.get("VERSTE_BYGNINGSDEL"),
+        "reparasjon_kilde": rec.get("REPARASJON_KILDE"),
+        "tg_findings": tg_findings or [],
     }
     if closed:
         # Whole closed bucket ships the keys (Solgt/Inaktiv/Trukket alike);
@@ -492,6 +524,7 @@ def get_listings(
     domain = _domain(request)
     thumbs_dir = _thumbs_dir(request)
     facs = _facilities_by_finnkode(conn)
+    tgf = _tg_findings_by_finnkode(conn)
 
     # `bucket=sold` returns ONLY the sold rows -- the map/table load actives
     # up front and lazily fetch sold on first toggle, so re-shipping the
@@ -505,6 +538,7 @@ def get_listings(
                 _eie_item(
                     rec, domain, closed=True, thumbs_dir=thumbs_dir,
                     facilities=facs.get(rec.get("_finnkode")),
+                    tg_findings=tgf.get(rec.get("_finnkode")),
                 )
                 for rec in _sold_records(conn)
             ]
@@ -514,6 +548,7 @@ def get_listings(
         _eie_item(
             rec, domain, closed=False, thumbs_dir=thumbs_dir,
             facilities=facs.get(rec.get("_finnkode")),
+            tg_findings=tgf.get(rec.get("_finnkode")),
         )
         for rec in listing_rows(conn, include_hidden_fields=True)
     ]
@@ -532,6 +567,7 @@ def get_listings(
             _eie_item(
                 rec, domain, closed=True, thumbs_dir=thumbs_dir,
                 facilities=facs.get(rec.get("_finnkode")),
+                tg_findings=tgf.get(rec.get("_finnkode")),
             )
             for rec in _sold_records(conn)
         ]
@@ -585,9 +621,11 @@ def get_listing_detail(
             "SELECT facility FROM listing_facilities WHERE finnkode = ? ORDER BY facility",
             (finnkode,),
         ).fetchall()
+        tgf = _tg_findings_by_finnkode(conn)
         item = _eie_item(
             rec, domain, closed=_sold_from_hidden(rec), thumbs_dir=thumbs_dir,
             facilities=[r["facility"] for r in fac_rows],
+            tg_findings=tgf.get(rec.get("_finnkode")),
         )
         raw = {k: v for k, v in rec.items() if not k.startswith("_")}
         return {**raw, **item}
@@ -694,6 +732,12 @@ def get_meta(request: Request, conn: sqlite3.Connection = Depends(ro_conn)) -> d
                 "SELECT DISTINCT eieform FROM listing_details "
                 "WHERE eieform IS NOT NULL ORDER BY eieform"
             )
+        ],
+        "alvorligheter": [
+            v for v in ("kosmetisk", "mindre", "vesentlig", "alvorlig")
+            if conn.execute(
+                "SELECT 1 FROM listing_tilstand WHERE alvorlighet = ? LIMIT 1", (v,)
+            ).fetchone()
         ],
     }
 

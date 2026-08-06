@@ -29,6 +29,14 @@ deterministic pricing-``<dl>`` value) and ``s`` (regex-extracted from prose);
 the SELECT coalesces with ``ld`` taking precedence -- see migration 015's
 comment on why the two stay separate columns rather than one written into the
 other.
+
+Also LEFT JOIN ``listing_tilstand`` (migration 016, aliased ``t``) for the
+tilstand-classifier rollup columns (TG2_COUNT/TG3_COUNT/REPARASJON_LAV/
+REPARASJON_HOY/REPARASJON_EST/ALVORLIGHET/VERSTE_BYGNINGSDEL/
+REPARASJON_KILDE), ``NULL`` when a listing hasn't been classified yet. The
+per-finding detail (``listing_tg_findings``) isn't joined here -- one row per
+finding would multiply the listing row -- the web API fetches it separately
+(see ``web.api._tg_findings_by_finnkode``).
 """
 
 from __future__ import annotations
@@ -129,7 +137,15 @@ _EIE_SELECT_TAIL = """
     s.radon_omtalt AS "RADON_OMTALT",
     s.utleie AS "UTLEIE",
     s.husdyr AS "HUSDYR",
-    s.heftelser AS "HEFTELSER"
+    s.heftelser AS "HEFTELSER",
+    t.tg2_count AS "TG2_COUNT",
+    t.tg3_count AS "TG3_COUNT",
+    t.reparasjon_lav AS "REPARASJON_LAV",
+    t.reparasjon_hoy AS "REPARASJON_HOY",
+    t.reparasjon_est AS "REPARASJON_EST",
+    t.alvorlighet AS "ALVORLIGHET",
+    t.verste_bygningsdel AS "VERSTE_BYGNINGSDEL",
+    t.reparasjon_kilde AS "REPARASJON_KILDE"
 """
 
 _EIE_JOINS = """
@@ -138,6 +154,7 @@ _EIE_JOINS = """
     LEFT JOIN eiendom_processed ep_src ON ep_src.finnkode = ep.travel_copy_from_finnkode
     LEFT JOIN listing_details ld ON ld.finnkode = e.finnkode
     LEFT JOIN listing_salgsoppgave s ON s.finnkode = e.finnkode
+    LEFT JOIN listing_tilstand t ON t.finnkode = e.finnkode
 """
 
 
