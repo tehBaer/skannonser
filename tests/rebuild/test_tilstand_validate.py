@@ -68,3 +68,36 @@ def test_validate_pairs_and_scores(tmp_path):
     # (100k, 300k) vs stated (200k, 500k): one grid step off on both bounds
     assert report["exact"] == 0 and report["within_one"] == 1
     assert report["model_lower"] == 1
+
+
+ASYMMETRIC_NULL_AD_TEXT = "Badet er ikke tett. Kostnadsestimat: 200 000 - 500 000. Ma utbedres."
+
+ASYMMETRIC_NULL_RESPONSE = json.dumps({
+    "findings": [
+        {"tg": 3, "bygningsdel": "vatrom", "tiltak": None, "alvorlighet": "alvorlig",
+         "kostnad_lav": 100_000, "kostnad_hoy": None, "kostnad_kilde": "estimat"},
+    ],
+    "egenerklaering_present": False,
+    "egenerklaering": [],
+    "tilstandsrapport_dato": None,
+    "tilstandsrapport_utsteder": None,
+})
+
+
+def test_validate_survives_model_finding_with_null_hoy(tmp_path):
+    conn = connection.connect(tmp_path / "t2.db")
+    migrations.migrate(conn)
+    (tmp_path / "html_extracted").mkdir()
+    conn.execute("INSERT INTO eiendom (finnkode) VALUES ('1')")
+    (tmp_path / "html_extracted" / "1.html").write_text(ASYMMETRIC_NULL_AD_TEXT)
+    conn.commit()
+
+    report = validate_estimates(
+        conn, tmp_path, limit=10,
+        _call=lambda t: ASYMMETRIC_NULL_RESPONSE,
+        _input_fn=lambda html: html.strip() or None,
+    )
+    # a finding with lav set but hoy null must not blow up the run or get paired
+    assert report["pairs"] == 0
+    assert report["model_unmatched"] == 0
+    assert report["stated_unmatched"] == 1

@@ -106,27 +106,28 @@ def validate_estimates(
         try:
             resp = (classify_one(strip_stated_costs(text), _call=_call)
                     if _call else classify_one(strip_stated_costs(text)))
+            model = sorted(
+                ((f.kostnad_lav, f.kostnad_hoy) for f in resp.findings
+                 if f.kostnad_lav is not None and f.kostnad_hoy is not None
+                 and f.kostnad_kilde == "estimat"),
+                key=lambda b: b[0] + b[1],
+            )
+            report["ads"] += 1
+            n = min(len(stated), len(model))
+            report["stated_unmatched"] += len(stated) - n
+            report["model_unmatched"] += len(model) - n
+            for (slav, shoy), (mlav, mhoy) in zip(stated[:n], model[:n]):
+                report["pairs"] += 1
+                if (mlav, mhoy) == (slav, shoy):
+                    report["exact"] += 1
+                if (abs(GRID.index(mlav) - GRID.index(slav)) <= 1
+                        and abs(GRID.index(mhoy) - GRID.index(shoy)) <= 1):
+                    report["within_one"] += 1
+                mmid, smid = (mlav + mhoy) / 2, (slav + shoy) / 2
+                if mmid > smid:
+                    report["model_higher"] += 1
+                elif mmid < smid:
+                    report["model_lower"] += 1
         except Exception:
             continue
-        model = sorted(
-            ((f.kostnad_lav, f.kostnad_hoy) for f in resp.findings
-             if f.kostnad_lav is not None and f.kostnad_kilde == "estimat"),
-            key=lambda b: b[0] + b[1],
-        )
-        report["ads"] += 1
-        n = min(len(stated), len(model))
-        report["stated_unmatched"] += len(stated) - n
-        report["model_unmatched"] += len(model) - n
-        for (slav, shoy), (mlav, mhoy) in zip(stated[:n], model[:n]):
-            report["pairs"] += 1
-            if (mlav, mhoy) == (slav, shoy):
-                report["exact"] += 1
-            if (abs(GRID.index(mlav) - GRID.index(slav)) <= 1
-                    and abs(GRID.index(mhoy) - GRID.index(shoy)) <= 1):
-                report["within_one"] += 1
-            mmid, smid = (mlav + mhoy) / 2, (slav + shoy) / 2
-            if mmid > smid:
-                report["model_higher"] += 1
-            elif mmid < smid:
-                report["model_lower"] += 1
     return report
