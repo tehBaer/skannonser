@@ -235,6 +235,26 @@ export const FERDIGATTEST_OPTIONS = optionsOf(FERDIGATTEST);
 export const UTLEIE_OPTIONS = optionsOf(UTLEIE);
 export const HUSDYR_OPTIONS = optionsOf(HUSDYR);
 
+// ---------------------------------------------------------------------------
+// Status (tilgjengelighet) vocabulary
+//
+// FIXED, not derived. `deriveVocabs` counts the statuses present in loaded
+// items, and on a cold load only actives are loaded -- so "Solgt" would be
+// missing from the vocabulary, leaving no control to click to trigger the very
+// fetch that would produce it. Same reasoning as FERDIGATTEST_OPTIONS above:
+// the value list is known ahead of the data.
+//
+// "" is "Til salgs", a real status and the most common one -- the backend only
+// fills tilgjengelighet for CLOSED listings. It leads the list rather than
+// being sorted to the end like other "" buckets (see selectionChipRow's
+// emptyIsRealValue).
+export const TILGJENGELIGHET_OPTIONS = [
+  { key: "", label: "Til salgs" },
+  { key: "Solgt", label: "Solgt" },
+  { key: "Inaktiv", label: "Inaktiv" },
+  { key: "Trukket", label: "Trukket" },
+];
+
 export function fmtFerdigattest(value) {
   return fromVocab(FERDIGATTEST, value);
 }

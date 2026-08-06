@@ -310,3 +310,19 @@ export function resetFilters(filters, meta) {
   Object.assign(filters, fresh, { includeUnknown: keep });
   return filters;
 }
+
+// The status floor. An empty selection means "unfiltered" everywhere else in
+// this module, but for status that collides with the lazy closed-bucket fetch:
+// a cold load with an empty selection shows only actives (the closed rows were
+// never fetched), while an empty selection reached by selecting Solgt and then
+// pressing Nullstill shows everything. Same stored value, two different views.
+//
+// So the pages never hold an empty status selection. Applied on load and again
+// after resetFilters, which keeps ONE definition of "default" in defaultFilters
+// and layers this floor on top rather than forking it.
+export function seedStatus(filters) {
+  if (!filters.tilgjengelighetSelected || !filters.tilgjengelighetSelected.length) {
+    filters.tilgjengelighetSelected = [""];
+  }
+  return filters;
+}

@@ -61,6 +61,17 @@ export function selectionExcludes(selected, value) {
   return !selected.includes(value);
 }
 
+// Does this status selection require the lazily-fetched closed bucket?
+//
+// The closed listings (~3500) are a separate /api/listings?bucket=sold fetch,
+// deliberately not loaded on a cold start. Any selected status other than ""
+// (Til salgs) is a request for them. An empty selection does NOT pull them:
+// both pages seed the selection to [""] (see seedStatus), so empty only ever
+// occurs transiently before that floor is applied.
+export function wantsClosed(selected) {
+  return Boolean(selected && selected.some((k) => k !== ""));
+}
+
 // THE predicate: true when `item` fails the current filters. Map renders
 // excluded items dimmed (hidden at Nedtoning 100 %); table hides their rows.
 export function listingExcluded(item, filters, meta) {
