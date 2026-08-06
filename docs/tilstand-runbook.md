@@ -49,6 +49,20 @@ skannonser tools classify-tilstand --batch --all
 The CLI requires either `--limit` or `--all`; a classification run without
 one of these is refused.
 
+## What `--limit` buys you
+
+The walk is ordered, so a bounded run is a *prefix of the priority list*, not a
+sample. Order is status tier first — active, then inactive, then sold — and
+inside each tier: ads with at least 80 m² BRA and both rush commutes (BRJ and
+MVV) at 70 minutes or under, then ads we cannot rate because travel or area is
+missing, then ads we know miss.
+
+Against the corpus as of 2026-08-06 that means the first 381 classifications go
+to active listings matching both criteria, and the 3434 sold ads sort last.
+
+Nothing is excluded — `--all` still covers every ad, and cached responses replay
+free in any order. Re-running with a larger `--limit` simply extends the prefix.
+
 Polls until the batch ends (typically <1h), then derives rows from the
 cache. Safe to interrupt and re-run: paid responses are cached by
 content hash.
