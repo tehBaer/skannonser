@@ -117,3 +117,74 @@ def backfill_salgsoppgave_cmd(
     result = backfill_salgsoppgave(conn, project_dir, wipe=wipe)
     typer.echo(f"backfill-salgsoppgave: {result}")
     typer.echo(f"coverage: {repo.coverage()}")
+
+
+@app.command(name="classify-tilstand")
+def classify_tilstand_cmd(
+    db: Path | None = typer.Option(None, "--db", help="Override the DB path for this run"),
+    project_dir: Path = typer.Option(
+        Path("data/eiendom"), "--project-dir",
+        help="FINN cache root (html_extracted/ lives here)"),
+    limit: int | None = typer.Option(
+        None, "--limit",
+        help="Max NEW API classifications this run -- the spend control. "
+             "Cache replays are unlimited and free."),
+    all_: bool = typer.Option(
+        False, "--all",
+        help="Explicitly allow an unbounded run over every uncached ad "
+             "(full-corpus cost). Without this, --limit is required."),
+    wipe: bool = typer.Option(
+        False, "--wipe",
+        help="Clear the tilstand tables first. The LLM cache survives, so the "
+             "rebuild replays paid responses for free."),
+    batch: bool = typer.Option(
+        False, "--batch",
+        help="Submit uncached ads via the Batch API (50%% cheaper), poll until "
+             "done, then derive rows from the cache."),
+    validate: bool = typer.Option(
+        False, "--validate",
+        help="Stage-1 harness: blind-estimate ads that carry surveyor-stated "
+             "costs and score against them. Calls the API; respects --limit."),
+    status: bool = typer.Option(False, "--status", help="Print coverage only"),
+) -> None:
+    """Classify TG2/TG3 condition findings from cached salgsoppgave text
+    (Claude Opus 5). COSTS MONEY on uncached ads -- run staged: --limit 200,
+    check, --limit 1000, check, then the rest with --batch. Requires
+    `pip install -e .[llm]` and ANTHROPIC_API_KEY locally; the server never
+    needs either."""
+    from skannonser.enrich.tilstand_backfill import (
+        classify_tilstand, classify_tilstand_batch,
+    )
+    from skannonser.enrich.tilstand_validate import validate_estimates
+    from skannonser.store.repositories.tilstand import TilstandRepo
+
+    db_path = db if db is not None else get_secrets().db_path
+    if not db_path.exists():
+        typer.echo(f"Error: database not found at {db_path}", err=True)
+        raise typer.Exit(code=1)
+    conn = connection.connect(db_path)
+    if migrations.pending(conn):
+        typer.echo("Error: pending migrations - run 'skannonser db migrate' first", err=True)
+        raise typer.Exit(code=1)
+
+    repo = TilstandRepo(conn)
+    if status:
+        typer.echo(f"classify-tilstand status: {repo.coverage()}")
+        return
+    if validate:
+        report = validate_estimates(conn, project_dir, limit=limit or 50)
+        typer.echo(f"validate: {report}")
+        return
+    if limit is None and not all_:
+        typer.echo(
+            "Error: classification costs money per uncached ad. Pass --limit N "
+            "to bound this run, or --all to explicitly process everything.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if batch:
+        result = classify_tilstand_batch(conn, project_dir, limit=limit)
+    else:
+        result = classify_tilstand(conn, project_dir, limit=limit, wipe=wipe)
+    typer.echo(f"classify-tilstand: {result}")
+    typer.echo(f"coverage: {repo.coverage()}")

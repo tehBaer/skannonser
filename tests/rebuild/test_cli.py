@@ -160,3 +160,50 @@ def test_cli_nightly_no_drift_key_when_finn_step_hard_failed(tmp_path, monkeypat
     result = CliRunner().invoke(app, ["run", "nightly", "--db", str(db)])
     assert result.exit_code == 1, result.output
     assert calls == []
+
+
+# --- tools classify-tilstand -----------------------------------------------
+
+
+def _migrated_db(tmp_path):
+    from skannonser.store import connection, migrations
+
+    db = tmp_path / "tilstand-cli.db"
+    c = connection.connect(db)
+    migrations.migrate(c)
+    c.close()
+    return db
+
+
+def test_classify_tilstand_status_prints_coverage(tmp_path):
+    db = _migrated_db(tmp_path)
+    result = CliRunner().invoke(
+        app, ["tools", "classify-tilstand", "--db", str(db), "--status"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "tilstand_rows" in result.output
+
+
+def test_classify_tilstand_refuses_pending_migrations(tmp_path):
+    from skannonser.store import connection
+
+    db = tmp_path / "unmigrated.db"
+    connection.connect(db).close()
+    result = CliRunner().invoke(
+        app, ["tools", "classify-tilstand", "--db", str(db), "--status"]
+    )
+    assert result.exit_code == 1, result.output
+    assert "pending migrations" in result.output
+
+
+def test_classify_tilstand_refuses_unbounded_run(tmp_path):
+    """The spend guard: a bare invocation (no --limit, no --all) must exit 1
+    before any API-touching code runs. No seam is injected here -- an
+    attempted classification would crash on the missing anthropic import --
+    so exit 1 also proves the guard fired first."""
+    db = _migrated_db(tmp_path)
+    result = CliRunner().invoke(
+        app, ["tools", "classify-tilstand", "--db", str(db)]
+    )
+    assert result.exit_code == 1, result.output
+    assert "--limit" in result.output
