@@ -31,7 +31,7 @@ import { assignTagColors, colorForTag } from "./tagcolors.js";
 import {
   premiumPct, isTravelSentinel, TRAVEL_UNREACHABLE,
   FERDIGATTEST_OPTIONS, UTLEIE_OPTIONS, HUSDYR_OPTIONS, SALGSOPPGAVE_HINT, SALGSOPPGAVE_SUFFIX,
-  TILSTAND_HINT, fmtAlvorlighet,
+  TILSTAND_HINT, fmtAlvorlighet, TILGJENGELIGHET_OPTIONS,
 } from "./listingmeta.js";
 
 const NOK = new Intl.NumberFormat("nb-NO");
@@ -70,6 +70,18 @@ export function selectionExcludes(selected, value) {
 // occurs transiently before that floor is applied.
 export function wantsClosed(selected) {
   return Boolean(selected && selected.some((k) => k !== ""));
+}
+
+// Does this status selection cover every status the app can hold?
+//
+// Feeds vocabIsComplete, which gates pruneFilterSets -- and that deletion is
+// irreversible and shared with the table. An empty selection is "unfiltered",
+// so it covers everything; otherwise every key in TILGJENGELIGHET_OPTIONS must
+// be present.
+export function statusVocabComplete(selected) {
+  if (!selected || !selected.length) return true;
+  const have = new Set(selected);
+  return TILGJENGELIGHET_OPTIONS.every((o) => have.has(o.key));
 }
 
 // THE predicate: true when `item` fails the current filters. Map renders
@@ -640,15 +652,11 @@ export function buildFilterPanelUI(
     selected: filters.husdyrSelected,
     onChange,
   });
-  selectionChipRow(fields, {
-    label: "Tilgjengelighet",
-    options: vocabs.tilgjengelighet,
-    selected: filters.tilgjengelighetSelected,
-    // "" is "Til salgs" here, a real status and the most common one -- it must
-    // keep its by-count position rather than being sorted to the end.
-    emptyIsRealValue: true,
-    onChange,
-  });
+  // Tilgjengelighet no longer gets a chip row here: the four status
+  // checkboxes in the map's Lag panel (app.js's wireStatusToggles) are the
+  // same value -- filters.tilgjengelighetSelected -- under a name that reads
+  // as a layer rather than a filter, so carrying both was two controls for
+  // one fact.
   const tagColors = assignTagColors(vocabs.tags.map((o) => o.key));
   selectionChipRow(fields, {
     label: "Tags",

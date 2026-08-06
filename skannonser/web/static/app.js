@@ -19,7 +19,7 @@ import {
 } from "./map.js";
 import { assignTagColors, colorForTag } from "./tagcolors.js";
 import { buildPopupContent } from "./popup.js";
-import { isNew, parseScrapedAt, premiumPct } from "./listingmeta.js";
+import { isNew, parseScrapedAt, premiumPct, TILGJENGELIGHET_OPTIONS } from "./listingmeta.js";
 import {
   listingExcluded,
   residualOpacity,
@@ -27,6 +27,9 @@ import {
   buildDisplayUI,
   deriveVocabs,
   selectionChipRow,
+  selectionExcludes,
+  statusVocabComplete,
+  wantsClosed,
 } from "./filters.js";
 import {
   defaultFilters,
@@ -35,6 +38,7 @@ import {
   subscribeOtherTabs,
   resetFilters,
   pruneFilterSets,
+  seedStatus,
 } from "./filterstate.js";
 import {
   addStationLayers,
@@ -63,8 +67,11 @@ function defaultUi(meta) {
   return {
     eie: true,
     dnb: true,
-    sold: false,
-    inactive: false,
+    // `sold`/`inactive` used to live here as layer toggles. Status visibility
+    // is now the shared filters.tilgjengelighetSelected, seeded to [""] --
+    // which reproduces the old false/false default exactly. Stale stored keys
+    // are ignored rather than migrated; the deep-merge in loadUi drops any key
+    // not present in this object.
     filters: defaultFilters(meta),
     dimIntensity: 75, // % dimming for non-matching listings
     // Sold-only dimming defaults ON (50 %): with thousands of sold dots at
@@ -185,7 +192,13 @@ function bucketOf(item) {
 // deriving from "passes all filters" instead would make a tag vanish the moment
 // a price slider hid it, leaving no way to click it back.
 function vocabItems() {
-  return [...state.itemsById.values()].filter((it) => state.ui[bucketOf(it)]);
+  return [...state.itemsById.values()].filter((it) => {
+    const bucket = bucketOf(it);
+    if (bucket === "eie" || bucket === "dnb") return state.ui[bucket];
+    return !selectionExcludes(
+      state.ui.filters.tilgjengelighetSelected, it.tilgjengelighet || ""
+    );
+  });
 }
 
 // Whether vocabItems() currently covers EVERY listing this app can hold, which
@@ -195,7 +208,10 @@ function vocabItems() {
 // much existing -- and the deletion is irreversible and shared with the table.
 function vocabIsComplete() {
   return Boolean(
-    state.ui.eie && state.ui.dnb && state.ui.sold && state.ui.inactive && state.soldLoaded
+    state.ui.eie &&
+      state.ui.dnb &&
+      statusVocabComplete(state.ui.filters.tilgjengelighetSelected) &&
+      state.soldLoaded
   );
 }
 
@@ -274,7 +290,19 @@ function featureCollectionsByGroup() {
   const hideExcluded = Number(state.ui.dimIntensity) >= 100;
   state.itemsById.forEach((item) => {
     if (item.lat == null || item.lng == null) return;
-    if (!state.ui[bucketOf(item)]) return; // layer toggle (eie/dnb/sold)
+    const bucket = bucketOf(item);
+    // Source layers (Finn.no / DNB) still gate on ui; status gates on the
+    // shared filter. A hard `return`, not a dim: filters dim (residualOpacity)
+    // and only hide at Nedtoning 100 %, so falling through to listingExcluded
+    // would paint ~3500 faint sold dots on a default load. This preserves what
+    // the old layer toggles for Solgt and Inaktiv/Trukket did.
+    if (bucket === "eie" || bucket === "dnb") {
+      if (!state.ui[bucket]) return;
+    } else if (
+      selectionExcludes(state.ui.filters.tilgjengelighetSelected, item.tilgjengelighet || "")
+    ) {
+      return;
+    }
     const excluded = isDimmed(item, ctx);
     // Nedtoning at 100 % = today's hard-hide (incl. cluster counts).
     if (excluded && hideExcluded) return;
@@ -504,7 +532,7 @@ function panPopupIntoView() {
 // on Solgt and Inaktiv, which most users never enable, would be doing more than
 // the label promises.
 function restoreLayerToggles() {
-  const defaults = { eie: true, dnb: true, sold: false, inactive: false };
+  const defaults = { eie: true, dnb: true };
   Object.entries(defaults).forEach(([bucket, on]) => {
     state.ui[bucket] = on;
     const cb = document.getElementById("toggle-" + bucket);
@@ -514,41 +542,69 @@ function restoreLayerToggles() {
 }
 
 function wireLayerToggles() {
-  const map = {
-    eie: "toggle-eie",
-    dnb: "toggle-dnb",
-    sold: "toggle-sold",
-    inactive: "toggle-inactive",
-  };
-  Object.entries(map).forEach(([bucket, id]) => {
+  const sources = { eie: "toggle-eie", dnb: "toggle-dnb" };
+  Object.entries(sources).forEach(([bucket, id]) => {
     const input = document.getElementById(id);
     if (!input) return;
     input.checked = !!state.ui[bucket];
-    input.addEventListener("change", async () => {
+    input.addEventListener("change", () => {
       state.ui[bucket] = input.checked;
       saveUi();
-      if ((bucket === "sold" || bucket === "inactive") && input.checked) {
-        input.disabled = true;
-        try {
-          await ensureSoldLoaded();
-        } catch (_) {
-          // Fetch failed (status already says so): roll the toggle back so
-          // the UI never claims a sold layer it doesn't have.
-          input.checked = false;
-          state.ui[bucket] = false;
-          saveUi();
-        } finally {
-          input.disabled = false;
-        }
-      }
       // Every bucket change moves the vocabulary boundary, in both directions.
-      // The enable path already rebuilds via ensureSoldLoaded, but eie/dnb and
-      // every disable path did not, which is how switched-off values got stuck.
       rebuildFilterUIs();
       applyAll();
     });
   });
+  wireStatusToggles();
+  wireCombineToggle();
+}
 
+// The four status checkboxes, built from TILGJENGELIGHET_OPTIONS so the markup
+// and the vocabulary cannot drift. These write the SHARED filter, so the table
+// sees the change through subscribeOtherTabs like any other filter edit.
+function wireStatusToggles() {
+  const mount = document.getElementById("status-toggles");
+  if (!mount) return;
+  const selected = state.ui.filters.tilgjengelighetSelected;
+  mount.innerHTML = "";
+  TILGJENGELIGHET_OPTIONS.forEach((opt) => {
+    const label = document.createElement("label");
+    label.className = "toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = selected.includes(opt.key);
+    input.addEventListener("change", async () => {
+      const next = input.checked
+        ? [...selected, opt.key]
+        : selected.filter((k) => k !== opt.key);
+      selected.splice(0, selected.length, ...next);
+      seedStatus(state.ui.filters);
+      saveUi();
+      if (wantsClosed(selected) && !state.soldLoaded) {
+        input.disabled = true;
+        try {
+          await ensureSoldLoaded();
+        } catch (_) {
+          // Fetch failed (status line already says so): roll the selection
+          // back so the UI never claims a layer it does not have.
+          selected.splice(0, selected.length, ...next.filter((k) => k !== opt.key));
+          seedStatus(state.ui.filters);
+          saveUi();
+          input.checked = false;
+        } finally {
+          input.disabled = false;
+        }
+      }
+      rebuildFilterUIs();
+      applyAll();
+    });
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(" " + opt.label));
+    mount.appendChild(label);
+  });
+}
+
+function wireCombineToggle() {
   const combine = document.getElementById("toggle-combine-sold");
   if (combine) {
     combine.checked = !!state.ui.combineSold;
@@ -556,7 +612,7 @@ function wireLayerToggles() {
       state.ui.combineSold = combine.checked;
       saveUi();
       // Combining needs the sold set loaded to be meaningful.
-      if (combine.checked && (state.ui.sold || state.ui.inactive) && !state.soldLoaded) {
+      if (combine.checked && wantsClosed(state.ui.filters.tilgjengelighetSelected) && !state.soldLoaded) {
         try {
           await ensureSoldLoaded();
         } catch (_) {
@@ -766,15 +822,16 @@ async function handleHash() {
     item = state.itemsById.get(finnkode);
   }
   if (!item || item.lat == null || item.lng == null) return;
-  const bucket = bucketOf(item);
-  if ((bucket === "sold" || bucket === "inactive") && !state.ui[bucket]) {
-    state.ui[bucket] = true;
-    const cb = document.getElementById(bucket === "sold" ? "toggle-sold" : "toggle-inactive");
-    if (cb) cb.checked = true;
+  // A deep link to a closed listing must switch its status on, or the dot the
+  // link points at is hidden. Widening what's on screen also widens the
+  // vocabulary, so the chip rows have to be rebuilt or they will describe a
+  // narrower set than the map shows.
+  const status = item.tilgjengelighet || "";
+  const selected = state.ui.filters.tilgjengelighetSelected;
+  if (selectionExcludes(selected, status)) {
+    selected.push(status);
     saveUi();
-    // The filter vocabulary was derived from the previously-visible buckets;
-    // now that this deep link just widened what's on screen, it must be
-    // rebuilt or the chip row will describe a narrower set than the map shows.
+    wireStatusToggles();
     rebuildFilterUIs();
   }
   applyAll();
@@ -877,6 +934,7 @@ async function init() {
   state.meta = meta;
   state.destinations = meta.destinations || [];
   state.ui = loadUi(meta);
+  seedStatus(state.ui.filters);
   state.ui._allLines = distinctLines(meta.stations || []);
   ingestItems(listings.listings || []);
 
@@ -934,6 +992,13 @@ async function init() {
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
       resetFilters(state.ui.filters, state.meta);
+      // resetFilters reassigns tilgjengelighetSelected to a fresh (empty)
+      // array, which would otherwise show every closed listing that happens
+      // to already be loaded -- the exact state the [""] floor exists to
+      // prevent. Rewire the status checkboxes too: their change handlers
+      // closed over the array reference that reset just orphaned.
+      seedStatus(state.ui.filters);
+      wireStatusToggles();
       rebuildFilterUIs();
       onFilterChange();
     });
@@ -950,6 +1015,8 @@ async function init() {
       // and onFilterChange keeps the "active filters" line in sync, not just
       // the map data.
       resetFilters(state.ui.filters, state.meta);
+      seedStatus(state.ui.filters);
+      wireStatusToggles();
       rebuildFilterUIs();
       onFilterChange();
     });
@@ -957,6 +1024,11 @@ async function init() {
   // Live cross-tab sync: another tab (e.g. the table) changed the filters.
   subscribeOtherTabs(() => {
     state.ui.filters = loadFilters(state.meta);
+    // loadFilters returns a whole new filters object, so the status
+    // checkboxes' handlers -- closed over the old tilgjengelighetSelected
+    // array -- must be rebound or they would mutate a detached array.
+    seedStatus(state.ui.filters);
+    wireStatusToggles();
     rebuildFilterUIs();
     applyAll();
   });
@@ -979,7 +1051,7 @@ async function init() {
     map.on("render", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));
     map.on("moveend", () => syncClusterMarkers(map, state.groups, state.clusterMarkers));
 
-    if ((state.ui.sold || state.ui.inactive) && !state.soldLoaded) {
+    if (wantsClosed(state.ui.filters.tilgjengelighetSelected) && !state.soldLoaded) {
       ensureSoldLoaded().then(applyAll).catch(() => {});
     }
 
