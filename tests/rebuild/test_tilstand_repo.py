@@ -210,3 +210,18 @@ def test_upsert_ad_persists_radon(tmp_path):
     assert row["radon_status"] == "ikke_malt"
     assert row["radonsperre"] == "mangler"
     assert row["radon_bq"] is None
+
+
+def test_coverage_counts_cache_rows_the_next_run_would_re_bill(tmp_path):
+    """A row written under an older output schema never satisfies a cache_get,
+    so it is a re-billable miss rather than a hit. --status has to say so, or
+    the runbook's "check what a run would cost" step reads a number that
+    includes rows it cannot use."""
+    from skannonser.enrich.tilstand import _SCHEMA_VERSION, cache_put
+
+    conn = _db(tmp_path)
+    cache_put(conn, "a" * 64, "{}", version=_SCHEMA_VERSION - 1)
+    cache_put(conn, "b" * 64, "{}")
+    cov = TilstandRepo(conn).coverage()
+    assert cov["llm_cache_rows"] == 2
+    assert cov["stale_cache_rows"] == 1

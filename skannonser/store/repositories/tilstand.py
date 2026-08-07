@@ -156,6 +156,11 @@ class TilstandRepo:
         return [str(r[0]) for r in self.conn.execute(_CANDIDATE_SQL)]
 
     def coverage(self) -> dict:
+        # Imported here, not at module scope: these tables are classifier-owned,
+        # but the store layer sits below enrich and should not pull it in on
+        # every import just to answer one count.
+        from skannonser.enrich.tilstand import _SCHEMA_VERSION
+
         one = lambda sql: self.conn.execute(sql).fetchone()[0]  # noqa: E731
         return {
             "eiendom_rows": one("SELECT COUNT(*) FROM eiendom"),
@@ -163,5 +168,11 @@ class TilstandRepo:
             "tg_findings_rows": one("SELECT COUNT(*) FROM listing_tg_findings"),
             "egenerklaering_rows": one("SELECT COUNT(*) FROM listing_egenerklaering"),
             "llm_cache_rows": one("SELECT COUNT(*) FROM salgsoppgave_llm_cache"),
+            # Rows produced under an older output schema. They never satisfy a
+            # cache_get, so this is the count that would be RE-BILLED by the
+            # next run -- the number to look at before starting one.
+            "stale_cache_rows": one(
+                "SELECT COUNT(*) FROM salgsoppgave_llm_cache "
+                f"WHERE schema_version < {_SCHEMA_VERSION}"),
             "with_tg3": one("SELECT COUNT(*) FROM listing_tilstand WHERE tg3_count > 0"),
         }

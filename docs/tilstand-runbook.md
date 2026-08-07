@@ -7,6 +7,21 @@ export ANTHROPIC_API_KEY=...        # or `ant auth login`
 # optional but recommended: set a spend limit in the Anthropic Console
 ```
 
+## Before a run: check the cache schema version
+
+`_SCHEMA_VERSION` in `skannonser/enrich/tilstand.py` is part of the cache key.
+Bumping it makes every cached response a MISS, so the next run re-classifies
+the whole corpus at full price. It was bumped to 2 on 2026-08-06 to add radon.
+
+Check what a run would actually cost before starting it:
+
+```
+skannonser tools classify-tilstand --db main/database/properties.db --status
+```
+
+`stale_cache_rows` is the count produced under an older schema: those rows
+will be re-billed. Batch schema changes rather than trickling them out.
+
 ## Stage 0 — verify the token estimate (~free)
 
 Run `count_tokens` over ~50 classify_input() texts and compare against
@@ -28,6 +43,21 @@ and finding counts against the live FINN pages.
 If the estimate gate FAILS: stop. The estimat path drops to NULL
 (surveyor figures only) -- that is a prompt change + re-run, not a
 schema change.
+
+Radon spot-check (stage 1, ~10 ads): of the ads where `radon_bq` is non-NULL,
+confirm none is 100 or 200 — those are the statutory thresholds quoted in
+advisory boilerplate, not measurements. Per the design spec, if any
+threshold-valued extraction appears, DROP the field rather than tune it:
+
+```
+SELECT finnkode, radon_status, radon_bq FROM listing_tilstand
+WHERE radon_bq IS NOT NULL;
+```
+
+Also confirm `radon_status` is non-NULL on materially less than ~40% of
+classified ads. Higher than that means the prompt is treating generic advice
+as a statement about the property — the exact failure that makes the old
+`radon_omtalt` field useless.
 
 ## Stage 2 — ~1,000 ads (~$17)
 
