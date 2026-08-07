@@ -43,6 +43,9 @@ ESTIMATE_RESPONSE = json.dumps({
     "egenerklaering": [],
     "tilstandsrapport_dato": None,
     "tilstandsrapport_utsteder": None,
+    "radon_status": None,
+    "radonsperre": None,
+    "radon_bq": None,
 })
 
 
@@ -81,6 +84,9 @@ ASYMMETRIC_NULL_RESPONSE = json.dumps({
     "egenerklaering": [],
     "tilstandsrapport_dato": None,
     "tilstandsrapport_utsteder": None,
+    "radon_status": None,
+    "radonsperre": None,
+    "radon_bq": None,
 })
 
 

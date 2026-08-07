@@ -79,6 +79,11 @@ GOOD_RESPONSE = {
     "egenerklaering": ["fuktskade"],
     "tilstandsrapport_dato": "2026-05-01",
     "tilstandsrapport_utsteder": "anticimex",
+    # Required, not defaulted -- see the note on TilstandResponse. Null here is
+    # the common case: most prospectuses carry only generic radon advice.
+    "radon_status": None,
+    "radonsperre": None,
+    "radon_bq": None,
 }
 
 
@@ -137,13 +142,17 @@ def test_response_text_returns_text_on_normal_stop():
     assert _response_text(response) == "hello"
 
 
-def _resp(findings, egen_present=True, egen=()):
+def _resp(findings, egen_present=True, egen=(), **radon):
     return TilstandResponse.model_validate({
         "findings": findings,
         "egenerklaering_present": egen_present,
         "egenerklaering": list(egen),
         "tilstandsrapport_dato": None,
         "tilstandsrapport_utsteder": None,
+        "radon_status": None,
+        "radonsperre": None,
+        "radon_bq": None,
+        **radon,
     })
 
 
@@ -361,3 +370,60 @@ def test_select_sections_keeps_radon_and_hms_headings():
     ]
     kept = [s.heading for s in select_sections(secs)]
     assert kept == ["Radonmåling", "Helse, miljø og sikkerhet"]
+
+
+# --- radon fields -----------------------------------------------------------
+
+def test_radon_fields_parse_and_reject_off_vocab():
+    from skannonser.enrich.tilstand import RADON_STATUS, RADONSPERRE
+
+    base = {**GOOD_RESPONSE, "radon_status": "malt_over_grense",
+            "radonsperre": "mangler", "radon_bq": 280}
+    resp = TilstandResponse.model_validate(base)
+    assert resp.radon_status == "malt_over_grense"
+    assert resp.radonsperre == "mangler"
+    assert resp.radon_bq == 280
+
+    for bad in ({"radon_status": "kanskje"}, {"radonsperre": "delvis"}):
+        with pytest.raises(ValidationError):
+            TilstandResponse.model_validate({**base, **bad})
+
+    assert len(RADON_STATUS) == 4 and len(RADONSPERRE) == 2
+
+
+def test_radon_fields_are_nullable():
+    """NULL is the common case: most ads carry only generic advice, which is
+    not a statement about this property."""
+    resp = TilstandResponse.model_validate(
+        {**GOOD_RESPONSE, "radon_status": None, "radonsperre": None, "radon_bq": None})
+    assert resp.radon_status is None and resp.radon_bq is None
+
+
+def test_radon_bq_is_a_free_integer_not_a_grid_value():
+    """Unlike repair costs, this is a measured quantity whose whole value is
+    its position relative to the 100 and 200 Bq/m3 thresholds -- snapping it
+    to the cost grid would destroy that."""
+    resp = TilstandResponse.model_validate({**GOOD_RESPONSE, "radon_bq": 137})
+    assert resp.radon_bq == 137
+
+
+def test_schema_declares_the_radon_enums_at_the_wire():
+    from skannonser.enrich.tilstand import RADON_STATUS
+
+    props = TILSTAND_SCHEMA["properties"]
+    assert props["radon_status"]["anyOf"][0]["enum"] == list(RADON_STATUS)
+    assert props["radon_bq"]["anyOf"][0]["type"] == "integer"
+    for key in ("radon_status", "radonsperre", "radon_bq"):
+        assert key in TILSTAND_SCHEMA["required"]
+
+
+def test_prompt_names_both_documented_traps():
+    """The two failure modes measured in the spec. If these instructions are
+    ever dropped the model reverts to extracting the statutory limit as the
+    property's radon level."""
+    from skannonser.enrich.tilstand import _SYSTEM_PROMPT
+
+    p = _SYSTEM_PROMPT.lower()
+    assert "grenseverdi" in p          # trap 1: quoted threshold, not a measurement
+    assert "radonsperre" in p          # trap 2: negation around the barrier
+    assert "aktsomhet" in p            # the risk-map paragraphs, also not a measurement

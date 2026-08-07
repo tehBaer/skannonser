@@ -14,6 +14,9 @@ RESPONSE = json.dumps({
     "egenerklaering": [],
     "tilstandsrapport_dato": None,
     "tilstandsrapport_utsteder": None,
+    "radon_status": None,
+    "radonsperre": None,
+    "radon_bq": None,
 })
 
 FAKE_INPUT = lambda html: html.strip() or None  # noqa: E731

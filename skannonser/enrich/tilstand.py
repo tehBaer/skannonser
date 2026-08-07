@@ -29,6 +29,8 @@ FORHOLD = (
     "annet",
 )
 UTSTEDER = ("anticimex", "norsk_takst", "takstinstituttet", "nito_takst", "annet")
+RADON_STATUS = ("ikke_malt", "malt_under_grense", "malt_over_grense", "malt_ukjent_verdi")
+RADONSPERRE = ("finnes", "mangler")
 TG_GRADES = (2, 3)
 KOSTNAD_KILDE = ("takst", "estimat")
 
@@ -108,6 +110,14 @@ class TilstandResponse(BaseModel):
     egenerklaering: list[str]
     tilstandsrapport_dato: str | None
     tilstandsrapport_utsteder: str | None
+    # Radon (2026-08-06 spec). Per-listing facts about THIS property, null
+    # whenever the document only carries the statutory boilerplate. REQUIRED
+    # rather than defaulted: a default would let a pre-radon cached response
+    # validate into a silent NULL that is indistinguishable from "the document
+    # said nothing". `_SCHEMA_VERSION` is what keeps those responses out.
+    radon_status: str | None
+    radonsperre: str | None
+    radon_bq: int | None
 
     @field_validator("egenerklaering")
     @classmethod
@@ -118,6 +128,8 @@ class TilstandResponse(BaseModel):
         return v
 
     _v_utst = field_validator("tilstandsrapport_utsteder")(_enum_check(UTSTEDER))
+    _v_radon = field_validator("radon_status")(_enum_check(RADON_STATUS))
+    _v_sperre = field_validator("radonsperre")(_enum_check(RADONSPERRE))
 
 
 _COST_ENUM = list(GRID)
@@ -128,6 +140,7 @@ TILSTAND_SCHEMA = {
     "required": [
         "findings", "egenerklaering_present", "egenerklaering",
         "tilstandsrapport_dato", "tilstandsrapport_utsteder",
+        "radon_status", "radonsperre", "radon_bq",
     ],
     "properties": {
         "findings": {
@@ -161,6 +174,13 @@ TILSTAND_SCHEMA = {
             {"type": "string", "format": "date"}, {"type": "null"}]},
         "tilstandsrapport_utsteder": {"anyOf": [
             {"type": "string", "enum": list(UTSTEDER)}, {"type": "null"}]},
+        "radon_status": {"anyOf": [
+            {"type": "string", "enum": list(RADON_STATUS)}, {"type": "null"}]},
+        "radonsperre": {"anyOf": [
+            {"type": "string", "enum": list(RADONSPERRE)}, {"type": "null"}]},
+        # A free integer, not a grid value: this is a measured quantity whose
+        # worth is its position relative to the 100 and 200 Bq/m3 thresholds.
+        "radon_bq": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
     },
 }
 
@@ -195,6 +215,23 @@ Rules:
   egenerklaering_present true. Beware Norwegian negation: "har ikke tegnet"
   contains "har tegnet" -- read the sentence, not the keyword.
 - tilstandsrapport_dato is the report's own date as YYYY-MM-DD if stated.
+- Radon. radon_status describes THIS property, and is null unless the text
+  says something substantive about it. Generic advice ("vi anbefaler
+  radonmaling", "interessenter gjores oppmerksom pa...") is boilerplate that
+  appears in most prospectuses and is NOT a statement about this property --
+  leave it null. Use "ikke_malt" when the text says no measurement was taken,
+  "malt_under_grense" / "malt_over_grense" when a measurement is reported with
+  its result, and "malt_ukjent_verdi" when a measurement is confirmed but no
+  result is given.
+- radon_bq is the property's OWN measured value in Bq/m3, and null otherwise.
+  Most numbers near the word radon are the statutory thresholds quoted in
+  advisory text -- "ovre anbefalte grenseverdi pa 200 Bq/m3", "dersom det
+  overstiger 100 Bq/m3" -- and those are NOT this property's value. Numbers
+  from the aktsomhetskart risk-area paragraphs are not measurements either.
+  If in doubt, leave it null: no value is fine, a wrong one is not.
+- radonsperre: read the negation. "bygget er heller ikke utfort med
+  radonsperre" means "mangler", not "finnes" -- the phrase contains the word
+  either way.
 """
 
 
