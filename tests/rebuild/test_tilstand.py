@@ -427,3 +427,24 @@ def test_prompt_names_both_documented_traps():
     assert "grenseverdi" in p          # trap 1: quoted threshold, not a measurement
     assert "radonsperre" in p          # trap 2: negation around the barrier
     assert "aktsomhet" in p            # the risk-map paragraphs, also not a measurement
+
+
+def test_rollup_passes_radon_through_unchanged():
+    """Radon is a per-listing fact, not an aggregate: it is copied, not summed.
+    Kept in the rollup (not listing_tg_findings) because a TG grade on radon
+    and a radon measurement are different claims -- see the spec."""
+    resp = TilstandResponse.model_validate({
+        **GOOD_RESPONSE,
+        "radon_status": "malt_over_grense", "radonsperre": "mangler", "radon_bq": 280,
+    })
+    r = compute_rollup(resp)
+    assert r["radon_status"] == "malt_over_grense"
+    assert r["radonsperre"] == "mangler"
+    assert r["radon_bq"] == 280
+
+
+def test_rollup_radon_defaults_to_none():
+    r = compute_rollup(_resp([]))
+    assert r["radon_status"] is None
+    assert r["radonsperre"] is None
+    assert r["radon_bq"] is None

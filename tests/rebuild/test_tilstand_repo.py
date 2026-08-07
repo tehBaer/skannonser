@@ -11,6 +11,7 @@ ROLLUP = {
     "reparasjon_kilde": "blandet",
     "tilstandsrapport_dato": "2026-05-01", "tilstandsrapport_utsteder": "anticimex",
     "egenerklaering_antall": 1,
+    "radon_status": "ikke_malt", "radonsperre": "mangler", "radon_bq": None,
 }
 FINDINGS = [
     {"tg": 3, "bygningsdel": "vatrom", "tiltak": "utskiftning", "alvorlighet": "alvorlig",
@@ -200,3 +201,12 @@ def test_upsert_ad_stores_the_producing_sha(tmp_path):
     row = conn.execute(
         "SELECT content_sha256 FROM listing_tilstand WHERE finnkode='42'").fetchone()
     assert row[0] == "abc123"
+
+
+def test_upsert_ad_persists_radon(tmp_path):
+    conn = _db(tmp_path)
+    TilstandRepo(conn).upsert_ad("42", FINDINGS, ["vannskade"], ROLLUP)
+    row = conn.execute("SELECT * FROM listing_tilstand WHERE finnkode='42'").fetchone()
+    assert row["radon_status"] == "ikke_malt"
+    assert row["radonsperre"] == "mangler"
+    assert row["radon_bq"] is None

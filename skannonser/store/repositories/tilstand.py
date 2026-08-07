@@ -18,6 +18,7 @@ _ROLLUP_COLS = (
     "tg2_count", "tg3_count", "reparasjon_lav", "reparasjon_hoy",
     "reparasjon_est", "alvorlighet", "verste_bygningsdel", "reparasjon_kilde",
     "tilstandsrapport_dato", "tilstandsrapport_utsteder", "egenerklaering_antall",
+    "radon_status", "radonsperre", "radon_bq",
 )
 
 # --- Classification priority order (2026-08-06 spec) -----------------------

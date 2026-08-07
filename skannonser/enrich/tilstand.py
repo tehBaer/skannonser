@@ -403,6 +403,10 @@ def compute_rollup(resp: TilstandResponse) -> dict:
         "reparasjon_kilde": kilde,
         "tilstandsrapport_dato": resp.tilstandsrapport_dato,
         "tilstandsrapport_utsteder": resp.tilstandsrapport_utsteder,
+        # Per-listing facts, copied rather than aggregated.
+        "radon_status": resp.radon_status,
+        "radonsperre": resp.radonsperre,
+        "radon_bq": resp.radon_bq,
         # NULL = no egenerklaering section existed; 0 = section existed, seller
         # disclosed nothing. Same discipline as Phase 1's null-vs-false rule.
         # Counts the model's raw list, not stored rows: TilstandRepo dedups via
