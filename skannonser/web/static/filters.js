@@ -437,12 +437,26 @@ export function openPopover(anchor, build) {
 // holds the shared filter predicate and vocabulary derivation, which are unit
 // tested under node -- where there is no document.
 if (typeof document !== "undefined") {
+  // CAPTURE phase, and that is the whole point: "was this click inside the
+  // popover?" is only answerable while ev.target is still in the document, and
+  // by the bubble phase it need not be. The propagation path is snapshotted
+  // when dispatch begins, so document receives the click even after a handler
+  // has detached the node that was clicked -- and `contains` then says "no"
+  // about a node that WAS inside. renderStatusPopover (table.js) does exactly
+  // that: it re-mounts its own body from its chips' onChange, so every status
+  // click used to dismiss the popover the user was still working in. Capture
+  // runs before any handler can re-render, so the question gets asked while
+  // the answer is still true.
+  //
+  // Moving the check earlier does not change any outcome for clicks that
+  // should dismiss: the anchors' own handlers call stopPropagation() and then
+  // re-enter openPopover, whose same-anchor toggle still closes.
   document.addEventListener("click", (ev) => {
     if (!popoverEl) return;
     if (popoverEl.contains(ev.target)) return;
     if (popoverAnchor && popoverAnchor.contains(ev.target)) return;
     closePopover();
-  });
+  }, true);
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") closePopover();
   });
