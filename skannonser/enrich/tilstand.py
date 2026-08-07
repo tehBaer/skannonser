@@ -29,7 +29,10 @@ FORHOLD = (
     "annet",
 )
 UTSTEDER = ("anticimex", "norsk_takst", "takstinstituttet", "nito_takst", "annet")
-RADON_STATUS = ("ikke_malt", "malt_under_grense", "malt_over_grense", "malt_ukjent_verdi")
+RADON_STATUS = (
+    "ikke_malt", "ikke_relevant",
+    "malt_under_grense", "malt_over_grense", "malt_ukjent_verdi",
+)
 RADONSPERRE = ("finnes", "mangler")
 TG_GRADES = (2, 3)
 KOSTNAD_KILDE = ("takst", "estimat")
@@ -222,7 +225,11 @@ Rules:
   leave it null. Use "ikke_malt" when the text says no measurement was taken,
   "malt_under_grense" / "malt_over_grense" when a measurement is reported with
   its result, and "malt_ukjent_verdi" when a measurement is confirmed but no
-  result is given.
+  result is given. Use "ikke_relevant" when the text explains that radon does
+  not apply to this home rather than merely that nobody measured -- typically
+  a flat several storeys above ground ("boligen ligger minimum tre etasjer
+  over bakkeniva, og radonmaling er ikke relevant"). That is a stated reason
+  there is no risk, not a gap in the information.
 - radon_bq is the property's OWN measured value in Bq/m3, and null otherwise.
   Most numbers near the word radon are the statutory thresholds quoted in
   advisory text -- "ovre anbefalte grenseverdi pa 200 Bq/m3", "dersom det
