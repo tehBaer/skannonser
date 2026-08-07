@@ -82,6 +82,7 @@ def classify_tilstand(
             [f.model_dump() for f in resp.findings],
             resp.egenerklaering,
             compute_rollup(resp),
+            content_sha256=sha,
         )
         counts["upserted"] += 1
     return counts

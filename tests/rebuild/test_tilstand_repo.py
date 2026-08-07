@@ -179,3 +179,24 @@ def test_order_is_total_and_stable_on_finnkode(tmp_path):
     repo = TilstandRepo(conn)
     assert repo.candidate_finnkodes() == ["100", "200", "300"]
     assert repo.candidate_finnkodes() == repo.candidate_finnkodes()
+
+
+def test_cache_put_records_effort(tmp_path):
+    from skannonser.enrich.tilstand import cache_put
+    conn = connection.connect(tmp_path / "t.db")
+    migrations.migrate(conn)
+    cache_put(conn, "sha_a", "{}", model="claude-opus-5", effort="high")
+    cache_put(conn, "sha_b", "{}")
+    got = {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT content_sha256, model, effort FROM salgsoppgave_llm_cache")}
+    assert got["sha_a"] == ("claude-opus-5", "high")
+    assert got["sha_b"][1] is None, "effort defaults to NULL = not recorded"
+
+
+def test_upsert_ad_stores_the_producing_sha(tmp_path):
+    conn = _db(tmp_path)
+    TilstandRepo(conn).upsert_ad("42", FINDINGS, ["vannskade"], ROLLUP,
+                                 content_sha256="abc123")
+    row = conn.execute(
+        "SELECT content_sha256 FROM listing_tilstand WHERE finnkode='42'").fetchone()
+    assert row[0] == "abc123"

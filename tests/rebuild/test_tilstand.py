@@ -204,7 +204,8 @@ def test_export_cache_returns_all_rows(tmp_path):
     rows = export_cache(conn)
     assert len(rows) == 2
     assert {r["content_sha256"] for r in rows} == {"a" * 64, "b" * 64}
-    assert set(rows[0]) == {"content_sha256", "response_json", "model", "created_at"}
+    assert set(rows[0]) == {
+        "content_sha256", "response_json", "model", "effort", "created_at"}
 
 
 def test_import_cache_roundtrips_and_preserves_model_and_timestamp(tmp_path):
@@ -247,3 +248,18 @@ def test_import_cache_rejects_rows_missing_required_keys(tmp_path):
         import_cache(conn, [{"content_sha256": "a" * 64}])
     # a rejected batch writes nothing at all
     assert export_cache(conn) == []
+
+
+def test_import_cache_accepts_pre_017_exports_without_effort(tmp_path):
+    """Export files written before migration 017 have no `effort` key. Rejecting
+    them would strand every cache file exported earlier -- including ones
+    already copied to the server. Missing means NOT RECORDED, i.e. NULL."""
+    from skannonser.enrich.tilstand import export_cache, import_cache
+
+    conn = _cache_db(tmp_path)
+    legacy = [{"content_sha256": "a" * 64, "response_json": '{"x": 1}',
+               "model": "claude-opus-5", "created_at": "2026-08-06T20:22:01"}]
+    assert import_cache(conn, legacy) == {"imported": 1, "replaced": 0}
+    got = export_cache(conn)[0]
+    assert got["effort"] is None
+    assert got["model"] == "claude-opus-5"
