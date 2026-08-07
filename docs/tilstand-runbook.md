@@ -21,6 +21,10 @@ No API key, no `.[llm]` extra, no spend. The loop is:
    `TILSTAND_SCHEMA` — the same schema the API path constrains against, so
    `TilstandResponse.model_validate` is the gate either way. **Validate before
    writing**; a response that fails validation must be fixed, not stored.
+   Hand the classifier [`classifier-brief.md`](classifier-brief.md): it carries
+   the corpus calibration (bare TG lists, cost snapping, the HMS/TGIU
+   exclusions, the radon edge cases) that `_SYSTEM_PROMPT` alone does not.
+   Batches fan out well — ten agents at ten ads each is the shape used so far.
 3. Build a cache file: a JSON list of rows with `content_sha256`,
    `response_json`, `model` (`"claude-opus-5 (interactive session)"` — label it
    honestly), `effort` (`null`), `created_at`, `schema_version`.
@@ -84,6 +88,11 @@ Also confirm `radon_status` is non-NULL on materially less than ~40% of
 classified ads. Higher than that means generic advice is being read as a
 statement about the property — the exact failure that makes the old
 `radon_omtalt` field useless.
+
+Three more radon cases — a bare `Radonmåling` under TGIU, "det antas …
+ferdigattest", and an HMS block contradicting the seller's egenerklæring — were
+settled while classifying the 2026-08-07 batch and are written up for
+classifiers in [`classifier-brief.md`](classifier-brief.md).
 
 Three judgement calls worth knowing about, all settled on 2026-08-07:
 
