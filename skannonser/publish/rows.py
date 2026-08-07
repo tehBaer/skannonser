@@ -33,7 +33,9 @@ other.
 Also LEFT JOIN ``listing_tilstand`` (migration 016, aliased ``t``) for the
 tilstand-classifier rollup columns (TG2_COUNT/TG3_COUNT/REPARASJON_LAV/
 REPARASJON_HOY/REPARASJON_EST/ALVORLIGHET/VERSTE_BYGNINGSDEL/
-REPARASJON_KILDE), ``NULL`` when a listing hasn't been classified yet. The
+REPARASJON_KILDE) and its radon facts (RADON_STATUS/RADONSPERRE/RADON_BQ,
+migration 018 -- distinct from Phase-1's regex RADON_OMTALT on ``s``),
+``NULL`` when a listing hasn't been classified yet. The
 per-finding detail (``listing_tg_findings``) isn't joined here -- one row per
 finding would multiply the listing row -- the web API fetches it separately
 (see ``web.api._tg_findings_by_finnkode``).
@@ -147,7 +149,10 @@ _EIE_SELECT_TAIL = """
     t.reparasjon_est AS "REPARASJON_EST",
     t.alvorlighet AS "ALVORLIGHET",
     t.verste_bygningsdel AS "VERSTE_BYGNINGSDEL",
-    t.reparasjon_kilde AS "REPARASJON_KILDE"
+    t.reparasjon_kilde AS "REPARASJON_KILDE",
+    t.radon_status AS "RADON_STATUS",
+    t.radonsperre AS "RADONSPERRE",
+    t.radon_bq AS "RADON_BQ"
 """
 
 _EIE_JOINS = """

@@ -412,6 +412,12 @@ def _eie_item(
         "alvorlighet": rec.get("ALVORLIGHET"),
         "verste_bygningsdel": rec.get("VERSTE_BYGNINGSDEL"),
         "reparasjon_kilde": rec.get("REPARASJON_KILDE"),
+        # Radon from the classifier (migration 018). Distinct from
+        # `radon_omtalt` above, which is a regex mention-detector: that says
+        # the document discusses radon, these say what it discussed.
+        "radon_status": rec.get("RADON_STATUS"),
+        "radonsperre": rec.get("RADONSPERRE"),
+        "radon_bq": rec.get("RADON_BQ"),
         "tg_findings": tg_findings or [],
     }
     if closed:

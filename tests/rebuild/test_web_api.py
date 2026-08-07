@@ -248,6 +248,9 @@ def test_listing_shape_and_donor_resolved_travel(db_path, client):
         "reparasjon_est", "reparasjon_usikkerhet",
         "alvorlighet", "verste_bygningsdel",
         "reparasjon_kilde", "tg_findings",
+        # Classifier radon (migration 018), distinct from the regex
+        # `radon_omtalt` in the salgsoppgave block above.
+        "radon_status", "radonsperre", "radon_bq",
     }
     assert item["finnkode"] == "A"
     assert item["adresse"] == "Gata 1"
@@ -1582,3 +1585,39 @@ def test_reparasjon_usikkerhet_is_none_without_a_range(db_path, client):
     items = client.get("/api/listings").json()["listings"]
     assert _by_finnkode(items, "A")["reparasjon_usikkerhet"] is None   # classified, no costs
     assert _by_finnkode(items, "B")["reparasjon_usikkerhet"] is None   # never classified
+
+
+def test_radon_classifier_fields_flow_into_item(db_path, client):
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.execute(
+        "INSERT INTO listing_tilstand "
+        "(finnkode, tg2_count, tg3_count, radon_status, radonsperre, radon_bq, "
+        " classified_at) "
+        "VALUES ('A', 0, 0, 'malt_over_grense', 'mangler', 280, '2026-08-01T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["radon_status"] == "malt_over_grense"
+    assert item["radonsperre"] == "mangler"
+    assert item["radon_bq"] == 280
+
+
+def test_radon_classifier_fields_are_none_when_unclassified(db_path, client):
+    """And radon_omtalt keeps working independently: it covers every parsed
+    ad, including ones classification has not reached."""
+    conn = _conn(db_path)
+    _ins_eiendom(conn, "A")
+    conn.execute(
+        "INSERT INTO listing_salgsoppgave (finnkode, radon_omtalt, parsed_at) "
+        "VALUES ('A', 1, '2026-08-01T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    item = _by_finnkode(client.get("/api/listings").json()["listings"], "A")
+    assert item["radon_status"] is None
+    assert item["radon_bq"] is None
+    assert item["radon_omtalt"] is True
