@@ -308,7 +308,14 @@ def _husdyr(text: str) -> str | None:
 
 
 _HEFTELSER = re.compile(r"servitutt|heftelse|pengeheftelse", re.I)
-_RADON = re.compile(r"\bradon\b", re.I)
+# Substring, not `\bradon\b`: Norwegian compounds carry no word boundary after
+# "radon", so the boundary form matched only the standalone word -- in practice
+# a "## Radon" heading -- and missed "radonmåling", "radonsperre" and
+# "radonverdier", which is how a prospectus usually raises the subject.
+# Measured 2026-08-07: 27 classified ads it called "never mentioned" held a
+# real radon statement, four of them measurements. There is no Norwegian word
+# that merely contains "radon" by coincidence, so a substring test is safe.
+_RADON = re.compile(r"radon", re.I)
 
 
 def _body_only_text(secs: list[Section]) -> str:

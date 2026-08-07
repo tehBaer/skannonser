@@ -127,9 +127,6 @@ const COLUMNS = [
   { key: "utleie", label: "Utleie", sortable: true },
   { key: "husdyr", label: "Husdyr", sortable: true },
   { key: "heftelser", label: "Heftelser", sortable: true },
-  // "Radon nevnt", not "Radon": the classifier's radon_status column below
-  // takes that name, and this one only says the prospectus mentioned the word.
-  { key: "radon_omtalt", label: "Radon nevnt", sortable: true },
   { key: "boligselgerforsikring", label: "Selgerforsikring", sortable: true },
   // Tilstand classifier (migration 016). Default-hidden like the salgsoppgave
   // columns just above, and listed in their own migration array (see
@@ -159,7 +156,7 @@ const COLUMNS = [
 // predate them, without re-hiding a column they have since chosen to show.
 const SALGSOPPGAVE_COLUMNS = [
   "ferdigattest", "eiendomsskatt_kr", "verditakst", "utleie", "husdyr",
-  "heftelser", "radon_omtalt", "boligselgerforsikring",
+  "heftelser", "boligselgerforsikring",
 ];
 // Migration 016's three columns, hidden by default the same way. Kept as its
 // OWN migration array with its own `tilstandColumnsDefaulted` flag below,
@@ -482,7 +479,14 @@ function buildRow(item) {
     const td = el("td");
     // Tint the whole column, not just its header: a reader scanning rows
     // should see at a glance which numbers a model produced.
-    if (TILSTAND_DERIVED.has(col.key)) td.classList.add("from-llm-cell");
+    // Radon is the one column with two possible sources: a classifier verdict,
+    // or "Ikke nevnt" inferred from the prospectus never saying the word. Only
+    // tint the former, or the violet would claim a model produced a regex
+    // result. Every other derived column has a single provenance.
+    const llmCell = col.key === "radon_status"
+      ? item.radon_status !== null && item.radon_status !== undefined
+      : TILSTAND_DERIVED.has(col.key);
+    if (llmCell) td.classList.add("from-llm-cell");
     switch (col.key) {
       case "adresse": {
         if (item.url) {
@@ -543,10 +547,9 @@ function buildRow(item) {
         td.textContent = fmtHusdyr(item.husdyr) || "";
         break;
       }
-      case "heftelser":
-      case "radon_omtalt": {
-        // Omtalt/Ikke omtalt, NOT Ja/Nei: these detect whether the prospectus
-        // mentions the topic at all. "Radon: Ja" reads as a radon problem.
+      case "heftelser": {
+        // Omtalt/Ikke omtalt, NOT Ja/Nei: this detects whether the prospectus
+        // mentions the topic at all. "Heftelser: Ja" reads as a problem.
         td.textContent = fmtOmtalt(item[col.key]) || "";
         break;
       }

@@ -388,7 +388,7 @@ def test_radon_fields_parse_and_reject_off_vocab():
         with pytest.raises(ValidationError):
             TilstandResponse.model_validate({**base, **bad})
 
-    assert len(RADON_STATUS) == 4 and len(RADONSPERRE) == 2
+    assert len(RADON_STATUS) == 5 and len(RADONSPERRE) == 2
 
 
 def test_radon_fields_are_nullable():
@@ -491,3 +491,26 @@ def test_a_threshold_valued_bq_would_still_validate_so_the_prompt_carries_the_ru
     catch this, it needs a rule beyond the type."""
     resp = classify_one("...", _call=lambda _: json.dumps({**GOOD_RESPONSE, "radon_bq": 200}))
     assert resp.radon_bq == 200
+
+
+def test_ikke_relevant_is_a_separate_state_from_ikke_malt():
+    """Some prospectuses explain that radon does not apply -- "boligen ligger
+    minimum tre etasjer over bakkenivå, og radonmåling er ikke relevant".
+    Recording that as `ikke_malt` is technically true but reads as a gap on a
+    flat where the risk is genuinely negligible, so it gets its own value."""
+    from skannonser.enrich.tilstand import RADON_STATUS
+
+    assert "ikke_relevant" in RADON_STATUS
+    assert "ikke_malt" in RADON_STATUS
+    resp = TilstandResponse.model_validate(
+        {**GOOD_RESPONSE, "radon_status": "ikke_relevant"})
+    assert resp.radon_status == "ikke_relevant"
+
+
+def test_adding_a_status_value_did_not_bump_the_schema_version():
+    """A new ENUM VALUE does not make cached responses incomplete the way a new
+    FIELD does -- they still carry every key the schema requires. Bumping the
+    version here would invalidate the whole cache for nothing."""
+    from skannonser.enrich.tilstand import _SCHEMA_VERSION
+
+    assert _SCHEMA_VERSION == 2
