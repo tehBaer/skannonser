@@ -268,6 +268,9 @@ export function buildPopupContent(item, destinations, getTagColors) {
   // say", not "no". Every row is conditional, so the whole block is absent on
   // the ~1/3 of listings with no parsed text.
   const sdl = el("dl");
+  // Which block the merged radon row belongs to (see below).
+  const hasRadonVerdict =
+    item.radon_status !== null && item.radon_status !== undefined;
   addRow(sdl, "Ferdigattest", fmtFerdigattest(item.ferdigattest));
   addRow(sdl, "Eiendomsskatt", fmtPris(item.eiendomsskatt_kr));
   addRow(sdl, "Utleie", fmtUtleie(item.utleie));
@@ -276,10 +279,12 @@ export function buildPopupContent(item, destinations, getTagColors) {
   // mentions the topic, so "Heftelser: Ja" would assert something we never
   // established.
   addRow(sdl, "Heftelser", fmtOmtalt(item.heftelser));
-  // "Radon nevnt": the Tilstand block below has the classifier's own Radon
-  // row, and two rows named "Radon" saying different things would read as a
-  // contradiction rather than as two different questions.
-  addRow(sdl, "Radon nevnt", fmtOmtalt(item.radon_omtalt));
+  // The merged radon row goes under whichever heading actually produced it.
+  // Here, that is the "Ikke nevnt" case only -- inferred from the prospectus
+  // never saying the word, which is exactly what this block is about. A
+  // classifier verdict belongs under Tilstand instead, and putting either one
+  // in the wrong block would misattribute how it was produced.
+  addRow(sdl, "Radon", hasRadonVerdict ? null : fmtRadon(item));
   addRow(sdl, "Boligselgerforsikring", fmtJaNei(item.boligselgerforsikring));
   if (sdl.childNodes.length) {
     const head = el("p", "sk-dl-head", "Fra salgsoppgaven");
@@ -301,7 +306,7 @@ export function buildPopupContent(item, destinations, getTagColors) {
       : null);
   addRow(tdl, "Utbedring",
     fmtKostnadBand(item.reparasjon_lav, item.reparasjon_hoy, item.reparasjon_kilde));
-  addRow(tdl, "Radon", fmtRadon(item));
+  addRow(tdl, "Radon", hasRadonVerdict ? fmtRadon(item) : null);
   addRow(tdl, "Radonsperre", fmtRadonsperre(item.radonsperre));
   if (tdl.childNodes.length) {
     // Same violet provenance marker the table's LLM columns carry -- these are

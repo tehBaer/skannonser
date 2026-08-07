@@ -304,6 +304,9 @@ export const BYGNINGSDEL_LABELS = {
 
 const RADON_STATUS_LABELS = {
   ikke_malt: "Ikke målt",
+  // Distinct from "Ikke målt": the document gave a reason radon does not apply
+  // (typically a flat several storeys up), rather than leaving a gap.
+  ikke_relevant: "Ikke relevant",
   malt_under_grense: "Målt, under grense",
   // Shouted deliberately: this is the one radon state that costs money.
   malt_over_grense: "Målt, OVER grense",
@@ -320,14 +323,31 @@ export function fmtRadonsperre(value) {
   return fromVocab(RADONSPERRE_LABELS, value);
 }
 
-// Status plus the measured value when one was stated. radon_bq is populated on
-// only ~2% of ads by design -- most Bq figures in a prospectus are the
-// statutory thresholds, and the classifier is told not to extract those.
+// The single radon answer, merged from the classifier and the mention flag in
+// descending order of confidence.
+//
+// 1. A classifier verdict, plus the measured value when one was stated.
+//    radon_bq is populated on only ~2% of ads by design -- most Bq figures in
+//    a prospectus are the statutory thresholds, and the classifier is told not
+//    to extract those.
+// 2. Otherwise, if the prospectus never says "radon" at all, then nobody
+//    measured it: a measurement is the kind of thing a document reports.
+//    Labelled "Ikke nevnt" rather than "Ikke målt" because it is inferred from
+//    silence, where "Ikke målt" is the surveyor stating it outright.
+// 3. Otherwise blank. "Mentioned, but only the statutory boilerplate" and "not
+//    classified yet" and "no prospectus parsed" are all genuinely no
+//    information, and must not masquerade as an answer.
+//
+// Step 2 is only sound because `radon_omtalt` was fixed on 2026-08-07 -- the
+// old \bradon\b matched headings only, and inferring from ITS silence would
+// have overwritten four real measurements with "not measured".
 export function fmtRadon(item) {
   const s = fmtRadonStatus(item.radon_status);
-  if (!s) return null;
-  const bq = item.radon_bq;
-  return bq === null || bq === undefined ? s : s + " (" + bq + " Bq/m³)";
+  if (s) {
+    const bq = item.radon_bq;
+    return bq === null || bq === undefined ? s : s + " (" + bq + " Bq/m³)";
+  }
+  return item.radon_omtalt === false ? "Ikke nevnt" : null;
 }
 
 export function fmtAlvorlighet(value) {
