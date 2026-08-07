@@ -122,6 +122,60 @@ export function premiumPct(item) {
   return (soldPrice / asking - 1) * 100;
 }
 
+// A number fit for arithmetic, or null when the field is blank. Same
+// blank-before-Number() discipline premiumPct spells out inline above: null
+// and "" both coerce to a finite 0, so the blankness test has to happen first.
+function numOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+// An OPTIONAL addend: blank, absent or unparseable all contribute 0.
+//
+// Deliberately the opposite rule from the sold price itself, because the two
+// blanks mean different things. A missing `fellesgjeld` is not unknown -- it is
+// zero: selveier ads simply omit the Fellesgjeld line (2 867 of 6 258
+// listing_details rows have it NULL), and coalescing those to 0 reconciles
+// `totalpris - omkostninger - fellesgjeld` against FINN's own priceSuggestion
+// on 82 of the 85 sold rows where it is NULL. Treating it as unknown would
+// blank this column for nearly every selveier.
+function addend(value) {
+  const n = numOrNull(value);
+  return n === null ? 0 : n;
+}
+
+// The sold-side counterpart of `totalpris`: what the buyer actually committed
+// to. Exists because the table sits `Totalpris` next to `Solgt for` on two
+// different bases -- the first includes omkostninger and fellesgjeld, the
+// second (FINN's tinglyst `cadastralSoldPrice`) does not -- so the gap between
+// them reads as a discount when it is nothing of the sort.
+//
+// TWO CAVEATS, both sub-1 % and in opposite directions:
+//   * `omkostninger` is quoted on the PRISANTYDNING. For selveier the
+//     dokumentavgift is 2,5 % of the actual sale price, so a sale over asking
+//     understates by ~2,5 % of the overage (250k over ask ~ 6 000 kr short).
+//     Borettslag omkostninger are a flat fee, so those are exact.
+//   * `fellesgjeld` is as of the ad; tinglysing lands ~100 days later, by
+//     which point it has amortised slightly.
+// Good enough to compare listings, not a settlement statement.
+export function soldTotalpris(item) {
+  const sold = numOrNull(item.sold_price);
+  if (sold === null) return null;
+  return sold + addend(item.omkostninger) + addend(item.fellesgjeld);
+}
+
+// The sold analogue of Total/kvm (api.py's `_pris_kvm_totalpris`) -- the number
+// that actually compares two flats. Same divisor (BRA-i) and same rounding, so
+// a sold row and an active row can be read down the same mental column.
+export function soldPrisKvmTotalpris(item) {
+  const total = soldTotalpris(item);
+  if (total === null || total <= 0) return null;
+  const braI = numOrNull(item.bra_i);
+  if (braI === null || braI <= 0) return null;
+  return Math.round(total / braI);
+}
+
 // "+7,2 %" / "−3,1 %" (nb-NO decimals) for a premium percent.
 export function fmtPremium(pct) {
   return (
@@ -183,9 +237,48 @@ export const SALGSOPPGAVE_HINT =
   "(s) = hentet fra teksten i salgsoppgaven \u2014 tomt felt betyr at " +
   "salgsoppgaven ikke sa noe, ikke at svaret er nei";
 
-// `label` with the marker appended when the field is prose-derived.
+// ---------------------------------------------------------------------------
+// Computed columns -- the third provenance class
+//
+// SALGSOPPGAVE_DERIVED above marks regex over prospectus prose, and
+// TILSTAND_DERIVED below marks a model's judgement. Both answer "how reliable
+// is this value". THIS set answers a different question: is the number in the
+// cell one FINN published, or one this UI worked out from several others?
+//
+// It matters most where the two sit side by side. `Solgt tot/kvm` combines a
+// tinglyst sale price from FINN's sold-map card, omkostninger and fellesgjeld
+// from the ad's pricing <dl>, and BRA-i from the key-info block -- four fields,
+// three sources, one cell. A blank there can mean any of four things missing,
+// and the figure inherits every one of their caveats (see `soldTotalpris`).
+//
+// NOT included: `reparasjon_est` and `reparasjon_usikkerhet`, which are also
+// arithmetic but already carry TILSTAND_DERIVED's colour. That marker is the
+// louder and more important one, and double-marking would render "Utbedring
+// (b)" in violet -- two signals competing to say the same "treat with care".
+export const COMPUTED_COLUMNS = new Set([
+  "pris_kvm", // compute_pris_kvm: pris / area, over a P-ROM -> BRA-i -> BRA fallback chain
+  "pris_kvm_totalpris", // totalpris / BRA-i
+  "maanedskost", // felleskost/mnd + kommunale avgifter/12
+  "premium", // sold_price / price_suggestion - 1
+  "sold_totalpris", // sold_price + omkostninger + fellesgjeld
+  "sold_pris_kvm_totalpris", // that / BRA-i
+]);
+
+export const COMPUTED_SUFFIX = " (b)";
+
+export const COMPUTED_HINT =
+  "(b) = beregnet av denne appen fra andre felt — ikke et tall FINN har " +
+  "oppgitt. Tomt felt betyr at ett av leddene manglet.";
+
+// `label` with the marker appended when the field is prose-derived or
+// computed. Applied at render time from the sets above rather than baked into
+// each label, so a key added to a set is marked everywhere at once. The two
+// sets are disjoint (asserted in tests/web/soldtotal.test.mjs) -- a key in both
+// would render "Foo (s) (b)" -- so the order of these branches is arbitrary.
 export function labelWithSource(key, label) {
-  return SALGSOPPGAVE_DERIVED.has(key) ? label + SALGSOPPGAVE_SUFFIX : label;
+  if (SALGSOPPGAVE_DERIVED.has(key)) return label + SALGSOPPGAVE_SUFFIX;
+  if (COMPUTED_COLUMNS.has(key)) return label + COMPUTED_SUFFIX;
+  return label;
 }
 
 export function fmtJaNei(value) {

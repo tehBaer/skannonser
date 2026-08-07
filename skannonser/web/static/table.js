@@ -9,10 +9,12 @@
 import { commitAnnotation } from "./annotations.js";
 import {
   isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
+  soldTotalpris, soldPrisKvmTotalpris,
   fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, fmtAlvorlighet,
   fmtRadon,
   resolveHiddenColumns, applyTilstandColumnsMigration,
   SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, TILSTAND_DERIVED, TILSTAND_HINT,
+  COMPUTED_COLUMNS, COMPUTED_HINT,
   labelWithSource, TILGJENGELIGHET_OPTIONS,
 } from "./listingmeta.js";
 import {
@@ -62,6 +64,8 @@ const NUMERIC_COLUMNS = new Set([
   "mvv",
   "mvv_uni",
   "sold_price",
+  "sold_totalpris",
+  "sold_pris_kvm_totalpris",
   "premium",
   "soverom",
   "etasje",
@@ -98,6 +102,13 @@ const COLUMNS = [
   { key: "felleskost_mnd", label: "Felleskost", sortable: true },
   { key: "maanedskost", label: "Mnd-kost", sortable: true },
   { key: "sold_price", label: "Solgt for", sortable: true },
+  // The sold-side pair of Totalpris/Total/kvm, placed immediately after the
+  // bare sale price so the two bases are adjacent rather than separated by the
+  // date. Visible by default: the whole point is that reading "Solgt for"
+  // against "Totalpris" -- the arrangement that prompted these -- silently
+  // compares two different quantities.
+  { key: "sold_totalpris", label: "Solgt totalt", sortable: true },
+  { key: "sold_pris_kvm_totalpris", label: "Solgt tot/kvm", sortable: true },
   { key: "sold_date", label: "Solgt dato", sortable: true },
   { key: "premium", label: "Budpremie", sortable: true },
   { key: "bra_i", label: "BRA-i", sortable: true },
@@ -326,6 +337,12 @@ function cellValue(item, key) {
       return travelMinutes(item, key);
     case "premium":
       return premiumPct(item);
+    // Computed, so there is no `item.sold_totalpris` to fall through to --
+    // without these two the columns would sort every row as blank.
+    case "sold_totalpris":
+      return soldTotalpris(item);
+    case "sold_pris_kvm_totalpris":
+      return soldPrisKvmTotalpris(item);
     case "alvorlighet": {
       // Sort by severity, not alphabetically: raw values are the enum keys
       // (kosmetisk/mindre/vesentlig/alvorlig), and localeCompare on those
@@ -383,6 +400,12 @@ function renderHead() {
       // these are a model's judgement, not a pattern match over the prose.
       th.classList.add("from-llm");
       th.title = TILSTAND_HINT;
+    } else if (COMPUTED_COLUMNS.has(col.key)) {
+      // Quietest of the three: the arithmetic itself is exact, the caveats are
+      // in its inputs. Same dotted-underline affordance so the tooltip is
+      // discoverable, without a colour competing with the LLM columns.
+      th.classList.add("from-computed");
+      th.title = COMPUTED_HINT;
     }
     if (col.sortable) {
       th.classList.add("sortable");
@@ -490,6 +513,15 @@ function buildRow(item) {
       case "sold_price": {
         const formatted = fmtPris(item[col.key]);
         td.textContent = formatted || "";
+        td.classList.add("num");
+        break;
+      }
+      case "sold_totalpris":
+      case "sold_pris_kvm_totalpris": {
+        // Through cellValue, not item[col.key]: both are derived, and reading
+        // them the same way the sorter does is what keeps a cell and its
+        // sort position from ever disagreeing.
+        td.textContent = fmtPris(cellValue(item, col.key)) || "";
         td.classList.add("num");
         break;
       }
@@ -814,6 +846,9 @@ function wireToolbar() {
           } else if (SALGSOPPGAVE_DERIVED.has(col.key)) {
             name.classList.add("from-salgsoppgave");
             name.title = SALGSOPPGAVE_HINT;
+          } else if (COMPUTED_COLUMNS.has(col.key)) {
+            name.classList.add("from-computed");
+            name.title = COMPUTED_HINT;
           }
           row.appendChild(name);
           wrap.appendChild(row);

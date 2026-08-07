@@ -809,6 +809,20 @@ details.subgroup > summary {
    backgrounds fight; the inset borders still mark the column edges. */
 #listings-table tbody tr:hover td.from-llm-cell { background: #efe8f9; }
 
+/* Computed columns -- the third provenance class (see COMPUTED_COLUMNS in
+   listingmeta.js). Marks "this UI worked the number out from several fields"
+   rather than "FINN published this number". Deliberately the quietest of the
+   three markers: unlike the prose-regex and model-judgement classes, the
+   arithmetic itself is exact -- what a reader needs to know is which inputs it
+   inherits, which is what the tooltip says. Same dotted underline as
+   .from-salgsoppgave so the tooltip is discoverable, but no colour: the
+   violet is reserved for values a model produced. */
+.from-computed {
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
 /* The popup's Tilstand block is the same provenance as those columns, so it
    carries the same colour -- otherwise the two views disagree about how
    trustworthy the identical numbers are. */

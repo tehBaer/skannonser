@@ -19,6 +19,7 @@ import {
   fmtDate,
   premiumPct,
   fmtPremium,
+  soldTotalpris,
   travelMinutes,
   mapsUrl,
   earthUrl,
@@ -216,6 +217,10 @@ export function buildPopupContent(item, destinations, getTagColors) {
     const soldText = fmtPris(item.sold_price);
     if (soldText) {
       addRow(dl, "Solgt for", soldText);
+      // Same reason the table grew the column: the Totalpris row further down
+      // includes omkostninger and fellesgjeld and "Solgt for" does not, so
+      // without this the popup invites the same false subtraction.
+      addRow(dl, "Solgt totalt", fmtPris(soldTotalpris(item)));
       const dateText = fmtDate(item.sold_date);
       if (dateText) addRow(dl, "Solgt dato", dateText);
       const pct = premiumPct(item);
