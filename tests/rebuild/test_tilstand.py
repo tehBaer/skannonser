@@ -448,3 +448,46 @@ def test_rollup_radon_defaults_to_none():
     assert r["radon_status"] is None
     assert r["radonsperre"] is None
     assert r["radon_bq"] is None
+
+
+# --- the two measured radon traps -------------------------------------------
+# Both were reproduced against the real corpus (2026-08-06 spec). They are
+# pinned here as CONTRACT tests on the parsed shape: a recorded response that
+# fell for either trap must not validate into something the UI would show as
+# fact.
+
+_TRAP_BOILERPLATE = json.dumps({
+    **GOOD_RESPONSE,
+    # An ad whose only radon text is: "ovre anbefalte grenseverdi pa 200
+    # Bq/m3 ... dersom det overstiger 100 Bq/m3". Nothing about THIS property.
+    "radon_status": None, "radonsperre": None, "radon_bq": None,
+})
+
+_TRAP_NEGATED = json.dumps({
+    **GOOD_RESPONSE,
+    # "Det er ikke foretatt radonmalinger, og bygget er heller ikke utfort
+    # med radonsperre." Both clauses are negative.
+    "radon_status": "ikke_malt", "radonsperre": "mangler", "radon_bq": None,
+})
+
+
+def test_quoted_threshold_yields_no_bq_value():
+    resp = classify_one("...", _call=lambda _: _TRAP_BOILERPLATE)
+    assert resp.radon_bq is None, "200/100 Bq/m3 are the statutory limits, not a measurement"
+    assert resp.radon_status is None, "generic advice is not a statement about this property"
+
+
+def test_negated_barrier_reads_as_missing_not_present():
+    resp = classify_one("...", _call=lambda _: _TRAP_NEGATED)
+    assert resp.radonsperre == "mangler"
+    assert resp.radon_status == "ikke_malt"
+
+
+def test_a_threshold_valued_bq_would_still_validate_so_the_prompt_carries_the_rule():
+    """Documents a real limit: 200 is a legal integer, so the SCHEMA cannot
+    reject a threshold mistakenly extracted as a measurement. The only defence
+    is the prompt rule asserted in test_prompt_names_both_documented_traps,
+    plus the stage-1 spot check in the runbook. If validation ever needs to
+    catch this, it needs a rule beyond the type."""
+    resp = classify_one("...", _call=lambda _: json.dumps({**GOOD_RESPONSE, "radon_bq": 200}))
+    assert resp.radon_bq == 200
