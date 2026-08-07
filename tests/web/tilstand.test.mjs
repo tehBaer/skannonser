@@ -168,3 +168,41 @@ test("radon_status is LLM-derived; radon_omtalt is not", () => {
   assert.ok(!TILSTAND_DERIVED.has("radon_omtalt"));
   assert.ok(SALGSOPPGAVE_DERIVED.has("radon_omtalt"));
 });
+
+// --- the merged radon column ------------------------------------------------
+// One column, three tiers of confidence:
+//   1. the classifier said something  -> say it
+//   2. the prospectus never says "radon" -> "Ikke nevnt" (so: not measured)
+//   3. anything else -> blank, because "mentioned but only boilerplate" and
+//      "not classified yet" are both genuinely no information.
+// Tier 2 is only sound because the mention detector was fixed on 2026-08-07;
+// with the old \bradon\b it would have overwritten real measurements.
+
+test("fmtRadonStatus maps ikke_relevant distinctly from ikke_malt", () => {
+  assert.equal(fmtRadonStatus("ikke_relevant"), "Ikke relevant");
+  assert.notEqual(fmtRadonStatus("ikke_relevant"), fmtRadonStatus("ikke_malt"));
+});
+
+test("classifier status wins over the mention flag", () => {
+  assert.equal(
+    fmtRadon({ radon_status: "malt_over_grense", radon_bq: 280, radon_omtalt: false }),
+    "Målt, OVER grense (280 Bq/m³)");
+});
+
+test("never mentioned reads as Ikke nevnt, not Ikke målt", () => {
+  const v = fmtRadon({ radon_status: null, radon_bq: null, radon_omtalt: false });
+  assert.equal(v, "Ikke nevnt");
+  assert.notEqual(v, fmtRadonStatus("ikke_malt"));
+});
+
+test("mentioned but nothing substantive stays blank", () => {
+  // boilerplate-only ad: the parser saw the word, the classifier found no fact
+  assert.equal(fmtRadon({ radon_status: null, radon_bq: null, radon_omtalt: true }), null);
+});
+
+test("unparsed salgsoppgave stays blank rather than claiming silence", () => {
+  // radon_omtalt null means no prospectus was parsed at all -- absence of a
+  // mention has not been established, so inferring "not measured" is wrong
+  assert.equal(fmtRadon({ radon_status: null, radon_bq: null, radon_omtalt: null }), null);
+  assert.equal(fmtRadon({ radon_status: null, radon_bq: null }), null);
+});

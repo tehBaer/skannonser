@@ -402,3 +402,42 @@ def test_ferdigattest_must_not_break_cases(prose, expected):
     from skannonser.ingest.finn.parse_salgsoppgave import _ferdigattest
 
     assert _ferdigattest(prose) == expected
+
+
+# --- radon mention detection ------------------------------------------------
+# `\bradon\b` only ever matched the standalone word, which in practice means a
+# "## Radon" heading. Norwegian compounds -- radonmåling, radonsperre,
+# radonverdier -- have no word boundary after "radon", so the most common way a
+# prospectus discusses radon was invisible to it. Measured 2026-08-07: of the
+# classified ads the old regex called "never mentioned", 27 contained a real
+# radon statement, four of them actual measurements.
+
+RADON_COMPOUNDS = [
+    "Radonmåling er ikke gjennomført.",
+    "Det er ikke foretatt radonmålinger, og bygget er heller ikke utført med radonsperre.",
+    "Det foreligger ikke dokumentasjon på radonmålinger.",
+    "God lufting bidrar også til lave radonverdier.",
+]
+
+
+@pytest.mark.parametrize("text", RADON_COMPOUNDS)
+def test_radon_mention_matches_norwegian_compounds(text):
+    from skannonser.ingest.finn.parse_salgsoppgave import _RADON
+
+    assert _RADON.search(text), f"compound not detected: {text!r}"
+
+
+def test_radon_mention_still_matches_the_bare_word():
+    from skannonser.ingest.finn.parse_salgsoppgave import _RADON
+
+    assert _RADON.search("## Radon")
+    assert _RADON.search("Spørsmål om radon besvares av megler.")
+
+
+def test_radon_mention_does_not_fire_on_unrelated_text():
+    """The detector is deliberately a substring test, so guard the obvious
+    false-positive shapes rather than assuming a boundary rule handles them."""
+    from skannonser.ingest.finn.parse_salgsoppgave import _RADON
+
+    for text in ("Boligen har god standard.", "Rådhusgata 4", "randomisert utvalg"):
+        assert not _RADON.search(text), f"false positive on {text!r}"
