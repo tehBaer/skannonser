@@ -464,6 +464,9 @@ function fmtKr(n) {
 export function fmtKostnadBand(lav, hoy, kilde) {
   if (lav === null || lav === undefined || hoy === null || hoy === undefined) return null;
   if (lav === 0 && hoy === 1000000) return null; // fully unbounded band: no real signal
+  // A report read with no TG2/TG3 findings rolls up to (0, 0). That is a known
+  // zero, not a band and not a guess -- so no "under" wording and no ~ hedge.
+  if (lav === 0 && hoy === 0) return "0 kr";
   const hedge = kilde === "takst" ? "" : "~";
   if (lav === 0) return hedge + "under " + fmtKr(hoy) + " kr";
   if (hoy === 1000000) return hedge + "over " + fmtKr(lav) + " kr";
@@ -473,8 +476,8 @@ export function fmtKostnadBand(lav, hoy, kilde) {
 
 export const TILSTAND_HINT =
   "Fra tilstandsrapporten, KI-klassifisert. ~ = kostnadsanslag fra modellen, " +
-  "ikke takstmannens tall. Tomt felt betyr at ingen tilstandsrapport ble lest " +
-  "— eller at rapporten ikke inneholdt TG2/TG3-funn.";
+  "ikke takstmannens tall. 0 betyr at rapporten ble lest uten TG2/TG3-funn. " +
+  "Tomt felt betyr at ingen tilstandsrapport ble lest.";
 
 // Columns whose values a LANGUAGE MODEL produced, as opposed to
 // SALGSOPPGAVE_DERIVED above, which is regex over the same prose. The

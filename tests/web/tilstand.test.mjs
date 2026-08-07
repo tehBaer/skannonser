@@ -47,6 +47,15 @@ test("fmtKostnadBand treats the full (0, 1M+) span as unknown, not 'under 1M'", 
   assert.equal(fmtKostnadBand(0, 1000000, "takst"), null);
 });
 
+test("fmtKostnadBand renders a zero band as a definite 0, not 'under 0'", () => {
+  // A classified ad with no TG2/TG3 findings rolls up to (0, 0): a known zero
+  // repair bill, not an estimate and not a range. The lav===0 branch would
+  // otherwise render the nonsense "~under 0 kr". No hedge either -- there is
+  // no model guess here, the surveyor simply found nothing.
+  assert.equal(fmtKostnadBand(0, 0, null), "0 kr");
+  assert.equal(fmtKostnadBand(0, 0, "takst"), "0 kr");
+});
+
 // --- applyTilstandColumnsMigration (table.js's second, independent -----
 // hidden-columns migration for migration 016's three columns) --------------
 // table.js's loadHiddenColumns composes this with resolveHiddenColumns:

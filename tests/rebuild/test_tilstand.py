@@ -8,8 +8,8 @@ from pydantic import ValidationError
 from skannonser.ingest.finn.payload import Section
 from skannonser.enrich.tilstand import (
     GRID, BYGNINGSDEL, classify_input, content_sha, select_sections,
-    TILSTAND_SCHEMA, TilstandResponse, cache_get, cache_put, classify_one,
-    _response_text, compute_rollup,
+    TILSTAND_SCHEMA, TilstandResponse, TgFinding, cache_get, cache_put,
+    classify_one, _response_text, compute_rollup,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "finn"
@@ -183,8 +183,38 @@ def test_rollup_severity_tie_broken_by_kostnad_hoy():
 def test_rollup_zero_findings_is_counts_zero_not_null():
     r = compute_rollup(_resp([]))
     assert (r["tg2_count"], r["tg3_count"]) == (0, 0)
-    assert r["reparasjon_lav"] is None and r["reparasjon_est"] is None
+    # Costs are 0 here, not NULL -- see
+    # test_rollup_zero_findings_costs_are_zero_not_null. `alvorlighet` and
+    # `reparasjon_kilde` stay NULL: with no findings there is no worst one, and
+    # no cost was sourced from anywhere.
     assert r["alvorlighet"] is None and r["reparasjon_kilde"] is None
+    assert r["verste_bygningsdel"] is None
+
+
+def test_rollup_zero_findings_costs_are_zero_not_null():
+    """A surveyor who found nothing priced nothing: the repair cost is 0, a
+    known fact, not NULL. NULL here is indistinguishable from an ad nobody has
+    classified -- which sorts and filters the best houses as if they were the
+    unknown ones. Same null-vs-zero discipline as `egenerklaering_antall`."""
+    r = compute_rollup(_resp([]))
+    assert r["reparasjon_lav"] == 0
+    assert r["reparasjon_hoy"] == 0
+    assert r["reparasjon_est"] == 0
+
+
+def test_rollup_findings_without_costs_stay_null():
+    """The other half of the distinction: findings DO exist, but none carries a
+    cost, so the repair bill is genuinely unknown. That must stay NULL -- 0
+    would assert this house needs no money spent on a real defect."""
+    uncosted = TgFinding(
+        tg=2, bygningsdel="tak", tiltak=None, alvorlighet="mindre",
+        kostnad_lav=None, kostnad_hoy=None, kostnad_kilde=None,
+    )
+    r = compute_rollup(_resp([uncosted]))
+    assert r["reparasjon_lav"] is None
+    assert r["reparasjon_hoy"] is None
+    assert r["reparasjon_est"] is None
+    assert r["tg2_count"] == 1  # the finding itself is still recorded
 
 
 def test_rollup_egen_absent_section_is_null_not_zero():

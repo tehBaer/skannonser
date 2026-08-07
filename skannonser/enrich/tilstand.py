@@ -391,7 +391,18 @@ def compute_rollup(resp: TilstandResponse) -> dict:
         kilder = {f.kostnad_kilde for f in costed}
         kilde = "takst" if kilder == {"takst"} else (
             "estimat" if kilder == {"estimat"} else "blandet")
+    elif not findings:
+        # No findings at all: the surveyor read the house and priced nothing,
+        # so the repair bill is a known 0 -- NOT unknown. Leaving it NULL makes
+        # a defect-free house indistinguishable from one nobody has classified,
+        # which is exactly backwards: it hides the best listings behind an
+        # "unknown" filter policy. `kilde` stays NULL because no cost was
+        # sourced from anywhere. Same discipline as `egenerklaering_antall`.
+        lav = hoy = est = 0
+        kilde = None
     else:
+        # Findings exist but none carries a cost -- genuinely unknown, and 0
+        # here would assert a real defect needs no money.
         lav = hoy = est = kilde = None
     if findings:
         worst = max(findings,
