@@ -34,9 +34,13 @@ KOSTNAD_KILDE = ("takst", "estimat")
 
 # Measured 2026-08-05 (see design spec): this selection yields mean 8.7k
 # chars/ad vs 24k for the full text, and misses ~0 condition content.
+# `radon` and the HMS heading were added 2026-08-06: measured over 400 ads,
+# they lift substantive-radon visibility from 79% to 93% of the ads that have
+# it, for +0.7% input size. Without them the classifier is asked about radon
+# text that section selection dropped.
 _KEEP_HEADING = re.compile(
     r"tilstand|tg\b|avvik|bygningssakkyndig|takst|egenerkl|vedlikehold"
-    r"|bygningsdel|boligsalgsrapport",
+    r"|bygningsdel|boligsalgsrapport|radon|helse.{0,3}milj",
     re.I,
 )
 _BODY_MARKER = re.compile(r"\bTG\s?-?\s?[23]\b|tilstandsgrad|egenerkl", re.I)

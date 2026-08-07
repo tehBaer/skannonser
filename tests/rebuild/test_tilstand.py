@@ -27,9 +27,22 @@ def test_select_sections_keeps_condition_headings_and_tg_bodies():
 
 
 def test_classify_input_none_when_nothing_selected():
-    # fixture 424071751 decodes to 38 sections, none condition-related
-    html = (FIXTURES / "424071751.html").read_text(encoding="utf-8", errors="replace")
+    # fixture 442178886 decodes with no condition-related sections at all
+    html = (FIXTURES / "442178886.html").read_text(encoding="utf-8", errors="replace")
     assert classify_input(html) is None
+
+
+def test_classify_input_selects_a_radon_only_ad():
+    """424071751 has no condition report -- before the 2026-08-06 widening it
+    selected nothing and was skipped. Its `Radon` section says "Radonmåling er
+    ikke gjennomført", which is precisely the substantive statement this change
+    exists to reach, so being classifiable now is the point rather than a
+    regression. Measured over 400 real ads this flips 0 of them, so it does not
+    move the corpus size: the ad is an edge case, not a pattern."""
+    html = (FIXTURES / "424071751.html").read_text(encoding="utf-8", errors="replace")
+    text = classify_input(html)
+    assert text is not None
+    assert "Radon" in text
 
 
 def test_classify_input_selects_condition_text_from_real_ad():
@@ -335,3 +348,16 @@ def test_import_cache_accepts_pre_018_exports_without_schema_version(tmp_path):
     assert import_cache(conn, legacy) == {"imported": 1, "replaced": 0}
     assert export_cache(conn)[0]["schema_version"] == 1
     assert cache_get(conn, "a" * 64) is None   # version 1 is stale, so: a miss
+
+
+def test_select_sections_keeps_radon_and_hms_headings():
+    """Radon statements often sit under their own heading or under "Helse,
+    miljø og sikkerhet" -- neither matches the condition-report vocabulary, so
+    without this the classifier is asked about text it was never shown."""
+    secs = [
+        Section("Radonmåling", "Det er ikke foretatt radonmålinger."),
+        Section("Helse, miljø og sikkerhet", "Bygget er ikke oppført med radonsperre."),
+        Section("Beliggenhet", "Kort vei til butikk."),
+    ]
+    kept = [s.heading for s in select_sections(secs)]
+    assert kept == ["Radonmåling", "Helse, miljø og sikkerhet"]
