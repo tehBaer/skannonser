@@ -21,6 +21,7 @@ ALL_MIGRATIONS = [
     "010_listing_details", "011_neighbour_sold", "012_neighbour_sold_index",
     "013_gjovikbanen_missing_stations", "014_r31_north_of_jaren",
     "015_salgsoppgave", "016_tilstand", "017_classification_provenance",
+    "018_radon",
 ]
 
 

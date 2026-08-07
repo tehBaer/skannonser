@@ -66,6 +66,11 @@ def content_sha(text: str) -> str:
 
 _MODEL = "claude-opus-5"
 
+# Bump when the output schema or the prompt changes what the model produces.
+# A mismatch is a cache MISS, so a bump re-classifies the corpus at full
+# price -- batch schema changes rather than trickling them out.
+_SCHEMA_VERSION = 2
+
 
 def _enum_check(allowed):
     def check(cls, v):
@@ -221,10 +226,13 @@ def classify_one(text: str, *, _call=_anthropic_call) -> TilstandResponse:
     return TilstandResponse.model_validate_json(_call(text))
 
 
-def cache_get(conn: sqlite3.Connection, sha: str) -> str | None:
+def cache_get(
+    conn: sqlite3.Connection, sha: str, *, version: int = _SCHEMA_VERSION
+) -> str | None:
     row = conn.execute(
-        "SELECT response_json FROM salgsoppgave_llm_cache WHERE content_sha256 = ?",
-        (sha,),
+        "SELECT response_json FROM salgsoppgave_llm_cache "
+        "WHERE content_sha256 = ? AND schema_version = ?",
+        (sha, version),
     ).fetchone()
     return row[0] if row else None
 
@@ -235,26 +243,39 @@ def cache_put(
     response_json: str,
     model: str = _MODEL,
     effort: str | None = None,
+    *,
+    version: int = _SCHEMA_VERSION,
 ) -> None:
     """`effort` defaults to None = NOT RECORDED, which is the honest value: the
     API seam specifies no reasoning effort, so nothing has ever set one. Pass it
     only when the producing run actually had one."""
     conn.execute(
         "INSERT OR REPLACE INTO salgsoppgave_llm_cache "
-        "(content_sha256, response_json, model, effort, created_at) "
-        "VALUES (?, ?, ?, ?, datetime('now'))",
-        (sha, response_json, model, effort),
+        "(content_sha256, response_json, model, effort, created_at, schema_version) "
+        "VALUES (?, ?, ?, ?, datetime('now'), ?)",
+        (sha, response_json, model, effort, version),
     )
     conn.commit()
 
 
-_CACHE_COLS = ("content_sha256", "response_json", "model", "effort", "created_at")
+_CACHE_COLS = (
+    "content_sha256", "response_json", "model", "effort", "created_at",
+    "schema_version",
+)
 
-# `effort` arrived with migration 017, so export files written before it lack
-# the key entirely. Requiring it on import would reject every cache file
-# exported earlier -- including ones already copied to the server. Missing
-# means NOT RECORDED, which is exactly what NULL already means here.
-_CACHE_COLS_REQUIRED = tuple(c for c in _CACHE_COLS if c != "effort")
+# `effort` arrived with migration 017 and `schema_version` with 018, so export
+# files written before each lack the key entirely. Requiring them on import
+# would reject every cache file exported earlier -- including ones already
+# copied to the server. Missing `effort` means NOT RECORDED, which is exactly
+# what NULL already means here; missing `schema_version` means 1, which is what
+# a response written before the column existed actually is.
+_CACHE_COLS_OPTIONAL = ("effort", "schema_version")
+_CACHE_COLS_REQUIRED = tuple(c for c in _CACHE_COLS if c not in _CACHE_COLS_OPTIONAL)
+# Defaults applied on import for the optional keys. `effort`'s NULL is spelled
+# out rather than left to `.get`, so the two live side by side; `schema_version`
+# MUST have one -- the column is NOT NULL, so a None would raise IntegrityError
+# rather than fall back to the DDL default.
+_CACHE_IMPORT_DEFAULTS = {"effort": None, "schema_version": 1}
 
 
 def export_cache(conn: sqlite3.Connection) -> list[dict]:
@@ -294,7 +315,10 @@ def import_cache(conn: sqlite3.Connection, rows: list[dict]) -> dict:
         conn.executemany(
             f"INSERT OR REPLACE INTO salgsoppgave_llm_cache ({', '.join(_CACHE_COLS)}) "
             f"VALUES ({', '.join('?' * len(_CACHE_COLS))})",
-            [tuple(r.get(c) for c in _CACHE_COLS) for r in rows],
+            [
+                tuple(r.get(c, _CACHE_IMPORT_DEFAULTS.get(c)) for c in _CACHE_COLS)
+                for r in rows
+            ],
         )
         conn.commit()
     except Exception:

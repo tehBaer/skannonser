@@ -205,7 +205,8 @@ def test_export_cache_returns_all_rows(tmp_path):
     assert len(rows) == 2
     assert {r["content_sha256"] for r in rows} == {"a" * 64, "b" * 64}
     assert set(rows[0]) == {
-        "content_sha256", "response_json", "model", "effort", "created_at"}
+        "content_sha256", "response_json", "model", "effort", "created_at",
+        "schema_version"}
 
 
 def test_import_cache_roundtrips_and_preserves_model_and_timestamp(tmp_path):
@@ -224,15 +225,22 @@ def test_import_cache_roundtrips_and_preserves_model_and_timestamp(tmp_path):
 
 
 def test_import_cache_reports_replacements_separately(tmp_path):
-    from skannonser.enrich.tilstand import cache_get, cache_put, import_cache
+    from skannonser.enrich.tilstand import (
+        _SCHEMA_VERSION, cache_get, cache_put, import_cache,
+    )
 
     conn = _cache_db(tmp_path)
     cache_put(conn, "a" * 64, '{"old": true}', model="m")
+    # Rows carry the CURRENT schema_version: this test is about replacement
+    # accounting, and an imported row on an older version would (correctly)
+    # read back as a miss, which is what the versioning tests below assert.
     result = import_cache(conn, [
         {"content_sha256": "a" * 64, "response_json": '{"new": true}',
-         "model": "m2", "created_at": "2026-01-01T00:00:00"},
+         "model": "m2", "created_at": "2026-01-01T00:00:00",
+         "schema_version": _SCHEMA_VERSION},
         {"content_sha256": "b" * 64, "response_json": '{"x": 1}',
-         "model": "m2", "created_at": "2026-01-01T00:00:00"},
+         "model": "m2", "created_at": "2026-01-01T00:00:00",
+         "schema_version": _SCHEMA_VERSION},
     ])
     assert result == {"imported": 1, "replaced": 1}
     assert cache_get(conn, "a" * 64) == '{"new": true}'
@@ -263,3 +271,67 @@ def test_import_cache_accepts_pre_017_exports_without_effort(tmp_path):
     got = export_cache(conn)[0]
     assert got["effort"] is None
     assert got["model"] == "claude-opus-5"
+
+
+# --- cache schema versioning ------------------------------------------------
+# Adding fields to the output schema makes every cached response incomplete.
+# Version the cache so that shows up as a MISS (re-classify) rather than as
+# silent NULLs that are indistinguishable from "the document said nothing".
+
+def test_cache_get_ignores_rows_from_an_older_schema(tmp_path):
+    from skannonser.enrich.tilstand import _SCHEMA_VERSION, cache_get, cache_put
+
+    conn = _cache_db(tmp_path)
+    cache_put(conn, "a" * 64, '{"old": true}', version=_SCHEMA_VERSION - 1)
+    assert cache_get(conn, "a" * 64) is None                       # current version: miss
+    assert cache_get(conn, "a" * 64, version=_SCHEMA_VERSION - 1) == '{"old": true}'
+
+
+def test_cache_put_stamps_the_current_version(tmp_path):
+    from skannonser.enrich.tilstand import _SCHEMA_VERSION, cache_put, export_cache
+
+    conn = _cache_db(tmp_path)
+    cache_put(conn, "a" * 64, '{"x": 1}')
+    assert export_cache(conn)[0]["schema_version"] == _SCHEMA_VERSION
+
+
+def test_a_version_bump_keeps_the_old_row(tmp_path):
+    """Superseded rows stay on disk: they cost nothing and they document what
+    was actually paid for."""
+    from skannonser.enrich.tilstand import _SCHEMA_VERSION, cache_put, export_cache
+
+    conn = _cache_db(tmp_path)
+    cache_put(conn, "a" * 64, '{"old": true}', version=_SCHEMA_VERSION - 1)
+    cache_put(conn, "b" * 64, '{"new": true}')
+    assert len(export_cache(conn)) == 2
+
+
+def test_export_import_carries_the_version(tmp_path):
+    from skannonser.enrich.tilstand import (
+        _SCHEMA_VERSION, cache_get, cache_put, export_cache, import_cache,
+    )
+
+    src = _cache_db(tmp_path, "src.db")
+    cache_put(src, "a" * 64, '{"x": 1}', version=_SCHEMA_VERSION - 1)
+    dst = _cache_db(tmp_path, "dst.db")
+    import_cache(dst, export_cache(src))
+    # a stale row must still read as stale on the receiving side, or a
+    # server import would resurrect responses the local side had retired
+    assert cache_get(dst, "a" * 64) is None
+    assert export_cache(dst)[0]["schema_version"] == _SCHEMA_VERSION - 1
+
+
+def test_import_cache_accepts_pre_018_exports_without_schema_version(tmp_path):
+    """Same reasoning as the `effort` case above, with sharper teeth: the column
+    is NOT NULL, so a missing key that reached the INSERT as None would raise
+    IntegrityError and strand every export file written before this change --
+    including the ones already on the server. Missing means version 1, which is
+    what those responses actually are."""
+    from skannonser.enrich.tilstand import cache_get, export_cache, import_cache
+
+    conn = _cache_db(tmp_path)
+    legacy = [{"content_sha256": "a" * 64, "response_json": '{"x": 1}',
+               "model": "claude-opus-5", "created_at": "2026-08-06T20:22:01"}]
+    assert import_cache(conn, legacy) == {"imported": 1, "replaced": 0}
+    assert export_cache(conn)[0]["schema_version"] == 1
+    assert cache_get(conn, "a" * 64) is None   # version 1 is stale, so: a miss
