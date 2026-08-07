@@ -229,17 +229,32 @@ def cache_get(conn: sqlite3.Connection, sha: str) -> str | None:
     return row[0] if row else None
 
 
-def cache_put(conn: sqlite3.Connection, sha: str, response_json: str, model: str = _MODEL) -> None:
+def cache_put(
+    conn: sqlite3.Connection,
+    sha: str,
+    response_json: str,
+    model: str = _MODEL,
+    effort: str | None = None,
+) -> None:
+    """`effort` defaults to None = NOT RECORDED, which is the honest value: the
+    API seam specifies no reasoning effort, so nothing has ever set one. Pass it
+    only when the producing run actually had one."""
     conn.execute(
         "INSERT OR REPLACE INTO salgsoppgave_llm_cache "
-        "(content_sha256, response_json, model, created_at) "
-        "VALUES (?, ?, ?, datetime('now'))",
-        (sha, response_json, model),
+        "(content_sha256, response_json, model, effort, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now'))",
+        (sha, response_json, model, effort),
     )
     conn.commit()
 
 
-_CACHE_COLS = ("content_sha256", "response_json", "model", "created_at")
+_CACHE_COLS = ("content_sha256", "response_json", "model", "effort", "created_at")
+
+# `effort` arrived with migration 017, so export files written before it lack
+# the key entirely. Requiring it on import would reject every cache file
+# exported earlier -- including ones already copied to the server. Missing
+# means NOT RECORDED, which is exactly what NULL already means here.
+_CACHE_COLS_REQUIRED = tuple(c for c in _CACHE_COLS if c != "effort")
 
 
 def export_cache(conn: sqlite3.Connection) -> list[dict]:
@@ -268,7 +283,7 @@ def import_cache(conn: sqlite3.Connection, rows: list[dict]) -> dict:
     file cannot leave the cache half-populated.
     """
     for row in rows:
-        missing = [c for c in _CACHE_COLS if c not in row]
+        missing = [c for c in _CACHE_COLS_REQUIRED if c not in row]
         if missing:
             raise ValueError(f"cache row missing {missing}: {row!r}")
 
@@ -278,8 +293,8 @@ def import_cache(conn: sqlite3.Connection, rows: list[dict]) -> dict:
     try:
         conn.executemany(
             f"INSERT OR REPLACE INTO salgsoppgave_llm_cache ({', '.join(_CACHE_COLS)}) "
-            "VALUES (?, ?, ?, ?)",
-            [tuple(r[c] for c in _CACHE_COLS) for r in rows],
+            f"VALUES ({', '.join('?' * len(_CACHE_COLS))})",
+            [tuple(r.get(c) for c in _CACHE_COLS) for r in rows],
         )
         conn.commit()
     except Exception:

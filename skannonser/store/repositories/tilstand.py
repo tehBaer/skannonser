@@ -94,8 +94,14 @@ class TilstandRepo:
         findings: list[dict],
         egenerklaering: list[str],
         rollup: dict,
+        content_sha256: str | None = None,
     ) -> None:
-        """Replace one ad's classifier output atomically."""
+        """Replace one ad's classifier output atomically.
+
+        `content_sha256` is the cache key of the response this row was derived
+        from -- the join back to salgsoppgave_llm_cache for model and effort.
+        Optional so a caller that genuinely has no cache row (a direct
+        hand-built rollup in a test) is not forced to invent one."""
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -116,9 +122,9 @@ class TilstandRepo:
                 )
             conn.execute(
                 "INSERT OR REPLACE INTO listing_tilstand "
-                f"(finnkode, {', '.join(_ROLLUP_COLS)}, classified_at) "
-                f"VALUES (?, {', '.join('?' * len(_ROLLUP_COLS))}, datetime('now'))",
-                [finnkode] + [rollup[c] for c in _ROLLUP_COLS],
+                f"(finnkode, {', '.join(_ROLLUP_COLS)}, content_sha256, classified_at) "
+                f"VALUES (?, {', '.join('?' * len(_ROLLUP_COLS))}, ?, datetime('now'))",
+                [finnkode] + [rollup[c] for c in _ROLLUP_COLS] + [content_sha256],
             )
             conn.commit()
         except Exception:

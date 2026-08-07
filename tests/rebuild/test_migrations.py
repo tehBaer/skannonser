@@ -20,8 +20,58 @@ ALL_MIGRATIONS = [
     "007_sold_sweep_state", "008_postnummer_pad", "009_sold_attempts",
     "010_listing_details", "011_neighbour_sold", "012_neighbour_sold_index",
     "013_gjovikbanen_missing_stations", "014_r31_north_of_jaren",
-    "015_salgsoppgave", "016_tilstand",
+    "015_salgsoppgave", "016_tilstand", "017_classification_provenance",
 ]
+
+
+def _migrate_through(conn, last_stem: str) -> None:
+    """Apply migrations in order up to and including `last_stem`, leaving the
+    rest pending -- so a data-fixing migration can be tested against the state
+    that actually preceded it."""
+    for path in migrations.pending(conn):
+        for stmt in migrations._statements(path.read_text(encoding="utf-8")):
+            conn.execute(stmt)
+        conn.execute("INSERT INTO schema_migrations (id) VALUES (?)", (path.stem,))
+        if path.stem == last_stem:
+            break
+    conn.commit()
+
+
+def test_migration_017_adds_provenance_columns(tmp_path):
+    conn = connection.connect(tmp_path / "t.db")
+    migrations.migrate(conn)
+    cache_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(salgsoppgave_llm_cache)")}
+    assert "effort" in cache_cols
+    tilstand_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(listing_tilstand)")}
+    assert "content_sha256" in tilstand_cols
+
+
+def test_migration_017_relabels_only_the_interactive_session_rows(tmp_path):
+    """The 150 rows loaded 2026-08-06 were produced in-session, not by the API
+    seam, but carry cache_put's default label. Relabel exactly those: scoped by
+    date so a genuine API run on a later date keeps its own label."""
+    conn = connection.connect(tmp_path / "t.db")
+    _migrate_through(conn, "016_tilstand")
+    rows = [
+        ("mislabelled", "claude-opus-5", "2026-08-06 20:00:00"),
+        ("already_honest", "claude-opus-5 (interactive session)", "2026-08-06 09:00:00"),
+        ("later_api_run", "claude-opus-5", "2026-08-09 12:00:00"),
+    ]
+    for sha, model, created in rows:
+        conn.execute(
+            "INSERT INTO salgsoppgave_llm_cache "
+            "(content_sha256, response_json, model, created_at) VALUES (?, '{}', ?, ?)",
+            (sha, model, created),
+        )
+    conn.commit()
+    migrations.migrate(conn)
+    got = {r[0]: r[1] for r in conn.execute(
+        "SELECT content_sha256, model FROM salgsoppgave_llm_cache")}
+    assert got["mislabelled"] == "claude-opus-5 (interactive session)"
+    assert got["already_honest"] == "claude-opus-5 (interactive session)"
+    assert got["later_api_run"] == "claude-opus-5"
 
 
 def _tables(conn):

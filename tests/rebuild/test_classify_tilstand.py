@@ -256,3 +256,18 @@ def test_batch_pending_follows_the_same_priority_order(tmp_path):
     assert len(pending) == 2
     texts = list(pending.values())
     assert texts[0].startswith("TG3 c") and texts[1].startswith("TG3 b")
+
+
+def test_derived_rows_record_which_response_produced_them(tmp_path):
+    """Provenance join: listing_tilstand.content_sha256 -> the cache row whose
+    model/effort describe how this listing was classified."""
+    from skannonser.enrich.tilstand import content_sha
+    conn = _env(tmp_path, {"1": "TG3 a " * 60})
+    classify_tilstand(conn, tmp_path, _call=lambda t: RESPONSE, _input_fn=FAKE_INPUT)
+    sha = conn.execute(
+        "SELECT content_sha256 FROM listing_tilstand WHERE finnkode='1'").fetchone()[0]
+    assert sha == content_sha(FAKE_INPUT("TG3 a " * 60))
+    model = conn.execute(
+        "SELECT model FROM salgsoppgave_llm_cache WHERE content_sha256 = ?",
+        (sha,)).fetchone()[0]
+    assert model == "claude-opus-5"
