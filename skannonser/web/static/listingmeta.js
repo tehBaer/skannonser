@@ -302,6 +302,34 @@ export const BYGNINGSDEL_LABELS = {
   annet: "Annet",
 };
 
+const RADON_STATUS_LABELS = {
+  ikke_malt: "Ikke målt",
+  malt_under_grense: "Målt, under grense",
+  // Shouted deliberately: this is the one radon state that costs money.
+  malt_over_grense: "Målt, OVER grense",
+  malt_ukjent_verdi: "Målt, verdi ikke oppgitt",
+};
+
+const RADONSPERRE_LABELS = { finnes: "Radonsperre", mangler: "Ingen radonsperre" };
+
+export function fmtRadonStatus(value) {
+  return fromVocab(RADON_STATUS_LABELS, value);
+}
+
+export function fmtRadonsperre(value) {
+  return fromVocab(RADONSPERRE_LABELS, value);
+}
+
+// Status plus the measured value when one was stated. radon_bq is populated on
+// only ~2% of ads by design -- most Bq figures in a prospectus are the
+// statutory thresholds, and the classifier is told not to extract those.
+export function fmtRadon(item) {
+  const s = fmtRadonStatus(item.radon_status);
+  if (!s) return null;
+  const bq = item.radon_bq;
+  return bq === null || bq === undefined ? s : s + " (" + bq + " Bq/m³)";
+}
+
 export function fmtAlvorlighet(value) {
   return fromVocab(ALVORLIGHET_LABELS, value);
 }
@@ -347,6 +375,7 @@ export const TILSTAND_DERIVED = new Set([
   "reparasjon_est",
   "reparasjon_usikkerhet",
   "alvorlighet",
+  "radon_status",
 ]);
 
 // Which table columns start hidden, given a reader's stored preferences.

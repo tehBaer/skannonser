@@ -29,6 +29,8 @@ import {
   fmtHusdyr,
   SALGSOPPGAVE_HINT,
   fmtAlvorlighet,
+  fmtRadon,
+  fmtRadonsperre,
   fmtBygningsdel,
   fmtKostnadBand,
   TILSTAND_HINT,
@@ -274,7 +276,10 @@ export function buildPopupContent(item, destinations, getTagColors) {
   // mentions the topic, so "Heftelser: Ja" would assert something we never
   // established.
   addRow(sdl, "Heftelser", fmtOmtalt(item.heftelser));
-  addRow(sdl, "Radon", fmtOmtalt(item.radon_omtalt));
+  // "Radon nevnt": the Tilstand block below has the classifier's own Radon
+  // row, and two rows named "Radon" saying different things would read as a
+  // contradiction rather than as two different questions.
+  addRow(sdl, "Radon nevnt", fmtOmtalt(item.radon_omtalt));
   addRow(sdl, "Boligselgerforsikring", fmtJaNei(item.boligselgerforsikring));
   if (sdl.childNodes.length) {
     const head = el("p", "sk-dl-head", "Fra salgsoppgaven");
@@ -296,6 +301,8 @@ export function buildPopupContent(item, destinations, getTagColors) {
       : null);
   addRow(tdl, "Utbedring",
     fmtKostnadBand(item.reparasjon_lav, item.reparasjon_hoy, item.reparasjon_kilde));
+  addRow(tdl, "Radon", fmtRadon(item));
+  addRow(tdl, "Radonsperre", fmtRadonsperre(item.radonsperre));
   if (tdl.childNodes.length) {
     // Same violet provenance marker the table's LLM columns carry -- these are
     // the identical numbers, so the two views must not disagree about how they

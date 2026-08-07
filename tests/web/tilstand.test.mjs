@@ -131,3 +131,40 @@ test("the two provenance sets never overlap", () => {
     assert.ok(!SALGSOPPGAVE_DERIVED.has(k), k + " must not be in both sets");
   }
 });
+
+// --- radon (migration 018) --------------------------------------------------
+// TILSTAND_DERIVED / SALGSOPPGAVE_DERIVED are already imported above.
+import {
+  fmtRadonStatus,
+  fmtRadonsperre,
+  fmtRadon,
+} from "../../skannonser/web/static/listingmeta.js";
+
+test("fmtRadonStatus maps the four states and passes null through", () => {
+  assert.equal(fmtRadonStatus("ikke_malt"), "Ikke målt");
+  assert.equal(fmtRadonStatus("malt_under_grense"), "Målt, under grense");
+  assert.equal(fmtRadonStatus("malt_over_grense"), "Målt, OVER grense");
+  assert.equal(fmtRadonStatus("malt_ukjent_verdi"), "Målt, verdi ikke oppgitt");
+  assert.equal(fmtRadonStatus(null), null);
+  assert.equal(fmtRadonStatus("nytt_svar"), "nytt_svar"); // unmapped passes through
+});
+
+test("fmtRadonsperre reads as a fact, not a yes/no", () => {
+  assert.equal(fmtRadonsperre("finnes"), "Radonsperre");
+  assert.equal(fmtRadonsperre("mangler"), "Ingen radonsperre");
+  assert.equal(fmtRadonsperre(null), null);
+});
+
+test("fmtRadon appends the measured value only when there is one", () => {
+  assert.equal(
+    fmtRadon({ radon_status: "malt_over_grense", radon_bq: 280 }),
+    "Målt, OVER grense (280 Bq/m³)");
+  assert.equal(fmtRadon({ radon_status: "ikke_malt", radon_bq: null }), "Ikke målt");
+  assert.equal(fmtRadon({ radon_status: null, radon_bq: null }), null);
+});
+
+test("radon_status is LLM-derived; radon_omtalt is not", () => {
+  assert.ok(TILSTAND_DERIVED.has("radon_status"));
+  assert.ok(!TILSTAND_DERIVED.has("radon_omtalt"));
+  assert.ok(SALGSOPPGAVE_DERIVED.has("radon_omtalt"));
+});

@@ -10,6 +10,7 @@ import { commitAnnotation } from "./annotations.js";
 import {
   isNew, fmtDate, premiumPct, fmtPremium, travelMinutes,
   fmtJaNei, fmtOmtalt, fmtFerdigattest, fmtUtleie, fmtHusdyr, fmtAlvorlighet,
+  fmtRadon,
   resolveHiddenColumns, applyTilstandColumnsMigration,
   SALGSOPPGAVE_DERIVED, SALGSOPPGAVE_HINT, TILSTAND_DERIVED, TILSTAND_HINT,
   labelWithSource, TILGJENGELIGHET_OPTIONS,
@@ -115,7 +116,9 @@ const COLUMNS = [
   { key: "utleie", label: "Utleie", sortable: true },
   { key: "husdyr", label: "Husdyr", sortable: true },
   { key: "heftelser", label: "Heftelser", sortable: true },
-  { key: "radon_omtalt", label: "Radon", sortable: true },
+  // "Radon nevnt", not "Radon": the classifier's radon_status column below
+  // takes that name, and this one only says the prospectus mentioned the word.
+  { key: "radon_omtalt", label: "Radon nevnt", sortable: true },
   { key: "boligselgerforsikring", label: "Selgerforsikring", sortable: true },
   // Tilstand classifier (migration 016). Default-hidden like the salgsoppgave
   // columns just above, and listed in their own migration array (see
@@ -125,6 +128,7 @@ const COLUMNS = [
   { key: "reparasjon_est", label: "Utbedring", sortable: true },
   { key: "reparasjon_usikkerhet", label: "Usikkerhet", sortable: true },
   { key: "alvorlighet", label: "Alvorlighet", sortable: true },
+  { key: "radon_status", label: "Radon", sortable: true },
   { key: "brj", label: "BRJ", sortable: true },
   { key: "mvv", label: "MVV", sortable: true },
   { key: "mvv_uni", label: "UNI", sortable: true },
@@ -155,6 +159,7 @@ const SALGSOPPGAVE_COLUMNS = [
 // through 015 before 016 existed.
 const TILSTAND_COLUMNS = [
   "tg3_count", "reparasjon_est", "reparasjon_usikkerhet", "alvorlighet",
+  "radon_status",
 ];
 const DEFAULT_HIDDEN_COLUMNS = [
   "postnummer", "pris", "felleskost_mnd", "soverom", "etasje", "tilgjengelighet",
@@ -518,6 +523,10 @@ function buildRow(item) {
         // tegnet". Via fmtJaNei, not the default branch, since `String(false)`
         // would print the literal "false".
         td.textContent = fmtJaNei(item.boligselgerforsikring) || "";
+        break;
+      }
+      case "radon_status": {
+        td.textContent = fmtRadon(item) || "";
         break;
       }
       case "tg3_count": {
